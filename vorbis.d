@@ -67,7 +67,7 @@ version(Windows)
 nothrow /*@trusted*/:
 @nogc { // code block, as c macro helper is not @nogc; yet it's CTFE-only
 // import it here, as druntime has no `@nogc` on it (for a reason)
-private extern(C) void qsort (void* base, size_t nmemb, size_t size, int function(in void*, in void*) compar);
+private extern(C) void qsort (void* base, size_t nmemb, size_t size, int function(const scope void*, const scope void*) compar);
 
 
 //////////////////////////////////////////////////////////////////////////////
@@ -850,7 +850,7 @@ private void compute_accelerated_huffman (Codebook* c) {
   }
 }
 
-extern(C) int uint32_compare (const void* p, const void* q) {
+extern(C) int uint32_compare (const scope void* p, const scope void* q) {
   uint x = *cast(uint*)p;
   uint y = *cast(uint*)q;
   return (x < y ? -1 : x > y);
@@ -992,7 +992,7 @@ struct Point {
   ushort x, y;
 }
 
-extern(C) int point_compare (const void *p, const void *q) {
+extern(C) int point_compare (const scope void *p, const scope void *q) {
   auto a = cast(const(Point)*)p;
   auto b = cast(const(Point)*)q;
   return (a.x < b.x ? -1 : a.x > b.x);

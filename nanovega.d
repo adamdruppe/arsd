@@ -938,7 +938,7 @@ public:
   @property ref inout(float) b () inout pure @trusted { pragma(inline, true); return rgba.ptr[2]; } ///
   @property ref inout(float) a () inout pure @trusted { pragma(inline, true); return rgba.ptr[3]; } ///
 
-  ref NVGColor applyTint() (in auto ref NVGColor tint) nothrow @trusted @nogc {
+  ref NVGColor applyTint() (const scope auto ref NVGColor tint) nothrow @trusted @nogc {
     if (tint.a == 0) return this;
     foreach (immutable idx, ref float v; rgba[0..4]) {
       v = nvg__clamp(v*tint.rgba.ptr[idx], 0.0f, 1.0f);
@@ -947,7 +947,7 @@ public:
   }
 
   NVGHSL asHSL() (bool useWeightedLightness=false) const { pragma(inline, true); return NVGHSL.fromColor(this, useWeightedLightness); } ///
-  static fromHSL() (in auto ref NVGHSL hsl) { pragma(inline, true); return hsl.asColor; } ///
+  static fromHSL() (const scope auto ref NVGHSL hsl) { pragma(inline, true); return hsl.asColor; } ///
 
   static if (NanoVegaHasArsdColor) {
     Color toArsd () const { pragma(inline, true); return Color(cast(int)(r*255), cast(int)(g*255), cast(int)(b*255), cast(int)(a*255)); } ///
@@ -984,7 +984,7 @@ public:
    * [useWeightedLightness] will try to get a better value for luminosity for the human eye,
    * which is more sensitive to green than red and more to red than blue.
    * If it is false, it just does average of the rgb. */
-  static NVGHSL fromColor() (in auto ref NVGColor c, bool useWeightedLightness=false) pure {
+  static NVGHSL fromColor() (const scope auto ref NVGColor c, bool useWeightedLightness=false) pure {
     NVGHSL res;
     res.a = c.a;
     float r1 = c.r;
@@ -1045,7 +1045,7 @@ private:
 
 public:
   ///
-  this() (in auto ref NVGImage src) nothrow @trusted @nogc {
+  this() (const scope auto ref NVGImage src) nothrow @trusted @nogc {
     version(nanovega_debug_image_manager_rc) { import core.stdc.stdio; if (src.id != 0) printf("NVGImage %p created from %p (imgid=%d)\n", &this, src, src.id); }
     if (src.id > 0 && src.ctx !is null) {
       ctx = cast(NVGContext)src.ctx;
@@ -1067,7 +1067,7 @@ public:
   }
 
   ///
-  void opAssign() (in auto ref NVGImage src) nothrow @trusted @nogc {
+  void opAssign() (const scope auto ref NVGImage src) nothrow @trusted @nogc {
     if (src.id <= 0 || src.ctx is null) {
       clear();
     } else {
@@ -1133,7 +1133,7 @@ public struct NVGPaint {
   NVGImage image;
   bool simpleColor; /// if `true`, only innerColor is used, and this is solid-color paint
 
-  this() (in auto ref NVGPaint p) nothrow @trusted @nogc {
+  this() (const scope auto ref NVGPaint p) nothrow @trusted @nogc {
     xform = p.xform;
     extent[] = p.extent[];
     radius = p.radius;
@@ -1146,7 +1146,7 @@ public struct NVGPaint {
     simpleColor = p.simpleColor;
   }
 
-  void opAssign() (in auto ref NVGPaint p) nothrow @trusted @nogc {
+  void opAssign() (const scope auto ref NVGPaint p) nothrow @trusted @nogc {
     xform = p.xform;
     extent[] = p.extent[];
     radius = p.radius;
@@ -1388,7 +1388,7 @@ struct NVGpath {
   bool cloned;
 
   @disable this (this); // no copies
-  void opAssign() (in auto ref NVGpath a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref NVGpath a) { static assert(0, "no copies!"); }
 
   void clear () nothrow @trusted @nogc {
     import core.stdc.stdlib : free;
@@ -1448,7 +1448,7 @@ struct NVGparams {
   void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, const(float)* bounds, const(NVGpath)* paths, int npaths, bool evenOdd) nothrow @trusted @nogc renderFill;
   void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, float fringe, float strokeWidth, const(NVGpath)* paths, int npaths) nothrow @trusted @nogc renderStroke;
   void function (void* uptr, NVGCompositeOperationState compositeOperation, NVGClipMode clipmode, NVGPaint* paint, NVGscissor* scissor, const(NVGVertex)* verts, int nverts) nothrow @trusted @nogc renderTriangles;
-  void function (void* uptr, in ref NVGMatrix mat) nothrow @trusted @nogc renderSetAffine;
+  void function (void* uptr, const scope ref NVGMatrix mat) nothrow @trusted @nogc renderSetAffine;
   void function (void* uptr) nothrow @trusted @nogc renderDelete;
 }
 
@@ -1551,7 +1551,7 @@ struct NVGpathCache {
   int ncommands;
 
   @disable this (this); // no copies
-  void opAssign() (in auto ref NVGpathCache a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref NVGpathCache a) { static assert(0, "no copies!"); }
 
   // won't clear current path
   void copyFrom (const NVGpathCache* src) nothrow @trusted @nogc {
@@ -1749,7 +1749,7 @@ private:
   bool contextAlive; // context can be dead, but still contain some images
 
   @disable this (this); // no copies
-  void opAssign() (in auto ref NVGcontextinternal a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref NVGcontextinternal a) { static assert(0, "no copies!"); }
 
   // debug feature
   public @property int getImageCount () nothrow @trusted @nogc {
@@ -2249,7 +2249,7 @@ private:
     pickscene = ps;
   }
 
-  void replay (NVGContext ctx, in ref NVGColor fillTint, in ref NVGColor strokeTint) nothrow @trusted @nogc {
+  void replay (NVGContext ctx, const scope ref NVGColor fillTint, const scope ref NVGColor strokeTint) nothrow @trusted @nogc {
     NVGstate* state = nvg__getState(ctx);
     foreach (ref node; nodes[0..nnodes]) {
       if (auto cc = node.path) {
@@ -2309,7 +2309,7 @@ private:
 
 public:
   @disable this (this); // no copies
-  void opAssign() (in auto ref NVGPathSetS a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref NVGPathSetS a) { static assert(0, "no copies!"); }
 
   // pick test
   // Call delegate [dg] for each path under the specified position (in no particular order).
@@ -2406,7 +2406,7 @@ public:
 }
 
 // Append current path to existing path set. Is is safe to call this with `null` [svp].
-void appendCurrentPathToCache (NVGContext ctx, NVGPathSet svp, in ref NVGPaint paint) nothrow @trusted @nogc {
+void appendCurrentPathToCache (NVGContext ctx, NVGPathSet svp, const scope ref NVGPaint paint) nothrow @trusted @nogc {
   if (ctx is null || svp is null) return;
   if (ctx !is svp.svctx) assert(0, "NanoVega: cannot save paths from different contexts");
   if (ctx.ncommands == 0) {
@@ -2534,13 +2534,13 @@ public void cancelRecording (NVGContext ctx) nothrow @trusted @nogc {
  *
  * Group: path_recording
  */
-public void replayRecording() (NVGContext ctx, NVGPathSet svp, in auto ref NVGColor fillTint, in auto ref NVGColor strokeTint) nothrow @trusted @nogc {
+public void replayRecording() (NVGContext ctx, NVGPathSet svp, const scope auto ref NVGColor fillTint, const scope auto ref NVGColor strokeTint) nothrow @trusted @nogc {
   if (svp !is null && svp.svctx !is ctx) assert(0, "NanoVega: cannot share path set between contexts");
   svp.replay(ctx, fillTint, strokeTint);
 }
 
 /// Ditto.
-public void replayRecording() (NVGContext ctx, NVGPathSet svp, in auto ref NVGColor fillTint) nothrow @trusted @nogc { ctx.replayRecording(svp, fillTint, NVGColor.transparent); }
+public void replayRecording() (NVGContext ctx, NVGPathSet svp, const scope auto ref NVGColor fillTint) nothrow @trusted @nogc { ctx.replayRecording(svp, fillTint, NVGColor.transparent); }
 
 /// Ditto.
 public void replayRecording (NVGContext ctx, NVGPathSet svp) nothrow @trusted @nogc { ctx.replayRecording(svp, NVGColor.transparent, NVGColor.transparent); }
@@ -2620,7 +2620,7 @@ public NVGColor nvgTransRGBAf (NVGColor c, float a) nothrow @trusted @nogc {
 
 /// Linearly interpolates from color c0 to c1, and returns resulting color value.
 /// Group: color_utils
-public NVGColor nvgLerpRGBA() (in auto ref NVGColor c0, in auto ref NVGColor c1, float u) nothrow @trusted @nogc {
+public NVGColor nvgLerpRGBA() (const scope auto ref NVGColor c0, const scope auto ref NVGColor c1, float u) nothrow @trusted @nogc {
   NVGColor cint = void;
   u = nvg__clamp(u, 0.0f, 1.0f);
   float oneminu = 1.0f-u;
@@ -2816,7 +2816,7 @@ public nothrow @trusted @nogc:
   }
 
   /// Sets this matrix to the result of multiplication of `this` and [s] (this * S).
-  ref NVGMatrix mul() (in auto ref NVGMatrix s) {
+  ref NVGMatrix mul() (const scope auto ref NVGMatrix s) {
     immutable float t0 = mat.ptr[0]*s.mat.ptr[0]+mat.ptr[1]*s.mat.ptr[2];
     immutable float t2 = mat.ptr[2]*s.mat.ptr[0]+mat.ptr[3]*s.mat.ptr[2];
     immutable float t4 = mat.ptr[4]*s.mat.ptr[0]+mat.ptr[5]*s.mat.ptr[2]+s.mat.ptr[4];
@@ -2832,7 +2832,7 @@ public nothrow @trusted @nogc:
   /// Sets this matrix to the result of multiplication of [s] and `this` (S * this).
   /// Sets the transform to the result of multiplication of two transforms, of A = B*A.
   /// Group: matrices
-  ref NVGMatrix premul() (in auto ref NVGMatrix s) {
+  ref NVGMatrix premul() (const scope auto ref NVGMatrix s) {
     NVGMatrix s2 = s;
     s2.mul(this);
     mat[] = s2.mat[];
@@ -2841,7 +2841,7 @@ public nothrow @trusted @nogc:
 
   /// Multiply this matrix by [s], return result as new matrix.
   /// Performs operations in this left-to-right order.
-  NVGMatrix opBinary(string op="*") (in auto ref NVGMatrix s) const {
+  NVGMatrix opBinary(string op="*") (const scope auto ref NVGMatrix s) const {
     version(aliced) pragma(inline, true);
     NVGMatrix res = this;
     res.mul(s);
@@ -2850,7 +2850,7 @@ public nothrow @trusted @nogc:
 
   /// Multiply this matrix by [s].
   /// Performs operations in this left-to-right order.
-  ref NVGMatrix opOpAssign(string op="*") (in auto ref NVGMatrix s) {
+  ref NVGMatrix opOpAssign(string op="*") (const scope auto ref NVGMatrix s) {
     version(aliced) pragma(inline, true);
     return this.mul(s);
   }
@@ -2980,7 +2980,7 @@ public float nvgRadians() (in float rad) pure nothrow @safe @nogc { pragma(inlin
 
 
 // ////////////////////////////////////////////////////////////////////////// //
-void nvg__setPaintColor() (ref NVGPaint p, in auto ref NVGColor color) nothrow @trusted @nogc {
+void nvg__setPaintColor() (ref NVGPaint p, const scope auto ref NVGColor color) nothrow @trusted @nogc {
   p.clear();
   p.xform.identity;
   p.radius = 0.0f;
@@ -3226,7 +3226,7 @@ public void strokeColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
 
 /// Sets current stroke style to a solid color.
 /// Group: render_styles
-public void strokeColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @trusted @nogc {
+public void strokeColor() (NVGContext ctx, const scope auto ref NVGColor color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.stroke, color);
 }
@@ -3239,7 +3239,7 @@ public void strokePaint(NVGContext ctx, in NVGPaint* paint) nothrow @trusted @no
 /// Sets current stroke style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
 @scriptable
-public void strokePaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
+public void strokePaint() (NVGContext ctx, const scope auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.stroke = paint;
   //nvgTransformMultiply(state.stroke.xform[], state.xform[]);
@@ -3262,7 +3262,7 @@ public void fillColor (NVGContext ctx, Color color) nothrow @trusted @nogc {
 
 /// Sets current fill style to a solid color.
 /// Group: render_styles
-public void fillColor() (NVGContext ctx, in auto ref NVGColor color) nothrow @trusted @nogc {
+public void fillColor() (NVGContext ctx, const scope auto ref NVGColor color) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   nvg__setPaintColor(state.fill, color);
 
@@ -3276,7 +3276,7 @@ public void fillPaint (NVGContext ctx, in NVGPaint* paint) nothrow @trusted @nog
 /// Sets current fill style to a paint, which can be a one of the gradients or a pattern.
 /// Group: render_styles
 @scriptable
-public void fillPaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @trusted @nogc {
+public void fillPaint() (NVGContext ctx, const scope auto ref NVGPaint paint) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.fill = paint;
   //nvgTransformMultiply(state.fill.xform[], state.xform[]);
@@ -3285,7 +3285,7 @@ public void fillPaint() (NVGContext ctx, in auto ref NVGPaint paint) nothrow @tr
 
 /// Sets current fill style to a multistop linear gradient.
 /// Group: render_styles
-public void fillPaint() (NVGContext ctx, in auto ref NVGLGS lgs) nothrow @trusted @nogc {
+public void fillPaint() (NVGContext ctx, const scope auto ref NVGLGS lgs) nothrow @trusted @nogc {
   if (!lgs.valid) {
     NVGPaint p = void;
     memset(&p, 0, p.sizeof);
@@ -3308,7 +3308,7 @@ public NVGMatrix currTransform (NVGContext ctx) pure nothrow @trusted @nogc {
 
 /// Sets current transformation matrix.
 /// Group: render_transformations
-public void currTransform() (NVGContext ctx, in auto ref NVGMatrix m) nothrow @trusted @nogc {
+public void currTransform() (NVGContext ctx, const scope auto ref NVGMatrix m) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   state.xform = m;
 }
@@ -3323,7 +3323,7 @@ public void resetTransform (NVGContext ctx) nothrow @trusted @nogc {
 
 /// Premultiplies current coordinate system by specified matrix.
 /// Group: render_transformations
-public void transform() (NVGContext ctx, in auto ref NVGMatrix mt) nothrow @trusted @nogc {
+public void transform() (NVGContext ctx, const scope auto ref NVGMatrix mt) nothrow @trusted @nogc {
   NVGstate* state = nvg__getState(ctx);
   //nvgTransformPremultiply(state.xform[], t[]);
   state.xform *= mt;
@@ -3490,7 +3490,7 @@ public void updateImage() (NVGContext ctx, auto ref NVGImage image, const(void)[
 
 /// Returns the dimensions of a created image.
 /// Group: images
-public void imageSize() (NVGContext ctx, in auto ref NVGImage image, out int w, out int h) nothrow @trusted @nogc {
+public void imageSize() (NVGContext ctx, const scope auto ref NVGImage image, out int w, out int h) nothrow @trusted @nogc {
   if (image.valid) {
     if (image.ctx !is ctx) assert(0, "NanoVega: you cannot use image from one context in another context");
     ctx.params.renderGetTextureSize(cast(void*)ctx.params.userPtr, image.id, &w, &h);
@@ -3540,7 +3540,7 @@ public NVGPaint linearGradient (NVGContext ctx, in float sx, in float sy, in flo
  *
  * Group: paints
  */
-public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, const scope auto ref NVGColor icol, const scope auto ref NVGColor ocol) nothrow @trusted @nogc {
   enum large = 1e5f;
 
   NVGPaint p = void;
@@ -3584,7 +3584,7 @@ public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, 
  *
  * Group: paints
  */
-public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, in auto ref NVGColor icol, in float midp, in auto ref NVGColor mcol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint linearGradient() (NVGContext ctx, float sx, float sy, float ex, float ey, const scope auto ref NVGColor icol, in float midp, const scope auto ref NVGColor mcol, const scope auto ref NVGColor ocol) nothrow @trusted @nogc {
   enum large = 1e5f;
 
   NVGPaint p = void;
@@ -3648,7 +3648,7 @@ public NVGPaint radialGradient (NVGContext ctx, in float cx, in float cy, in flo
  *
  * Group: paints
  */
-public NVGPaint radialGradient() (NVGContext ctx, float cx, float cy, float inr, float outr, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint radialGradient() (NVGContext ctx, float cx, float cy, float inr, float outr, const scope auto ref NVGColor icol, const scope auto ref NVGColor ocol) nothrow @trusted @nogc {
   immutable float r = (inr+outr)*0.5f;
   immutable float f = (outr-inr);
 
@@ -3696,7 +3696,7 @@ public NVGPaint boxGradient (NVGContext ctx, in float x, in float y, in float w,
  *
  * Group: paints
  */
-public NVGPaint boxGradient() (NVGContext ctx, float x, float y, float w, float h, float r, float f, in auto ref NVGColor icol, in auto ref NVGColor ocol) nothrow @trusted @nogc {
+public NVGPaint boxGradient() (NVGContext ctx, float x, float y, float w, float h, float r, float f, const scope auto ref NVGColor icol, const scope auto ref NVGColor ocol) nothrow @trusted @nogc {
   NVGPaint p = void;
   memset(&p, 0, p.sizeof);
   p.simpleColor = false;
@@ -3725,7 +3725,7 @@ public NVGPaint boxGradient() (NVGContext ctx, float x, float y, float w, float 
  *
  * Group: paints
  */
-public NVGPaint imagePattern() (NVGContext ctx, float cx, float cy, float w, float h, float angle, in auto ref NVGImage image, float alpha=1) nothrow @trusted @nogc {
+public NVGPaint imagePattern() (NVGContext ctx, float cx, float cy, float w, float h, float angle, const scope auto ref NVGImage image, float alpha=1) nothrow @trusted @nogc {
   NVGPaint p = void;
   memset(&p, 0, p.sizeof);
   p.simpleColor = false;
@@ -3768,7 +3768,7 @@ public:
  * $(WARNING THIS IS EXPERIMENTAL API AND MAY BE CHANGED/BROKEN IN NEXT RELEASES!)
  * Group: paints
  */
-public NVGPaint asPaint() (NVGContext ctx, in auto ref NVGLGS lgs) nothrow @trusted @nogc {
+public NVGPaint asPaint() (NVGContext ctx, const scope auto ref NVGLGS lgs) nothrow @trusted @nogc {
   if (!lgs.valid) {
     NVGPaint p = void;
     memset(&p, 0, p.sizeof);
@@ -3788,7 +3788,7 @@ public struct NVGGradientStop {
   float offset = 0; /// [0..1]
   NVGColor color; ///
 
-  this() (in float aofs, in auto ref NVGColor aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = aclr; } ///
+  this() (in float aofs, const scope auto ref NVGColor aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = aclr; } ///
   static if (NanoVegaHasArsdColor) {
     this() (in float aofs, in Color aclr) nothrow @trusted @nogc { pragma(inline, true); offset = aofs; color = NVGColor(aclr); } ///
   }
@@ -4020,7 +4020,7 @@ public void resetScissor (NVGContext ctx) nothrow @trusted @nogc {
 /// Sets GPU affine transformatin matrix. Don't do scaling or skewing here.
 /// This matrix won't be saved/restored with context state save/restore operations, as it is not a part of that state.
 /// Group: gpu_affine
-public void affineGPU() (NVGContext ctx, in auto ref NVGMatrix mat) nothrow @trusted @nogc {
+public void affineGPU() (NVGContext ctx, const scope auto ref NVGMatrix mat) nothrow @trusted @nogc {
   ctx.gpuAffine = mat;
   ctx.params.renderSetAffine(ctx.params.userPtr, ctx.gpuAffine);
 }
@@ -4217,7 +4217,7 @@ void nvg__pathWinding (NVGContext ctx, NVGWinding winding) nothrow @trusted @nog
   path.mWinding = winding;
 }
 
-float nvg__getAverageScale() (in auto ref NVGMatrix t) /*pure*/ nothrow @trusted @nogc {
+float nvg__getAverageScale() (const scope auto ref NVGMatrix t) /*pure*/ nothrow @trusted @nogc {
   immutable float sx = nvg__sqrtf(t.mat.ptr[0]*t.mat.ptr[0]+t.mat.ptr[2]*t.mat.ptr[2]);
   immutable float sy = nvg__sqrtf(t.mat.ptr[1]*t.mat.ptr[1]+t.mat.ptr[3]*t.mat.ptr[3]);
   return (sx+sy)*0.5f;
@@ -6506,14 +6506,14 @@ void nvg__expandBounds (ref float[4] bounds, const(float)* points, int npoints) 
   }
 }
 
-void nvg__unionBounds (ref float[4] bounds, in ref float[4] boundsB) {
+void nvg__unionBounds (ref float[4] bounds, const scope ref float[4] boundsB) {
   bounds.ptr[0] = nvg__min(bounds.ptr[0], boundsB.ptr[0]);
   bounds.ptr[1] = nvg__min(bounds.ptr[1], boundsB.ptr[1]);
   bounds.ptr[2] = nvg__max(bounds.ptr[2], boundsB.ptr[2]);
   bounds.ptr[3] = nvg__max(bounds.ptr[3], boundsB.ptr[3]);
 }
 
-void nvg__intersectBounds (ref float[4] bounds, in ref float[4] boundsB) {
+void nvg__intersectBounds (ref float[4] bounds, const scope ref float[4] boundsB) {
   bounds.ptr[0] = nvg__max(boundsB.ptr[0], bounds.ptr[0]);
   bounds.ptr[1] = nvg__max(boundsB.ptr[1], bounds.ptr[1]);
   bounds.ptr[2] = nvg__min(boundsB.ptr[2], bounds.ptr[2]);
@@ -6523,7 +6523,7 @@ void nvg__intersectBounds (ref float[4] bounds, in ref float[4] boundsB) {
   bounds.ptr[3] = nvg__max(bounds.ptr[1], bounds.ptr[3]);
 }
 
-bool nvg__pointInBounds (in float x, in float y, in ref float[4] bounds) {
+bool nvg__pointInBounds (in float x, in float y, const scope ref float[4] bounds) {
   pragma(inline, true);
   return (x >= bounds.ptr[0] && x <= bounds.ptr[2] && y >= bounds.ptr[1] && y <= bounds.ptr[3]);
 }
@@ -8157,7 +8157,7 @@ public:
     }
 
     /// perform NanoVega command with stored data, transforming points with [xform] transformation matrix.
-    void perform() (NVGContext ctx, in auto ref NVGMatrix xform) const nothrow @trusted @nogc {
+    void perform() (NVGContext ctx, const scope auto ref NVGMatrix xform) const nothrow @trusted @nogc {
       if (ctx is null || !valid) return;
       float[6] pts = void;
       pts[0..args.length] = args[];
@@ -8197,7 +8197,7 @@ public:
   this (this) { pragma(inline, true); incRef(cast(DataStore*)dsaddr); }
   ~this () { pragma(inline, true); decRef(cast(DataStore*)dsaddr); }
 
-  void opAssign() (in auto ref NVGPathOutline a) {
+  void opAssign() (const scope auto ref NVGPathOutline a) {
     incRef(cast(DataStore*)a.dsaddr);
     decRef(cast(DataStore*)dsaddr);
     dsaddr = a.dsaddr;
@@ -8220,7 +8220,7 @@ public:
   NVGPathOutline flatten () const { pragma(inline, true); return flattenInternal(null); }
 
   /// Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
-  NVGPathOutline flatten() (in auto ref NVGMatrix mt) const { pragma(inline, true); return flattenInternal(&mt); }
+  NVGPathOutline flatten() (const scope auto ref NVGMatrix mt) const { pragma(inline, true); return flattenInternal(&mt); }
 
   // Returns "flattened" path, transformed by the given matrix. Flattened path consists of only two commands kinds: MoveTo and LineTo.
   private NVGPathOutline flattenInternal (scope NVGMatrix* tfm) const {
@@ -8349,7 +8349,7 @@ public:
     public:
       this (this) { pragma(inline, true); incRef(cast(DataStore*)dsaddr); }
       ~this () { pragma(inline, true); decRef(cast(DataStore*)dsaddr); }
-      void opAssign() (in auto ref Range a) {
+      void opAssign() (const scope auto ref Range a) {
         incRef(cast(DataStore*)a.dsaddr);
         decRef(cast(DataStore*)dsaddr);
         dsaddr = a.dsaddr;
@@ -8637,7 +8637,7 @@ if (isAnyCharType!T)
 {
   if (str.length == 0 || positions.length == 0) return positions[0..0];
   usize posnum;
-  auto len = ctx.textGlyphPositions(x, y, str, (in ref NVGGlyphPosition pos) {
+  auto len = ctx.textGlyphPositions(x, y, str, (const scope ref NVGGlyphPosition pos) {
     positions.ptr[posnum++] = pos;
     return (posnum < positions.length);
   });
@@ -8713,7 +8713,7 @@ if (isAnyCharType!T)
   if (rows.length == 0) return rows;
   if (rows.length > int.max-1) rows = rows[0..int.max-1];
   int nrow = 0;
-  auto count = ctx.textBreakLines(str, breakRowWidth, (in ref NVGTextRow!T row) {
+  auto count = ctx.textBreakLines(str, breakRowWidth, (const scope ref NVGTextRow!T row) {
     rows[nrow++] = row;
     return (nrow < rows.length);
   });
@@ -9908,7 +9908,7 @@ float fons__tt_getGlyphKernAdvance (FONSttFontImpl* font, float size, int glyph1
 extern(C) nothrow @trusted @nogc {
   static struct OutlinerData {
     @disable this (this);
-    void opAssign() (in auto ref OutlinerData a) { static assert(0, "no copies!"); }
+    void opAssign() (const scope auto ref OutlinerData a) { static assert(0, "no copies!"); }
     NVGContext vg;
     NVGPathOutline.DataStore* ol;
     FT_BBox outlineBBox;
@@ -10130,7 +10130,7 @@ static if (is(typeof(STBTT_vcubic))) {
 
 static struct OutlinerData {
   @disable this (this);
-  void opAssign() (in auto ref OutlinerData a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref OutlinerData a) { static assert(0, "no copies!"); }
   NVGPathOutline.DataStore* ol;
 nothrow @trusted @nogc:
   static float transx(T) (T v) pure { pragma(inline, true); return cast(float)v; }
@@ -10296,7 +10296,7 @@ struct FONSfontData {
   int rc;
 
   @disable this (this); // no copies
-  void opAssign() (in auto ref FONSfontData a) { static assert(0, "no copies!"); }
+  void opAssign() (const scope auto ref FONSfontData a) { static assert(0, "no copies!"); }
 }
 
 // won't set rc to 1
@@ -10351,7 +10351,7 @@ struct FONSfont {
   int nfallbacks;
 
   @disable this (this);
-  void opAssign() (in auto ref FONSfont a) { static assert(0, "no copies"); }
+  void opAssign() (const scope auto ref FONSfont a) { static assert(0, "no copies"); }
 
   static uint djbhash (const(void)[] s) pure nothrow @safe @nogc {
     uint hash = 5381;
@@ -10465,7 +10465,7 @@ struct FONSatlasInternal {
   int cnodes;
 
   @disable this (this);
-  void opAssign() (in auto ref FONSatlasInternal a) { static assert(0, "no copies"); }
+  void opAssign() (const scope auto ref FONSatlasInternal a) { static assert(0, "no copies"); }
 
 nothrow @trusted @nogc:
   static FONSAtlas create (int w, int h, int nnodes) {
@@ -10652,7 +10652,7 @@ private:
   void delegate (FONSError error, int val) nothrow @trusted @nogc handleError;
 
   @disable this (this);
-  void opAssign() (in auto ref FONScontextInternal ctx) { static assert(0, "FONS copying is not allowed"); }
+  void opAssign() (const scope auto ref FONScontextInternal ctx) { static assert(0, "FONS copying is not allowed"); }
 
 private:
   static bool strequci (const(char)[] s0, const(char)[] s1) pure nothrow @trusted @nogc {
@@ -10975,7 +10975,7 @@ public:
    * Note that if you don't plan to rasterize glyphs (i.e. you will use created
    * FontStash only to measure text), you can simply pass `FONSParams.init`).
    */
-  static FONSContext create() (in auto ref FONSParams params) nothrow @trusted @nogc {
+  static FONSContext create() (const scope auto ref FONSParams params) nothrow @trusted @nogc {
     import core.stdc.string : memcpy;
 
     FONSContext stash = null;
@@ -13392,7 +13392,7 @@ void glnvg__xformToMat3x4 (float[] m3, const(float)[] t) nothrow @trusted @nogc 
   m3.ptr[11] = 0.0f;
 }
 
-NVGColor glnvg__premulColor() (in auto ref NVGColor c) nothrow @trusted @nogc {
+NVGColor glnvg__premulColor() (const scope auto ref NVGColor c) nothrow @trusted @nogc {
   //pragma(inline, true);
   NVGColor res = void;
   res.r = c.r*c.a;
@@ -13860,7 +13860,7 @@ GLNVGblend glnvg__buildBlendFunc (NVGCompositeOperationState op) pure nothrow @t
   return res;
 }
 
-void glnvg__blendCompositeOperation() (GLNVGcontext* gl, in auto ref GLNVGblend op) nothrow @trusted @nogc {
+void glnvg__blendCompositeOperation() (GLNVGcontext* gl, const scope auto ref GLNVGblend op) nothrow @trusted @nogc {
   //glBlendFuncSeparate(glnvg_convertBlendFuncFactor(op.srcRGB), glnvg_convertBlendFuncFactor(op.dstRGB), glnvg_convertBlendFuncFactor(op.srcAlpha), glnvg_convertBlendFuncFactor(op.dstAlpha));
   static if (NANOVG_GL_USE_STATE_FILTER) {
     if (gl.blendFunc.simple == op.simple) {
@@ -13887,7 +13887,7 @@ void glnvg__blendCompositeOperation() (GLNVGcontext* gl, in auto ref GLNVGblend 
   }
 }
 
-void glnvg__renderSetAffine (void* uptr, in ref NVGMatrix mat) nothrow @trusted @nogc {
+void glnvg__renderSetAffine (void* uptr, const scope ref NVGMatrix mat) nothrow @trusted @nogc {
   GLNVGcontext* gl = cast(GLNVGcontext*)uptr;
   GLNVGcall* call;
   // if last operation was GLNVG_AFFINE, simply replace the matrix

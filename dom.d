@@ -2107,7 +2107,7 @@ class Element : DomParent {
 		return cast(inout) prev.parent_.asDocument;
 	}
 
-	deprecated @property void parentDocument(Document doc) {
+	/*deprecated*/ @property void parentDocument(Document doc) {
 		parent_ = doc;
 	}
 

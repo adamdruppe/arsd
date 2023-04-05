@@ -817,8 +817,8 @@ Variant jsonValueToVariant(JSONValue v) {
 
 extern(C) {
 	alias int hashid;
-	MHASH mhash_hmac_init(hashid, in void*, int, int);
-	bool mhash(in void*, in void*, int);
+	MHASH mhash_hmac_init(hashid, const scope void*, int, int);
+	bool mhash(const scope void*, const scope void*, int);
 	int mhash_get_hash_pblock(hashid);
 	byte* mhash_hmac_end(MHASH);
 	int mhash_get_block_size(hashid);

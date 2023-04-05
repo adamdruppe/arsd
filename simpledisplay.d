@@ -15792,7 +15792,7 @@ extern(C) nothrow @nogc {
 	int XFree(void*);
 	int XDeleteProperty(Display *display, Window w, Atom property);
 
-	int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, in void *data, int nelements);
+	int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, scope const void *data, int nelements);
 
 	int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
 		long_offset, arch_long long_length, Bool del, Atom req_type, Atom
@@ -15845,13 +15845,13 @@ extern(C) nothrow @nogc {
 	uint XSendEvent(Display* display, Window w, Bool propagate, arch_long event_mask, XEvent* event_send);
 
 
-	XFontStruct *XLoadQueryFont(Display *display, in char *name);
+	XFontStruct *XLoadQueryFont(Display *display, scope const char *name);
 	int XFreeFont(Display *display, XFontStruct *font_struct);
 	int XSetFont(Display* display, GC gc, Font font);
-	int XTextWidth(XFontStruct*, in char*, int);
+	int XTextWidth(XFontStruct*, scope const char*, int);
 
 	int XSetLineAttributes(Display *display, GC gc, uint line_width, int line_style, int cap_style, int join_style);
-	int XSetDashes(Display *display, GC gc, int dash_offset, in byte* dash_list, int n);
+	int XSetDashes(Display *display, GC gc, int dash_offset, scope const byte* dash_list, int n);
 
 	Window XCreateSimpleWindow(
 		Display*	/* display */,
@@ -15974,7 +15974,7 @@ extern(C) nothrow @nogc {
 
 
 	// check out Xft too: http://www.keithp.com/~keithp/render/Xft.tutorial
-	int XDrawString(Display*, Drawable, GC, int, int, in char*, int);
+	int XDrawString(Display*, Drawable, GC, int, int, scope const char*, int);
 	int XDrawLine(Display*, Drawable, GC, int, int, int, int);
 	int XDrawRectangle(Display*, Drawable, GC, int, int, uint, uint);
 	int XDrawArc(Display*, Drawable, GC, int, int, uint, uint, int, int);
@@ -15986,7 +15986,7 @@ extern(C) nothrow @nogc {
 
 	XFontSet XCreateFontSet(Display*, const char*, char***, int*, char**);
 	void XFreeFontSet(Display*, XFontSet);
-	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, in char*, int);
+	void Xutf8DrawString(Display*, Drawable, XFontSet, GC, int, int, scope const char*, int);
 	void Xutf8DrawText(Display*, Drawable, GC, int, int, XmbTextItem*, int);
 
 	int Xutf8TextExtents(XFontSet font_set, const char *, int num_bytes, XRectangle *overall_ink_return, XRectangle *overall_logical_return);
@@ -16121,7 +16121,7 @@ extern(C) nothrow @nogc {
 }
 
 	// this requires -lXpm
-	//int XpmCreatePixmapFromData(Display*, Drawable, in char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
+	//int XpmCreatePixmapFromData(Display*, Drawable, scope const char**, Pixmap*, Pixmap*, void*); // FIXME: void* should be XpmAttributes
 
 
 mixin DynamicLoad!(XLib, "X11", 6, librariesSuccessfullyLoaded) xlib;
@@ -16204,8 +16204,8 @@ enum : arch_ulong {
 
 	// and the necessary OS functions
 	int shmget(int, size_t, int);
-	void* shmat(int, in void*, int);
-	int shmdt(in void*);
+	void* shmat(int, scope const void*, int);
+	int shmdt(scope const void*);
 	int shmctl (int shmid, int cmd, void* ptr /*struct shmid_ds *buf*/);
 
 	enum IPC_PRIVATE = 0;
@@ -18352,10 +18352,10 @@ extern(System) nothrow @nogc {
 		void glBindTexture(int, int);
 		void glTexParameteri(uint, uint, int);
 		void glTexParameterf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
-		void glTexImage2D(int, int, int, int, int, int, int, int, in void*);
+		void glTexImage2D(int, int, int, int, int, int, int, int, scope const void*);
 		void glTexSubImage2D(uint/*GLenum*/ target, int level, int xoffset, int yoffset,
 			/*GLsizei*/int width, /*GLsizei*/int height,
-			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+			uint/*GLenum*/ format, uint/*GLenum*/ type, scope const void* pixels);
 		void glTexEnvf(uint/*GLenum*/ target, uint/*GLenum*/ pname, float param);
 
 		void glLineWidth(int);
@@ -18488,7 +18488,7 @@ extern(System) nothrow @nogc {
 
 		void glTextureSubImage2D(uint texture, int level, int xoffset, int yoffset,
 			/*GLsizei*/int width, /*GLsizei*/int height,
-			uint/*GLenum*/ format, uint/*GLenum*/ type, in void* pixels);
+			uint/*GLenum*/ format, uint/*GLenum*/ type, scope const void* pixels);
 	}
 
 	interface GLU {

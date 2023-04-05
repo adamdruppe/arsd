@@ -4382,7 +4382,7 @@ public void stbtt_GetPackedQuad(const(stbtt_packedchar)* chardata, int pw, int p
 T STBTT_min(T) (in T a, in T b) pure { pragma(inline, true); return (a < b ? a : b); }
 T STBTT_max(T) (in T a, in T b) pure { pragma(inline, true); return (a < b ? b : a); }
 
-private int stbtt__ray_intersect_bezier(in ref float[2] orig, in ref float[2] ray, in ref float[2] q0, in ref float[2] q1, in ref float[2] q2, ref float[2][2] hits)
+private int stbtt__ray_intersect_bezier(const scope ref float[2] orig, const scope ref float[2] ray, const scope ref float[2] q0, const scope ref float[2] q1, const scope ref float[2] q2, ref float[2][2] hits)
 {
    float q0perp = q0[1]*ray[0] - q0[0]*ray[1];
    float q1perp = q1[1]*ray[0] - q1[0]*ray[1];

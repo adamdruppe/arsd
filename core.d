@@ -3982,8 +3982,6 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 				callback.release();
 			}
-
-			alias queue this;
 		}
 
 		// there's a global instance of this we refer back to

@@ -745,7 +745,7 @@ private:
 
       Element_Type[NUM_COLS][NUM_ROWS] v;
 
-      this() (in auto ref Matrix44 m) {
+      this() (const scope auto ref Matrix44 m) {
         foreach (immutable r; 0..NUM_ROWS) v[r][] = m.v[r][];
       }
 
@@ -754,7 +754,7 @@ private:
 
       ref inout(Element_Type) at (int r, int c) inout { pragma(inline, true); return v.ptr[r].ptr[c]; }
 
-      ref Matrix44 opOpAssign(string op:"+") (in auto ref Matrix44 a) {
+      ref Matrix44 opOpAssign(string op:"+") (const scope auto ref Matrix44 a) {
         foreach (int r; 0..NUM_ROWS) {
           at(r, 0) += a.at(r, 0);
           at(r, 1) += a.at(r, 1);
@@ -764,7 +764,7 @@ private:
         return this;
       }
 
-      ref Matrix44 opOpAssign(string op:"-") (in auto ref Matrix44 a) {
+      ref Matrix44 opOpAssign(string op:"-") (const scope auto ref Matrix44 a) {
         foreach (int r; 0..NUM_ROWS) {
           at(r, 0) -= a.at(r, 0);
           at(r, 1) -= a.at(r, 1);
@@ -774,7 +774,7 @@ private:
         return this;
       }
 
-      Matrix44 opBinary(string op:"+") (in auto ref Matrix44 b) const {
+      Matrix44 opBinary(string op:"+") (const scope auto ref Matrix44 b) const {
         alias a = this;
         Matrix44 ret;
         foreach (int r; 0..NUM_ROWS) {
@@ -786,7 +786,7 @@ private:
         return ret;
       }
 
-      Matrix44 opBinary(string op:"-") (in auto ref Matrix44 b) const {
+      Matrix44 opBinary(string op:"-") (const scope auto ref Matrix44 b) const {
         alias a = this;
         Matrix44 ret;
         foreach (int r; 0..NUM_ROWS) {
@@ -798,7 +798,7 @@ private:
         return ret;
       }
 
-      static void add_and_store() (jpgd_block_t* pDst, in auto ref Matrix44 a, in auto ref Matrix44 b) {
+      static void add_and_store() (jpgd_block_t* pDst, const scope auto ref Matrix44 a, const scope auto ref Matrix44 b) {
         foreach (int r; 0..4) {
           pDst[0*8 + r] = cast(jpgd_block_t)(a.at(r, 0) + b.at(r, 0));
           pDst[1*8 + r] = cast(jpgd_block_t)(a.at(r, 1) + b.at(r, 1));
@@ -807,7 +807,7 @@ private:
         }
       }
 
-      static void sub_and_store() (jpgd_block_t* pDst, in auto ref Matrix44 a, in auto ref Matrix44 b) {
+      static void sub_and_store() (jpgd_block_t* pDst, const scope auto ref Matrix44 a, const scope auto ref Matrix44 b) {
         foreach (int r; 0..4) {
           pDst[0*8 + r] = cast(jpgd_block_t)(a.at(r, 0) - b.at(r, 0));
           pDst[1*8 + r] = cast(jpgd_block_t)(a.at(r, 1) - b.at(r, 1));
@@ -3646,7 +3646,7 @@ bool compress_image_to_jpeg_file (const(char)[] fname, int width, int height, in
 /// Writes JPEG image to file.
 /// num_channels must be 1 (Y), 3 (RGB), 4 (RGBA), image pitch must be width*num_channels.
 /// note that alpha will not be stored in jpeg file.
-bool compress_image_to_jpeg_file() (const(char)[] fname, int width, int height, int num_channels, const(ubyte)[] pImage_data, in auto ref JpegParams comp_params) {
+bool compress_image_to_jpeg_file() (const(char)[] fname, int width, int height, int num_channels, const(ubyte)[] pImage_data, const scope auto ref JpegParams comp_params) {
   import std.internal.cstring;
   import core.stdc.stdio : FILE, fopen, fclose, fwrite;
   FILE* fl = fopen(fname.tempCString, "wb");
@@ -4537,7 +4537,7 @@ public:
   // width, height  - Image dimensions.
   // channels - May be 1, or 3. 1 indicates grayscale, 3 indicates RGB source data.
   // Returns false on out of memory or if a stream write fails.
-  bool setup() (WriteFunc pStream, int width, int height, int src_channels, in auto ref JpegParams comp_params) {
+  bool setup() (WriteFunc pStream, int width, int height, int src_channels, const scope auto ref JpegParams comp_params) {
     deinit();
     if ((pStream is null || width < 1 || height < 1) || (src_channels != 1 && src_channels != 3 && src_channels != 4) || !comp_params.check()) return false;
     m_pStream = pStream;

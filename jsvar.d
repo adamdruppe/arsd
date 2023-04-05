@@ -2522,7 +2522,12 @@ WrappedNativeObject wrapNativeObject(Class, bool special = false)(Class obj) if(
 
 					_properties[memberName] = var(os);
 				} else {
-					static if(.isScriptable!(__traits(getAttributes, __traits(getMember, Class, memberName)))())
+					alias fuckThisLanguage = __traits(getOverloads, Class, memberName, true);
+					static if(fuckThisLanguage.length)
+						alias fuckYourPointlessDeprecations = fuckThisLanguage[0];
+					else
+						alias fuckYourPointlessDeprecations = __traits(getMember, Class, memberName);
+					static if(.isScriptable!(__traits(getAttributes, fuckYourPointlessDeprecations))())
 					// if it has a type but is not a function, it is prolly a member
 					_properties[memberName] = new PropertyPrototype(
 						() => var(__traits(getMember, obj, memberName)),
@@ -2588,7 +2593,7 @@ WrappedNativeObject wrapUfcs(alias Module, Type)(Type obj) {
 
 			foreach(memberName; __traits(allMembers, Module)) static if(is(typeof(__traits(getMember, Module, memberName)) type)) {
 				static if(is(type == function)) {
-					foreach(idx, overload; AliasSeq!(__traits(getOverloads, Module, memberName))) static if(.isScriptable!(__traits(getAttributes, overload))()) {
+					foreach(idx, overload; AliasSeq!(__traits(getOverloads, Module, memberName))) static if(.isScriptable!(__traits(getAttributes, __traits(getOverloads, Module, memberName)[idx]))()) { // lol  i have to do the second getOverload to stop the compiler from deprecating
 						auto helper = &__traits(getOverloads, Module, memberName)[idx];
 						static if(Parameters!helper.length >= 1 && is(Parameters!helper[0] == Type)) {
 							// this staticMap is a bit of a hack so it can handle `in float`... liable to break with others, i'm sure
