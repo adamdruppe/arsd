@@ -10,6 +10,8 @@
 +/
 module arsd.core;
 
+// FIXME: add callbacks on file open for tracing dependencies dynamically
+
 // see for useful info: https://devblogs.microsoft.com/dotnet/how-async-await-really-works/
 
 // see: https://wiki.openssl.org/index.php/Simple_TLS_Server
@@ -116,6 +118,278 @@ struct stringz {
 
 		return raw[0 .. length];
 	}
+}
+
+/++
+	A limited variant to hold just a few types. It is made for the use of packing a small amount of extra data into error messages.
++/
+/+
+	* if length and ptr are both 0, it is null
+	* if ptr == 1, length is an integer
+	* if ptr == 2, length is an unsigned integer (suggest printing in hex)
+	* if ptr == 3, length is a combination of flags (suggest printing in binary)
+	* if ptr == 4, length is a unix permission thing (suggest printing in octal)
+	* if ptr == 5, length is a double float
+	* if ptr == 15, length must be 0. this holds an empty, non-null, SSO string.
+	* if ptr >= 16 && < 24, length is reinterpret-casted a small string of length of (ptr & 0x7) + 1
+	* if length == size_t.max, ptr is interpreted as a stringz
+	* if ptr >= 1024, it is a non-null D string or byte array. It is a string if the length high bit is clear, a byte array if it is set. the length is what is left after you mask that out.
+
+	All other ptr values are reserved for future expansion.
++/
+struct LimitedVariant {
+
+	/++
+
+	+/
+	enum Contains {
+		null_,
+		intDecimal,
+		intHex,
+		intBinary,
+		intOctal,
+		double_,
+		emptySso,
+		stringSso,
+		stringz,
+		string,
+		bytes,
+
+		invalid,
+	}
+
+	/++
+
+	+/
+	Contains contains() const {
+		auto tag = cast(size_t) ptr;
+		if(ptr is null && length is null)
+			return Contains.null_;
+		else switch(tag) {
+			case 1: return Contains.intDecimal;
+			case 2: return Contains.intHex;
+			case 3: return Contains.intBinary;
+			case 4: return Contains.intOctal;
+			case 5: return Contains.double_;
+			case 15: return length is null ? Contains.emptySso : Contains.invalid;
+			default:
+				if(tag >= 16 && tag < 24) {
+					return Contains.stringSso;
+				} else if(tag >= 1024) {
+					if(cast(size_t) length == size_t.max)
+						return Contains.stringz;
+					else
+						return isHighBitSet ? Contains.bytes : Contains.string;
+				} else {
+					return Contains.invalid;
+				}
+		}
+	}
+
+	/// ditto
+	bool containsInt() const {
+		with(Contains)
+		switch(contains) {
+			case intDecimal, intHex, intBinary, intOctal:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/// ditto
+	bool containsString() const {
+		with(Contains)
+		switch(contains) {
+			case null_, emptySso, stringSso, string:
+			// case stringz:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/// ditto
+	bool containsDouble() const {
+		with(Contains)
+		switch(contains) {
+			case double_:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/// ditto
+	bool containsBytes() const {
+		with(Contains)
+		switch(contains) {
+			case bytes, null_:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	private const(void)* length;
+	private const(ubyte)* ptr;
+
+	private void Throw() const {
+		throw ArsdException!"LimitedVariant"(cast(size_t) length, cast(size_t) ptr);
+	}
+
+	private bool isHighBitSet() const {
+		return (cast(size_t) length >> (size_t.sizeof * 8 - 1) & 0x1) != 0;
+	}
+
+	/++
+		getString gets a reference to the string stored internally, see [toString] to get a string representation or whatever is inside.
+
+	+/
+	const(char)[] getString() const return {
+		with(Contains)
+		switch(contains()) {
+			case null_:
+				return null;
+			case emptySso:
+				return (cast(const(char)*) ptr)[0 .. 0]; // zero length, non-null
+			case stringSso:
+				auto len = ((cast(size_t) ptr) & 0x7) + 1;
+				return (cast(char*) &length)[0 .. len];
+			case string:
+				return (cast(const(char)*) ptr)[0 .. cast(size_t) length];
+			default:
+				Throw(); assert(0);
+		}
+	}
+
+	/// ditto
+	long getInt() const {
+		if(containsInt)
+			return cast(long) length;
+		else
+			Throw();
+		assert(0);
+	}
+
+	/// ditto
+	double getDouble() const {
+		if(containsDouble)
+			return *cast(double*) &length;
+		else
+			Throw();
+		assert(0);
+	}
+
+	/// ditto
+	const(ubyte)[] getBytes() const {
+		with(Contains)
+		switch(contains()) {
+			case null_:
+				return null;
+			case bytes:
+				return ptr[0 .. (cast(size_t) length) & ((1UL << (size_t.sizeof * 8 - 1)) - 1)];
+			default:
+				Throw(); assert(0);
+		}
+	}
+
+	/++
+
+	+/
+	string toString() const {
+
+		string intHelper(string prefix, int radix) {
+			char[128] buffer;
+			buffer[0 .. prefix.length] = prefix[];
+			char[] toUse = buffer[prefix.length .. $];
+
+			auto got = intToString(getInt(), toUse[], IntToStringArgs().withRadix(radix));
+
+			return buffer[0 .. prefix.length + got.length].idup;
+		}
+
+		with(Contains)
+		final switch(contains()) {
+			case null_:
+				return "<null>";
+			case intDecimal:
+				return intHelper("", 10);
+			case intHex:
+				return intHelper("0x", 16);
+			case intBinary:
+				return intHelper("0b", 2);
+			case intOctal:
+				return intHelper("0o", 8);
+			case emptySso, stringSso, string:
+				return getString().idup;
+			case bytes:
+				auto b = getBytes();
+
+				return "<bytes>"; // FIXME
+
+			case double_:
+				assert(0); // FIXME
+			case stringz:
+				assert(0); // FIXME
+			case invalid:
+				return "<invalid>";
+		}
+	}
+
+	/++
+
+	+/
+	this(string s) {
+		ptr = cast(const(ubyte)*) s.ptr;
+		length = cast(void*) s.length;
+	}
+
+	/// ditto
+	this(const(ubyte)[] b) {
+		ptr = cast(const(ubyte)*) b.ptr;
+		length = cast(void*) (b.length | (1UL << (size_t.sizeof * 8 - 1)));
+	}
+
+	/// ditto
+	this(long l, int base = 10) {
+		int tag;
+		switch(base) {
+			case 10: tag = 1; break;
+			case 16: tag = 2; break;
+			case  2: tag = 3; break;
+			case  8: tag = 4; break;
+			default: assert(0, "You passed an invalid base to LimitedVariant");
+		}
+		ptr = cast(ubyte*) tag;
+		length = cast(void*) l;
+	}
+
+	/// ditto
+	version(none)
+	this(double d) {
+		// this crashes dmd! omg
+		assert(0);
+		// ptr = cast(ubyte*) 15;
+		// length = cast(void*) *cast(size_t*) &d;
+	}
+}
+
+unittest {
+	LimitedVariant v = LimitedVariant("foo");
+	assert(v.containsString());
+	assert(!v.containsInt());
+	assert(v.getString() == "foo");
+
+	LimitedVariant v2 = LimitedVariant(4);
+	assert(v2.containsInt());
+	assert(!v2.containsString());
+	assert(v2.getInt() == 4);
+
+	LimitedVariant v3 = LimitedVariant(cast(ubyte[]) [1, 2, 3]);
+	assert(v3.containsBytes());
+	assert(!v3.containsString());
+	assert(v3.getBytes() == [1, 2, 3]);
 }
 
 /++
@@ -619,6 +893,20 @@ inout(char)[] stripInternal(return inout(char)[] s) {
 	return s;
 }
 
+nothrow @safe @nogc pure
+inout(char)[] stripRightInternal(return inout(char)[] s) {
+	for(int a = cast(int)(s.length - 1); a > 0; a--) {
+		char c = s[a];
+		if(c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+			s = s[0 .. a + 1];
+			break;
+		}
+	}
+
+	return s;
+
+}
+
 /++
 	Shortcut for converting some types to string without invoking Phobos (but it will as a last resort).
 
@@ -631,10 +919,61 @@ string toStringInternal(T)(T t) {
 		return t;
 	else static if(is(T : long))
 		return intToString(t, buffer[]).idup;
-	else {
+	else static if(is(T == enum)) {
+		switch(t) {
+			foreach(memberName; __traits(allMembers, T)) {
+				case __traits(getMember, T, memberName):
+					return memberName;
+			}
+			default:
+				return "<unknown>";
+		}
+	} else {
 		import std.conv;
 		return to!string(t);
 	}
+}
+
+/++
+
++/
+string flagsToString(Flags)(ulong value) {
+	string r;
+
+	void add(string memberName) {
+		if(r.length)
+			r ~= " | ";
+		r ~= memberName;
+	}
+
+	string none = "<none>";
+
+	foreach(memberName; __traits(allMembers, Flags)) {
+		auto flag = cast(ulong) __traits(getMember, Flags, memberName);
+		if(flag) {
+			if((value & flag) == flag)
+				add(memberName);
+		} else {
+			none = memberName;
+		}
+	}
+
+	if(r.length == 0)
+		r = none;
+
+	return r;
+}
+
+unittest {
+	enum MyFlags {
+		none = 0,
+		a = 1,
+		b = 2
+	}
+
+	assert(flagsToString!MyFlags(3) == "a | b");
+	assert(flagsToString!MyFlags(0) == "none");
+	assert(flagsToString!MyFlags(2) == "b");
 }
 
 /++
@@ -1004,6 +1343,36 @@ class ArsdExceptionBase : object.Exception {
 }
 
 /++
+	Base class for when you've requested a feature that is not available. It may not be available because it is possible, but not yet implemented, or it might be because it is impossible on your operating system.
++/
+class FeatureUnavailableException : ArsdExceptionBase {
+	this(string featureName = __PRETTY_FUNCTION__, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		super(featureName, file, line, next);
+	}
+}
+
+/++
+	This means the feature could be done, but I haven't gotten around to implementing it yet. If you email me, I might be able to add it somewhat quickly and get back to you.
++/
+class NotYetImplementedException : FeatureUnavailableException {
+	this(string featureName = __PRETTY_FUNCTION__, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		super(featureName, file, line, next);
+	}
+
+}
+
+/++
+	This means the feature is not supported by your current operating system. You might be able to get it in an update, but you might just have to find an alternate way of doing things.
++/
+class NotSupportedException : FeatureUnavailableException {
+	this(string featureName, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		super(featureName, file, line, next);
+	}
+}
+
+/++
+	This is a generic exception with attached arguments. It is used when I had to throw something but didn't want to write a new class.
+
 	You can catch an ArsdException to get its passed arguments out.
 
 	You can pass either a base class or a string as `Type`.
@@ -1214,18 +1583,32 @@ struct SystemErrorCode {
 /++
 
 +/
+struct SavedArgument {
+	string name;
+	LimitedVariant value;
+}
+
+/++
+
++/
 class SystemApiException : ArsdExceptionBase {
-	this(string msg, int originalErrorNo, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		this(msg, SystemErrorCode(originalErrorNo), file, line, next);
+	this(string msg, int originalErrorNo, scope SavedArgument[] args = null, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(msg, SystemErrorCode(originalErrorNo), args, file, line, next);
 	}
 
 	version(Windows)
-	this(string msg, DWORD windowsError, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
-		this(msg, SystemErrorCode(windowsError), file, line, next);
+	this(string msg, DWORD windowsError, scope SavedArgument[] args = null, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(msg, SystemErrorCode(windowsError), args, file, line, next);
 	}
 
-	this(string msg, SystemErrorCode code, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+	this(string msg, SystemErrorCode code, SavedArgument[] args = null, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
 		this.errorCode = code;
+
+		// discard stuff that won't fit
+		if(args.length > this.args.length)
+			args = args[0 .. this.args.length];
+
+		this.args[0 .. args.length] = args[];
 
 		super(msg, file, line, next);
 	}
@@ -1235,9 +1618,18 @@ class SystemApiException : ArsdExceptionBase {
 	+/
 	const SystemErrorCode errorCode;
 
+	/++
+
+	+/
+	const SavedArgument[8] args;
+
 	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
 		super.getAdditionalPrintableInformation(sink);
 		sink("Error code", errorCode.toString());
+
+		foreach(arg; args)
+			if(arg.name !is null)
+				sink(arg.name, arg.value.toString());
 	}
 
 }
@@ -1279,7 +1671,15 @@ template ErrnoEnforce(alias fn, alias errorValue = void) {
 			Return value = fn(params);
 
 			if(value == errorValueToUse) {
-				throw new ErrnoApiException(__traits(identifier, fn), errno, file, line);
+				SavedArgument[] args; // FIXME
+				/+
+				static foreach(idx; 0 .. Params.length)
+					args ~= SavedArgument(
+						__traits(identifier, Params[idx .. idx + 1]),
+						params[idx]
+					);
+				+/
+				throw new ErrnoApiException(__traits(identifier, fn), errno, args, file, line);
 			}
 
 			return value;
@@ -1312,7 +1712,8 @@ version(Windows) {
 
 				if(value == errorValueToUse) {
 					auto error = GetLastError();
-					throw new WindowsApiException(__traits(identifier, fn), error, file, line);
+					SavedArgument[] args; // FIXME
+					throw new WindowsApiException(__traits(identifier, fn), error, args, file, line);
 				}
 
 				return value;
@@ -1653,6 +2054,20 @@ private class CallbackHelper {
 +/
 struct FilePath {
 	string path;
+
+	bool isNull() {
+		return path is null;
+	}
+
+	bool opCast(T:bool)() {
+		return !isNull;
+	}
+
+	string toString() {
+		return path;
+	}
+
+	//alias toString this;
 }
 
 /++
@@ -1912,7 +2327,11 @@ class AbstractFile {
 
 			if(handle == INVALID_HANDLE_VALUE) {
 				// FIXME: throw the filename and other params here too
-				throw new WindowsApiException("CreateFileW", GetLastError());
+				SavedArgument[3] args;
+				args[0] = SavedArgument("filename", LimitedVariant(filename.path));
+				args[1] = SavedArgument("access", LimitedVariant(access, 2));
+				args[2] = SavedArgument("requirePreexisting", LimitedVariant(require == RequirePreexisting.yes));
+				throw new WindowsApiException("CreateFileW", GetLastError(), args[]);
 			}
 
 			this.handle = handle;
@@ -1973,9 +2392,15 @@ class AbstractFile {
 				break;
 			}
 
-			int fd = open(namez.ptr, flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-			if(fd == -1)
-				throw new ErrnoApiException("open", errno);
+			auto perms = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+			int fd = open(namez.ptr, flags, perms);
+			if(fd == -1) {
+				SavedArgument[3] args;
+				args[0] = SavedArgument("filename", LimitedVariant(filename.path));
+				args[1] = SavedArgument("flags", LimitedVariant(flags, 2));
+				args[2] = SavedArgument("perms", LimitedVariant(perms, 8));
+				throw new ErrnoApiException("open", errno, args[]);
+			}
 
 			this.handle = fd;
 		}
@@ -2311,47 +2736,452 @@ alias AsyncAnonymousPipe = AsyncFile;
 	// not async, so if you want that, do it in a helper thread
 	// just a convenient function to have (tho phobos has a decent one too, importing it expensive af)
 
-// FIXME
+/++
+	Note that the order of items called for your delegate is undefined; if you want it sorted, you'll have to collect and sort yourself. But it *might* be sorted by the OS (on Windows, it almost always is), so consider that when choosing a sorting algorithm.
+
+	History:
+		previously in minigui as a private function. Moved to arsd.core on April 3, 2023
++/
+GetFilesResult getFiles(string directory, scope void delegate(string name, bool isDirectory) dg) {
+	// FIXME: my buffers here aren't great lol
+
+	SavedArgument[1] argsForException() {
+		return [
+			SavedArgument("directory", LimitedVariant(directory)),
+		];
+	}
+
+	version(Windows) {
+		WIN32_FIND_DATA data;
+		// FIXME: if directory ends with / or \\ ?
+		WCharzBuffer search = WCharzBuffer(directory ~ "/*");
+		auto handle = FindFirstFileW(search.ptr, &data);
+		scope(exit) if(handle !is INVALID_HANDLE_VALUE) FindClose(handle);
+		if(handle is INVALID_HANDLE_VALUE) {
+			if(GetLastError() == ERROR_FILE_NOT_FOUND)
+				return GetFilesResult.fileNotFound;
+			throw new WindowsApiException("FindFirstFileW", GetLastError(), argsForException()[]);
+		}
+
+		try_more:
+
+		string name = makeUtf8StringFromWindowsString(data.cFileName[0 .. findIndexOfZero(data.cFileName[])]);
+
+		dg(name, (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? true : false);
+
+		auto ret = FindNextFileW(handle, &data);
+		if(ret == 0) {
+			if(GetLastError() == ERROR_NO_MORE_FILES)
+				return GetFilesResult.success;
+			throw new WindowsApiException("FindNextFileW", GetLastError(), argsForException()[]);
+		}
+
+		goto try_more;
+
+	} else version(Posix) {
+		import core.sys.posix.dirent;
+		import core.stdc.errno;
+		auto dir = opendir((directory ~ "\0").ptr);
+		scope(exit)
+			if(dir) closedir(dir);
+		if(dir is null)
+			throw new ErrnoApiException("opendir", errno, argsForException());
+
+		auto dirent = readdir(dir);
+		if(dirent is null)
+			return GetFilesResult.fileNotFound;
+
+		try_more:
+
+		string name = dirent.d_name[0 .. findIndexOfZero(dirent.d_name[])].idup;
+
+		dg(name, dirent.d_type == DT_DIR);
+
+		dirent = readdir(dir);
+		if(dirent is null)
+			return GetFilesResult.success;
+
+		goto try_more;
+	} else static assert(0);
+}
+
+/// ditto
+enum GetFilesResult {
+	success,
+	fileNotFound
+}
+
+/++
+	This is currently a simplified glob where only the * wildcard in the first or last position gets special treatment or a single * in the middle.
+
+	More things may be added later to be more like what Phobos supports.
++/
+bool matchesFilePattern(scope const(char)[] name, scope const(char)[] pattern) {
+	if(pattern.length == 0)
+		return false;
+	if(pattern == "*")
+		return true;
+	if(pattern.length > 2 && pattern[0] == '*' && pattern[$-1] == '*') {
+		// if the rest of pattern appears in name, it is good
+		return name.indexOf(pattern[1 .. $-1]) != -1;
+	} else if(pattern[0] == '*') {
+		// if the rest of pattern is at end of name, it is good
+		return name.endsWith(pattern[1 .. $]);
+	} else if(pattern[$-1] == '*') {
+		// if the rest of pattern is at start of name, it is good
+		return name.startsWith(pattern[0 .. $-1]);
+	} else if(pattern.length >= 3) {
+		auto idx = pattern.indexOf("*");
+		if(idx != -1) {
+			auto lhs = pattern[0 .. idx];
+			auto rhs = pattern[idx + 1 .. $];
+			if(name.length >= lhs.length + rhs.length) {
+				return name.startsWith(lhs) && name.endsWith(rhs);
+			} else {
+				return false;
+			}
+		}
+	}
+
+	return name == pattern;
+}
+
+unittest {
+	assert("test.html".matchesFilePattern("*"));
+	assert("test.html".matchesFilePattern("*.html"));
+	assert("test.html".matchesFilePattern("*.*"));
+	assert("test.html".matchesFilePattern("test.*"));
+	assert(!"test.html".matchesFilePattern("pest.*"));
+	assert(!"test.html".matchesFilePattern("*.dhtml"));
+
+	assert("test.html".matchesFilePattern("t*.html"));
+	assert(!"test.html".matchesFilePattern("e*.html"));
+}
+
+package(arsd) int indexOf(scope const(char)[] haystack, scope const(char)[] needle) {
+	if(haystack.length < needle.length)
+		return -1;
+	if(haystack == needle)
+		return 0;
+	foreach(i; 0 .. haystack.length - needle.length + 1)
+		if(haystack[i .. i + needle.length] == needle)
+			return cast(int) i;
+	return -1;
+}
+
+unittest {
+	assert("foo".indexOf("f") == 0);
+	assert("foo".indexOf("o") == 1);
+	assert("foo".indexOf("foo") == 0);
+	assert("foo".indexOf("oo") == 1);
+	assert("foo".indexOf("fo") == 0);
+	assert("foo".indexOf("boo") == -1);
+	assert("foo".indexOf("food") == -1);
+}
+
+package(arsd) bool endsWith(scope const(char)[] haystack, scope const(char)[] needle) {
+	if(needle.length > haystack.length)
+		return false;
+	return haystack[$ - needle.length .. $] == needle;
+}
+
+unittest {
+	assert("foo".endsWith("o"));
+	assert("foo".endsWith("oo"));
+	assert("foo".endsWith("foo"));
+	assert(!"foo".endsWith("food"));
+	assert(!"foo".endsWith("d"));
+}
+
+package(arsd) bool startsWith(scope const(char)[] haystack, scope const(char)[] needle) {
+	if(needle.length > haystack.length)
+		return false;
+	return haystack[0 .. needle.length] == needle;
+}
+
+unittest {
+	assert("foo".startsWith("f"));
+	assert("foo".startsWith("fo"));
+	assert("foo".startsWith("foo"));
+	assert(!"foo".startsWith("food"));
+	assert(!"foo".startsWith("d"));
+}
+
 
 // FILE/DIR WATCHES
 	// linux does it by name, windows and bsd do it by handle/descriptor
 	// dispatches change event to either your thread or maybe the any task` queue.
 
-class DirectoryWatcher {
-	// I guess I can have one inotify instance associated with the event loop
+/++
 
++/
+class DirectoryWatcher {
 	private {
 		version(Arsd_core_windows) {
+			OVERLAPPED overlapped;
+			HANDLE hDirectory;
+			ubyte[] buffer;
 
+			extern(Windows)
+			static void overlappedCompletionRoutine(DWORD dwErrorCode, DWORD dwNumberOfBytesTransferred, LPOVERLAPPED lpOverlapped) {
+				typeof(this) rr = cast(typeof(this)) (cast(void*) lpOverlapped - typeof(this).overlapped.offsetof);
+
+				// dwErrorCode
+				auto response = rr.buffer[0 .. dwNumberOfBytesTransferred];
+
+				while(response.length) {
+					auto fni = cast(FILE_NOTIFY_INFORMATION*) response.ptr;
+					auto filename = fni.FileName[0 .. fni.FileNameLength];
+
+					if(fni.NextEntryOffset)
+						response = response[fni.NextEntryOffset .. $];
+					else
+						response = response[$..$];
+
+					// FIXME: I think I need to pin every overlapped op while it is pending
+					// and unpin it when it is returned. GC.addRoot... but i don't wanna do that
+					// every op so i guess i should do a refcount scheme similar to the other callback helper.
+
+					rr.changeHandler(
+						FilePath(makeUtf8StringFromWindowsString(filename)), // FIXME: this is a relative path
+						ChangeOperation.unknown // FIXME this is fni.Action
+					);
+				}
+
+				rr.requestRead();
+			}
+
+			void requestRead() {
+				DWORD ignored;
+				if(!ReadDirectoryChangesW(
+					hDirectory,
+					buffer.ptr,
+					cast(int) buffer.length,
+					recursive,
+					FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_FILE_NAME,
+					&ignored,
+					&overlapped,
+					&overlappedCompletionRoutine
+				)) {
+					auto error = GetLastError();
+					/+
+					if(error == ERROR_IO_PENDING) {
+						// not expected here, the docs say it returns true when queued
+					}
+					+/
+
+					throw new SystemApiException("ReadDirectoryChangesW", error);
+				}
+			}
 		} else version(Arsd_core_epoll) {
+			static int inotifyfd = -1; // this is TLS since it is associated with the thread's event loop
+			static ICoreEventLoop.UnregisterToken inotifyToken;
+			static CallbackHelper inotifycb;
+			static DirectoryWatcher[int] watchMappings;
+
+			static ~this() {
+				if(inotifyfd != -1) {
+					close(inotifyfd);
+					inotifyfd = -1;
+				}
+			}
+
+			import core.sys.linux.sys.inotify;
+
+			int watchId = -1;
+
+			static void inotifyReady() {
+				// read from it
+				ubyte[256 /* NAME_MAX + 1 */ + inotify_event.sizeof] sbuffer;
+
+				auto ret = read(inotifyfd, sbuffer.ptr, sbuffer.length);
+				if(ret == -1) {
+					auto errno = errno;
+					if(errno == EAGAIN || errno == EWOULDBLOCK)
+						return;
+					throw new SystemApiException("read inotify", errno);
+				} else if(ret == 0) {
+					assert(0, "I don't think this is ever supposed to happen");
+				}
+
+				auto buffer = sbuffer[0 .. ret];
+
+				while(buffer.length > 0) {
+					inotify_event* event = cast(inotify_event*) buffer.ptr;
+					buffer = buffer[inotify_event.sizeof .. $];
+					char[] filename = cast(char[]) buffer[0 .. event.len];
+					buffer = buffer[event.len .. $];
+
+					// note that filename is padded with zeroes, so it is actually a stringz
+
+					if(auto obj = event.wd in watchMappings) {
+						(*obj).changeHandler(
+							FilePath(stringz(filename.ptr).borrow.idup), // FIXME: this is a relative path
+							ChangeOperation.unknown // FIXME
+						);
+					} else {
+						// it has probably already been removed
+					}
+				}
+			}
 		} else version(Arsd_core_kqueue) {
+			int fd;
+			CallbackHelper cb;
 		}
+
+		FilePath path;
+		string globPattern;
+		bool recursive;
+		void delegate(FilePath filename, ChangeOperation op) changeHandler;
 	}
 
-	/++
+	enum ChangeOperation {
+		unknown,
+		deleted, // NOTE_DELETE, IN_DELETE, FILE_NOTIFY_CHANGE_FILE_NAME
+		written, // NOTE_WRITE / NOTE_EXTEND / NOTE_TRUNCATE, IN_MODIFY, FILE_NOTIFY_CHANGE_LAST_WRITE / FILE_NOTIFY_CHANGE_SIZE
+		renamed, // NOTE_RENAME, the moved from/to in linux, FILE_NOTIFY_CHANGE_FILE_NAME
+		metadataChanged // NOTE_ATTRIB, IN_ATTRIB, FILE_NOTIFY_CHANGE_ATTRIBUTES
+
+		// there is a NOTE_OPEN on freebsd 13, and the access change on Windows. and an open thing on linux. so maybe i can do note open/note_read too.
+	}
+
+	/+
 		Windows and Linux work best when you watch directories. The operating system tells you the name of files as they change.
 
-		BSD doesn't support this. You can only get names by watching specific files. (Windows, by contrast, can only watch directories, but since it gives you a filename, it is easy to filter.)
+		BSD doesn't support this. You can only get names and reports when a file is modified by watching specific files. AS such, when you watch a directory on those systems, your delegate will be called with a null path. Cross-platform applications should check for this and not assume the name is always usable.
 
 		inotify is kinda clearly the best of the bunch, with Windows in second place, and kqueue dead last.
+
+
+		If path to watch is a directory, it signals when a file inside the directory (only one layer deep) is created or modified. This is the most efficient on Windows and Linux.
+
+		If a path is a file, it only signals when that specific file is written. This is most efficient on BSD.
+
+
+		The delegate is called when something happens. Note that the path modified may not be accurate on all systems when you are watching a directory.
 	+/
-	this(FilePath directoryToWatch) {
+
+	/++
+		Watches a directory and its contents. If the `globPattern` is `null`, it will not attempt to add child items but also will not filter it, meaning you will be left with platform-specific behavior.
+
+		On Windows, the globPattern is just used to filter events.
+
+		On Linux, the `recursive` flag, if set, will cause it to add additional OS-level watches for each subdirectory.
+
+		On BSD, anything other than a null pattern will cause a directory scan to add files to the watch list.
+
+		For best results, use the most limited thing you need, as watches can get quite involved on the bsd systems.
+
+		Newly added files and subdirectories may not be automatically added in all cases, meaning if it is added and then subsequently modified, you might miss a notification.
+
+		If the event queue is too busy, the OS may skip a notification.
+
+		You should always offer some way for the user to force a refresh and not rely on notifications being present; they are a convenience when they work, not an always reliable method.
+	+/
+	this(FilePath directoryToWatch, string globPattern, bool recursive, void delegate(FilePath pathModified, ChangeOperation op) dg) {
+		this.path = directoryToWatch;
+		this.globPattern = globPattern;
+		this.recursive = recursive;
+		this.changeHandler = dg;
+
 		version(Arsd_core_windows) {
-			assert(0);
+			WCharzBuffer wname = directoryToWatch.path;
+			buffer = new ubyte[](1024);
+			hDirectory = CreateFileW(
+				wname.ptr,
+				GENERIC_READ,
+				FILE_SHARE_READ,
+				null,
+				OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_BACKUP_SEMANTICS,
+				null
+			);
+			if(hDirectory == INVALID_HANDLE_VALUE)
+				throw new SystemApiException("CreateFileW", GetLastError());
+
+			requestRead();
 		} else version(Arsd_core_epoll) {
 			auto el = getThisThreadEventLoop();
-			// el.addCallbackOnFdReadable
+
+			// no need for sync because it is thread-local
+			if(inotifyfd == -1) {
+				inotifyfd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+				if(inotifyfd == -1)
+					throw new SystemApiException("inotify_init1", errno);
+
+				inotifycb = new CallbackHelper(&inotifyReady);
+				inotifyToken = el.addCallbackOnFdReadable(inotifyfd, inotifycb);
+			}
+
+			uint event_mask = IN_CREATE | IN_MODIFY  | IN_DELETE; // FIXME
+			CharzBuffer dtw = directoryToWatch.path;
+			auto watchId = inotify_add_watch(inotifyfd, dtw.ptr, event_mask);
+			if(watchId < -1)
+				throw new SystemApiException("inotify_add_watch", errno, [SavedArgument("path", LimitedVariant(directoryToWatch.path))]);
+
+			watchMappings[watchId] = this;
+
+			// FIXME: recursive needs to add child things individually
+
 		} else version(Arsd_core_kqueue) {
-			/+
 			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+
+			// FIXME: need to scan for globPattern
+			// when a new file is added, i'll have to diff my list to detect it and open it too
+			// and recursive might need to scan down too.
 
 			kevent_t ev;
 
-			EV_SET(&ev, SIGINT, EVFILT_VNODE, EV_ADD | EV_ENABLE, 0, 0, null);
+			import core.sys.posix.fcntl;
+			CharzBuffer buffer = CharzBuffer(directoryToWatch.path);
+			fd = ErrnoEnforce!open(buffer.ptr, O_RDONLY);
+			setCloExec(fd);
+
+			cb = new CallbackHelper(&triggered);
+
+			EV_SET(&ev, fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR, NOTE_WRITE, 0, cast(void*) cb);
 			ErrnoEnforce!kevent(el.kqueuefd, &ev, 1, null, 0, null);
-			+/
 		} else assert(0, "Not yet implemented for this platform");
 	}
+
+	private void triggered() {
+		writeln("triggered");
+	}
+
+	void dispose() {
+		version(Arsd_core_windows) {
+			CloseHandle(hDirectory);
+		} else version(Arsd_core_epoll) {
+			watchMappings.remove(watchId); // I could also do this on the IN_IGNORE notification but idk
+			inotify_rm_watch(inotifyfd, watchId);
+		} else version(Arsd_core_kqueue) {
+			ErrnoEnforce!close(fd);
+			fd = -1;
+		}
+	}
+}
+
+void main() {
+
+	// auto file = new AsyncFile(FilePath("test.txt"), AsyncFile.OpenMode.writeWithTruncation, AsyncFile.RequirePreexisting.yes);
+
+	/+
+	getFiles("c:/windows\\", (string filename, bool isDirectory) {
+		writeln(filename, " ", isDirectory ? "[dir]": "[file]");
+	});
+	+/
+
+	auto w = new DirectoryWatcher(FilePath("."), "*", false, (path, op) {
+		writeln(path.path);
+	});
+	getThisThreadEventLoop().run(() => false);
+}
+
+/++
+	This starts up a local pipe. If it is already claimed, it just communicates with the existing one through the interface.
++/
+class SingleInstanceApplication {
+	// FIXME
 }
 
 version(none)
@@ -3070,6 +3900,12 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			// FIXME: should prolly free anything left in the callback queue, tho those could also be GC managed tbh.
 		}
+
+		/+ // i call it explicitly at the thread exit instead, but worker threads aren't really supposed to exit generally speaking till process done anyway
+		static ~this() {
+			teardown();
+		}
+		+/
 
 		static void teardownGlobals() {
 			import core.sys.posix.fcntl;
