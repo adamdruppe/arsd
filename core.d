@@ -3161,6 +3161,7 @@ class DirectoryWatcher {
 	}
 }
 
+version(none)
 void main() {
 
 	// auto file = new AsyncFile(FilePath("test.txt"), AsyncFile.OpenMode.writeWithTruncation, AsyncFile.RequirePreexisting.yes);
