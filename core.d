@@ -3027,7 +3027,7 @@ class AsyncReceiveRequest : AsyncOperationRequest {
 		version(Windows) {
 			auto opCall(OVERLAPPED* overlapped, LPOVERLAPPED_COMPLETION_ROUTINE ocr) {
 				WSABUF buf;
-				buf.len = buffer.length;
+				buf.len = cast(int) buffer.length;
 				buf.buf = cast(typeof(buf.buf)) buffer.ptr;
 
 				uint flags = this.flags;
@@ -3091,7 +3091,7 @@ class AsyncSendRequest : AsyncOperationRequest {
 		version(Windows) {
 			auto opCall(OVERLAPPED* overlapped, LPOVERLAPPED_COMPLETION_ROUTINE ocr) {
 				WSABUF buf;
-				buf.len = buffer.length;
+				buf.len = cast(int) buffer.length;
 				buf.buf = cast(typeof(buf.buf)) buffer.ptr;
 
 				if(address is null)
@@ -3803,7 +3803,7 @@ final class AsyncWriteRequest : AsyncOperationRequest {
 			auto opCall(OVERLAPPED* overlapped, LPOVERLAPPED_COMPLETION_ROUTINE ocr) {
 				overlapped.Offset = (cast(ulong) offset) & 0xffff_ffff;
 				overlapped.OffsetHigh = ((cast(ulong) offset) >> 32) & 0xffff_ffff;
-				return WriteFileEx(file.handle, buffer.ptr, buffer.length, overlapped, ocr);
+				return WriteFileEx(file.handle, buffer.ptr, cast(int) buffer.length, overlapped, ocr);
 			}
 		} else {
 			auto opCall() {
@@ -3857,7 +3857,7 @@ final class AsyncReadRequest : AsyncOperationRequest {
 			auto opCall(OVERLAPPED* overlapped, LPOVERLAPPED_COMPLETION_ROUTINE ocr) {
 				overlapped.Offset = (cast(ulong) offset) & 0xffff_ffff;
 				overlapped.OffsetHigh = ((cast(ulong) offset) >> 32) & 0xffff_ffff;
-				return ReadFileEx(file.handle, buffer.ptr, buffer.length, overlapped, ocr);
+				return ReadFileEx(file.handle, buffer.ptr, cast(int) buffer.length, overlapped, ocr);
 			}
 		} else {
 			auto opCall() {
