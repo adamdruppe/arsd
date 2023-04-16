@@ -5403,8 +5403,10 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 	destroy it when it is triggered) nor are there pause/resume functions -
 	the timer must again be destroyed and recreated if you want to pause it.
 
+	---
 	auto timer = new Timer(50, { it happened!; });
 	timer.destroy();
+	---
 
 	Timers can only be expected to fire when the event loop is running and only
 	once per iteration through the event loop.

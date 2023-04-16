@@ -599,6 +599,7 @@ version(Windows) {
 	}
 }
 
+// FIXME: can use the arsd.core function now but it is trivial anyway tbh
 void cloexec(int fd) {
 	version(Posix) {
 		import core.sys.posix.fcntl;

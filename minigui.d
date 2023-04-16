@@ -14441,6 +14441,8 @@ struct FileName(alias storage = previousFileReferenced, string[] filters = null,
 }
 
 /++
+	Gets a file name for an open or save operation, calling your `onOK` function when the user has selected one. This function may or may not block depending on the operating system, you MUST assume it will complete asynchronously.
+
 	History:
 		onCancel was added November 6, 2021.
 
