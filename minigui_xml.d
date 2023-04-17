@@ -78,6 +78,8 @@ module arsd.minigui_xml;
 public import arsd.minigui;
 public import arsd.minigui : Event;
 
+import arsd.textlayouter;
+
 import arsd.dom;
 
 import std.conv;
@@ -255,6 +257,8 @@ void appendMiniguiModule(alias Module, string prefix = null)()
 							{
 								params[idx] = Color.fromString(*arg);
 							}
+							else static if(is(typeof(param) == TextLayouter))
+								params[idx] = null;
 							else
 								params[idx] = to!(typeof(param))(*arg);
 						}
@@ -265,7 +269,7 @@ void appendMiniguiModule(alias Module, string prefix = null)()
 						}
 					}}
 
-					params[$-1] = parent;
+					params[$-1] = cast(typeof(params[$-1])) parent;
 
 					auto member = new Member(params);
 					widget = member;
