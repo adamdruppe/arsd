@@ -1696,7 +1696,7 @@ private mixin template JavaImportImpl(T, alias method, size_t overloadIndex) {
 
 	static if(__traits(identifier, method) == "__ctor")
 	pragma(mangle, method.mangleof)
-	private static T implementation(Parameters!method args, T this_) {
+	private static T implementation(T this_, Parameters!method args) {
 		auto env = activeEnv;
 		if(env is null)
 			throw new Exception("JNI not active in this thread");
