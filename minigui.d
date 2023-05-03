@@ -7760,10 +7760,20 @@ class ScrollMessageWidget : Widget {
 	void scrollIntoView(Rectangle rect) {
 		Rectangle viewRectangle = Rectangle(position, Size(hsb.viewableArea_, vsb.viewableArea_));
 
-		// writeln(viewRectangle, " ", rect, " ", viewRectangle.contains(rect.lowerRight));
+		// import std.stdio;writeln(viewRectangle, "\n", rect, " ", viewRectangle.contains(rect.lowerRight - Point(1, 1)));
 
-		if(!viewRectangle.contains(rect.lowerRight))
-			setPosition(rect.upperLeft.tupleof);
+		// the lower right is exclusive normally
+		auto test = rect.lowerRight;
+		if(test.x > 0) test.x--;
+		if(test.y > 0) test.y--;
+
+		if(!viewRectangle.contains(test) || !viewRectangle.contains(rect.upperLeft)) {
+			// try to scroll only one dimension at a time if we can
+			if(!viewRectangle.contains(Point(test.x, position.y)) || !viewRectangle.contains(Point(rect.upperLeft.x, position.y)))
+				setPosition(rect.upperLeft.x, position.y);
+			if(!viewRectangle.contains(Point(position.x, test.y)) || !viewRectangle.contains(Point(position.x, rect.upperLeft.y)))
+				setPosition(position.x, rect.upperLeft.y);
+		}
 
 	}
 
@@ -9915,7 +9925,7 @@ private class ClientAreaWidget : Widget {
 */
 class ToolBar : Widget {
 	version(win32_widgets) {
-		private const int idealHeight;
+		private int idealHeight;
 		override int minHeight() { return idealHeight; }
 		override int maxHeight() { return idealHeight; }
 	} else version(custom_widgets) {
@@ -9924,11 +9934,35 @@ class ToolBar : Widget {
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
-	version(win32_widgets)
-		HIMAGELIST imageList;
+	version(win32_widgets) {
+		HIMAGELIST imageListSmall;
+		HIMAGELIST imageListLarge;
+	}
 
 	this(Widget parent) {
 		this(null, parent);
+	}
+
+	version(win32_widgets)
+	void changeIconSize(bool useLarge) {
+		SendMessageW(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) (useLarge ? imageListLarge : imageListSmall));
+
+		/+
+		SIZE size;
+		import core.sys.windows.commctrl;
+		SendMessageW(hwnd, TB_GETMAXSIZE, 0, cast(LPARAM) &size);
+		idealHeight = size.cy + 4; // the plus 4 is a hack
+		+/
+
+		idealHeight = useLarge ? 34 : 26;
+
+		if(parent) {
+			parent.recomputeChildLayout();
+			parent.redraw();
+		}
+
+		SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, (idealHeight-4) << 16 | (idealHeight-4));
+		SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 	}
 
 	///
@@ -9945,16 +9979,25 @@ class ToolBar : Widget {
 
 			SendMessageW(hwnd, TB_SETEXTENDEDSTYLE, 0, 8/*TBSTYLE_EX_MIXEDBUTTONS*/);
 
-			imageList = ImageList_Create(
+			imageListSmall = ImageList_Create(
 				// width, height
 				16, 16,
 				ILC_COLOR16 | ILC_MASK,
 				16 /*numberOfButtons*/, 0);
 
-			SendMessageW(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) imageList);
+			imageListLarge = ImageList_Create(
+				// width, height
+				24, 24,
+				ILC_COLOR16 | ILC_MASK,
+				16 /*numberOfButtons*/, 0);
+
+			SendMessageW(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) imageListSmall);
 			SendMessageW(hwnd, TB_LOADIMAGES, cast(WPARAM) IDB_STD_SMALL_COLOR, cast(LPARAM) HINST_COMMCTRL);
+
+			SendMessageW(hwnd, TB_SETIMAGELIST, cast(WPARAM) 0, cast(LPARAM) imageListLarge);
+			SendMessageW(hwnd, TB_LOADIMAGES, cast(WPARAM) IDB_STD_LARGE_COLOR, cast(LPARAM) HINST_COMMCTRL);
+
 			SendMessageW(hwnd, TB_SETMAXTEXTROWS, 0, 0);
-			SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 
 			TBBUTTON[] buttons;
 
@@ -9973,16 +10016,13 @@ class ToolBar : Widget {
 			SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageW(hwnd, TB_ADDBUTTONSW, cast(WPARAM) buttons.length, cast(LPARAM)buttons.ptr);
 
-			SIZE size;
-			import core.sys.windows.commctrl;
-			SendMessageW(hwnd, TB_GETMAXSIZE, 0, cast(LPARAM) &size);
-			idealHeight = size.cy + 4; // the plus 4 is a hack
-
 			/*
 			RECT rect;
 			GetWindowRect(hwnd, &rect);
 			idealHeight = rect.bottom - rect.top + 10; // the +10 is a hack since the size right now doesn't look right on a real Windows XP box
 			*/
+
+			dpiChanged(); // to load the things calling changeIconSize the first time
 
 			assert(idealHeight);
 		} else version(custom_widgets) {
@@ -9993,6 +10033,16 @@ class ToolBar : Widget {
 
 	override void recomputeChildLayout() {
 		.recomputeChildLayout!"width"(this);
+	}
+
+
+	version(win32_widgets)
+	override protected void dpiChanged() {
+		auto sz = scaleWithDpi(16);
+		if(sz >= 20)
+			changeIconSize(true);
+		else
+			changeIconSize(false);
 	}
 }
 
@@ -12406,7 +12456,9 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				textLayout.selection.replaceContent(s);
 
 				tdh.adjustScrollbarSizes();
-				//scrollForCaret();
+				// these don't seem to help
+				// tdh.smw.setPosition(0, 0);
+				// tdh.scrollForCaret();
 
 				redraw();
 			} else {
