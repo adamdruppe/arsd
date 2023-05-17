@@ -7364,7 +7364,7 @@ unittest {
 	}, 56674);
 	ubyte[1000] buffer;
 	int bufferPoint;
-	void add(ubyte[] b) {
+	void add(scope ubyte[] b) {
 		buffer[bufferPoint ..  bufferPoint + b.length] = b[];
 		bufferPoint += b.length;
 	}
