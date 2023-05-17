@@ -555,7 +555,7 @@ unittest {
 unittest {
 	import arsd.cgi;
 
-	void requestHandler(Cgi cgi) {
+	static void requestHandler(Cgi cgi) {
 
 	}
 
