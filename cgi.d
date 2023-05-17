@@ -496,6 +496,7 @@ import arsd.core : makeNonBlocking;
 /++
 	This micro-example uses the [dispatcher] api to act as a simple http file server, serving files found in the current directory and its children.
 +/
+version(Demo)
 unittest {
 	import arsd.cgi;
 
@@ -507,6 +508,7 @@ unittest {
 /++
 	Same as the previous example, but written out long-form without the use of [DispatcherMain] nor [GenericMain].
 +/
+version(Demo)
 unittest {
 	import arsd.cgi;
 
@@ -552,6 +554,7 @@ unittest {
 	 otherwise run through the rest of the internal mechanisms to call your functions without actually
 	 spinning up a server.
 +/
+version(Demo)
 unittest {
 	import arsd.cgi;
 
@@ -3556,6 +3559,23 @@ mixin template GenericMain(alias fun, long maxContentLength = defaultMaxContentL
 		Added July 9, 2021
 +/
 mixin template DispatcherMain(Presenter, DispatcherArgs...) {
+	/// forwards to [CustomCgiDispatcherMain] with default args
+	mixin CustomCgiDispatcherMain!(Cgi, defaultMaxContentLength, Presenter, DispatcherArgs);
+}
+
+/// ditto
+mixin template DispatcherMain(DispatcherArgs...) if(!is(DispatcherArgs[0] : WebPresenter!T, T)) {
+	class GenericPresenter : WebPresenter!GenericPresenter {}
+	mixin DispatcherMain!(GenericPresenter, DispatcherArgs);
+}
+
+/++
+	Allows for a generic [DispatcherMain] with custom arguments. Note you can use [defaultMaxContentLength] as the second argument if you like.
+
+	History:
+		Added May 13, 2023 (dub v11.0)
++/
+mixin template CustomCgiDispatcherMain(CustomCgi, size_t maxContentLength, Presenter, DispatcherArgs...) {
 	/++
 		Handler to the generated presenter you can use from your objects, etc.
 	+/
@@ -3590,12 +3610,14 @@ mixin template DispatcherMain(Presenter, DispatcherArgs...) {
 				presenter.renderBasicError(cgi, 404);
 		}
 	}
-	mixin GenericMain!handler;
+	mixin CustomCgiMain!(CustomCgi, handler, maxContentLength);
 }
 
-mixin template DispatcherMain(DispatcherArgs...) if(!is(DispatcherArgs[0] : WebPresenter!T, T)) {
+/// ditto
+mixin template CustomCgiDispatcherMain(CustomCgi, size_t maxContentLength, DispatcherArgs...) if(!is(DispatcherArgs[0] : WebPresenter!T, T)) {
 	class GenericPresenter : WebPresenter!GenericPresenter {}
-	mixin DispatcherMain!(GenericPresenter, DispatcherArgs);
+	mixin CustomCgiDispatcherMain!(CustomCgi, maxContentLength, GenericPresenter, DispatcherArgs);
+
 }
 
 private string simpleHtmlEncode(string s) {
