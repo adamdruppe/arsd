@@ -12487,6 +12487,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		version(custom_widgets) {
 			version(use_new_text_system) {
 				textLayout.appendText(txt);
+				tdh.adjustScrollbarSizes();
 				redraw();
 			} else {
 				textLayout.addText(txt);
