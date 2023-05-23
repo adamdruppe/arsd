@@ -12214,6 +12214,8 @@ class TextDisplayHelper : Widget {
 		});
 
 		this.addEventListener((scope CharEvent ce) {
+			if(readonly)
+				return;
 			if(ce.character < 32 && ce.character != '\t' && ce.character != '\n' && ce.character != '\b')
 				return; // skip the ctrl+x characters we don't care about as plain text
 
