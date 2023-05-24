@@ -1,4 +1,6 @@
 /++
+	Please note: the api and behavior of this module is not externally stable at this time. See the documentation on specific functions.
+
 	Shared core functionality including exception helpers, library loader, event loop, and possibly more. Maybe command line processor and uda helper and some basic shared annotation types.
 
 	I'll probably move the url, websocket, and ssl stuff in here too as they are often shared. Maybe a small internationalization helper type (a hook for external implementation) and COM helpers too.
@@ -41,6 +43,7 @@ version(Windows) {
 	import core.sys.windows.winsock2;
 
 	pragma(lib, "user32");
+	pragma(lib, "ws2_32");
 } else version(linux) {
 	version=Arsd_core_epoll;
 
@@ -1347,6 +1350,36 @@ class ArsdExceptionBase : object.Exception {
 }
 
 /++
+
++/
+class InvalidArgumentsException : ArsdExceptionBase {
+	static struct InvalidArgument {
+		string name;
+		string description;
+		LimitedVariant givenValue;
+	}
+
+	InvalidArgument[] invalidArguments;
+
+	this(InvalidArgument[] invalidArguments, string functionName = __PRETTY_FUNCTION__, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.invalidArguments = invalidArguments;
+		super(functionName, file, line, next);
+	}
+
+	this(string argumentName, string argumentDescription, LimitedVariant givenArgumentValue = LimitedVariant.init, string functionName = __PRETTY_FUNCTION__, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this([
+			InvalidArgument(argumentName, argumentDescription, givenArgumentValue)
+		], functionName, file, line, next);
+	}
+
+	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
+		// FIXME: print the details better
+		foreach(arg; invalidArguments)
+			sink("invalidArguments[]", arg.name ~ " " ~ arg.description);
+	}
+}
+
+/++
 	Base class for when you've requested a feature that is not available. It may not be available because it is possible, but not yet implemented, or it might be because it is impossible on your operating system.
 +/
 class FeatureUnavailableException : ArsdExceptionBase {
@@ -2504,6 +2537,25 @@ class AsyncFile : AbstractFile {
 		return new AsyncWriteRequest(this, cast(ubyte[]) buffer, offset);
 	}
 
+}
+
+/++
+	Reads or writes a file in one call. It might internally yield, but is generally blocking if it returns values. The callback ones depend on the implementation.
+
+	Tip: prefer the callback ones. If settings where async is possible, it will do async, and if not, it will sync.
++/
+void writeFile(string filename, const(void)[] contents) {
+
+}
+
+/// ditto
+string readTextFile(string filename, string fileEncoding = null) {
+	return null;
+}
+
+/// ditto
+const(ubyte[]) readBinaryFile(string filename) {
+	return null;
 }
 
 /+
@@ -4868,15 +4920,87 @@ enum ByteOrder {
 	bigEndian,
 }
 
+/++
+	A class to help write a stream of binary data to some target.
+
+	NOT YET FUNCTIONAL
++/
 class WritableStream {
+	/++
+
+	+/
 	this(size_t bufferSize) {
+		this(new ubyte[](bufferSize));
 	}
 
-	void put(T)() {}
+	/// ditto
+	this(ubyte[] buffer) {
+		this.buffer = buffer;
+	}
 
+	/++
+
+	+/
+	final void put(T)(T value, ByteOrder byteOrder = ByteOrder.irrelevant) {
+		static if(T.sizeof == 8)
+			ulong b;
+		else static if(T.sizeof == 4)
+			uint b;
+		else static if(T.sizeof == 2)
+			ushort b;
+		else static if(T.sizeof == 1)
+			ubyte b;
+		else static assert(0, "unimplemented type, try using just the basic types");
+
+		if(byteOrder == ByteOrder.irrelevant && T.sizeof > 1)
+			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte");
+
+		final switch(byteOrder) {
+			case ByteOrder.irrelevant:
+				writeOneByte(b);
+			break;
+			case ByteOrder.littleEndian:
+				foreach(i; 0 .. T.sizeof) {
+					writeOneByte(b & 0xff);
+					b >>= 8;
+				}
+			break;
+			case ByteOrder.bigEndian:
+				int amount = T.sizeof * 8 - 8;
+				foreach(i; 0 .. T.sizeof) {
+					writeOneByte((b >> amount) & 0xff);
+					amount -= 8;
+				}
+			break;
+		}
+	}
+
+	/// ditto
+	final void put(T : E[], E)(T value, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+		foreach(item; value)
+			put(item, elementByteOrder);
+	}
+
+	/++
+		Performs a final flush() call, then marks the stream as closed, meaning no further data will be written to it.
+	+/
+	void close() {
+		isClosed_ = true;
+	}
+
+	/++
+		Writes what is currently in the buffer to the target and waits for the target to accept it.
+		Please note: if you are subclassing this to go to a different target
+	+/
 	void flush() {}
 
-	bool isClosed() { return true; }
+	/++
+		Returns true if either you closed it or if the receiving end closed their side, indicating they
+		don't want any more data.
+	+/
+	bool isClosed() {
+		return isClosed_;
+	}
 
 	// hasRoomInBuffer
 	// canFlush
@@ -4884,6 +5008,20 @@ class WritableStream {
 
 	// flushImpl
 	// markFinished / close - tells the other end you're done
+
+	private final writeOneByte(ubyte value) {
+		if(bufferPosition == buffer.length)
+			flush();
+
+		buffer[bufferPosition++] = value;
+	}
+
+
+	private {
+		ubyte[] buffer;
+		int bufferPosition;
+		bool isClosed_;
+	}
 }
 
 /++
@@ -4893,6 +5031,8 @@ class WritableStream {
 	from a function generating the data on demand (including an input range), from memory, or from a synchronous file.
 
 	A stream of heterogeneous types is compatible with input ranges.
+
+	It reads binary data.
 +/
 class ReadableStream {
 
@@ -4900,9 +5040,22 @@ class ReadableStream {
 
 	}
 
-	T get(T)(ByteOrder byteOrder = ByteOrder.irrelevant) {
+	/++
+		Gets data of the specified type `T` off the stream. The byte order of the T on the stream must be specified unless it is irrelevant (e.g. single byte entries).
+
+		---
+		// get an int out of a big endian stream
+		int i = stream.get!int(ByteOrder.bigEndian);
+
+		// get i bytes off the stream
+		ubyte[] data = stream.get!(ubyte[])(i);
+		---
+	+/
+	final T get(T)(ByteOrder byteOrder = ByteOrder.irrelevant) {
 		if(byteOrder == ByteOrder.irrelevant && T.sizeof > 1)
-			throw new ArsdException!"byte order must be specified for a type that is bigger than one byte";
+			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte");
+
+		// FIXME: what if it is a struct?
 
 		while(bufferedLength() < T.sizeof)
 			waitForAdditionalData();
@@ -4939,26 +5092,37 @@ class ReadableStream {
 		}
 	}
 
-	// if the stream is closed before getting the length or the terminator, should we send partial stuff
-	// or just throw?
-	T get(T : E[], E)(size_t length, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
-		if(byteOrder == ByteOrder.irrelevant && E.sizeof > 1)
-			throw new ArsdException!"byte order must be specified for a type that is bigger than one byte";
+	/// ditto
+	final T get(T : E[], E)(size_t length, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+		if(elementByteOrder == ByteOrder.irrelevant && E.sizeof > 1)
+			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte");
+
+		// if the stream is closed before getting the length or the terminator, should we send partial stuff
+		// or just throw?
 
 		while(bufferedLength() < length * E.sizeof)
 			waitForAdditionalData();
 
 		T ret;
 
-		// FIXME
+		ret.length = length;
+
+		if(false && elementByteOrder == ByteOrder.irrelevant) {
+			// ret[] =
+			// FIXME: can prolly optimize
+		} else {
+			foreach(i; 0 .. length)
+				ret[i] = get!E(elementByteOrder);
+		}
 
 		return ret;
 
 	}
 
-	T get(T : E[], E)(scope bool delegate(E e) isTerminatingSentinel, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+	/// ditto
+	final T get(T : E[], E)(scope bool delegate(E e) isTerminatingSentinel, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
 		if(byteOrder == ByteOrder.irrelevant && E.sizeof > 1)
-			throw new ArsdException!"byte order must be specified for a type that is bigger than one byte";
+			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte");
 
 		assert(0, "Not implemented");
 	}
@@ -5037,6 +5201,8 @@ class ReadableStream {
 	}
 }
 
+// FIXME: do a stringstream too
+
 unittest {
 	auto stream = new ReadableStream();
 
@@ -5051,6 +5217,9 @@ unittest {
 		ubyte b = stream.get!ubyte;
 		assert(b == 33);
 		position = 3;
+
+		// ubyte[] c = stream.get!(ubyte[])(3);
+		// int[] d = stream.get!(int[])(3);
 	});
 
 	fiber.call();
@@ -5059,6 +5228,9 @@ unittest {
 	assert(position == 2);
 	stream.feedData([33]);
 	assert(position == 3);
+
+	// stream.feedData([1,2,3]);
+	// stream.feedData([1,2,3,4,1,2,3,4,1,2,3,4]);
 }
 
 /++
@@ -5501,7 +5673,16 @@ void writeln(T...)(T t) {
 		} else static if(is(typeof(arg) : long)) {
 			auto sliced = intToString(arg, buffer[pos .. $]);
 			pos += sliced.length;
-		} else static assert(0, "Unsupported type: " ~ T.stringof);
+		} else static if(is(typeof(arg.toString()) : const char[])) {
+			auto s = arg.toString();
+			buffer[pos .. pos + s.length] = s[];
+			pos += s.length;
+		} else {
+			auto s = "<unsupported type>";
+			buffer[pos .. pos + s.length] = s[];
+			pos += s.length;
+			// static assert(0, "Unsupported type: " ~ T.stringof);
+		}
 	}
 
 	buffer[pos++] = '\n';

@@ -1,5 +1,14 @@
 // https://dpaste.dzfl.pl/7a77355acaec
 
+/+
+	To share some stuff between two opengl threads:
+	windows
+	https://www.khronos.org/opengl/wiki/OpenGL_and_multithreading
+	linux
+	https://stackoverflow.com/questions/18879520/sharing-opengl-objects-between-contexts-on-linux
++/
+
+
 // Search for: FIXME: leaks if multithreaded gc
 
 // https://freedesktop.org/wiki/Specifications/XDND/
@@ -1101,6 +1110,13 @@ unittest {
 	}
 }
 
+import arsd.core;
+
+// FIXME: tetris demo
+// FIXME: space invaders demo
+// FIXME: asteroids demo
+
+
 /*
 version(OSX) {
 	version=without_opengl;
@@ -1514,6 +1530,17 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 	After creating OpenGL window, you can check this to see if you got only "legacy" OpenGL context.
 	*/
 @property bool openGLContextFallbackActivated() () { return (sdpyOpenGLContextVersion == 0); }
+
+/++
+	History:
+		Added April 24, 2023  (dub v11.0)
++/
+auto openGLCurrentContext() {
+	version(Windows)
+		return wglGetCurrentContext();
+	else
+		return glXGetCurrentContext();
+}
 
 
 /**
@@ -3000,6 +3027,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			Queues an opengl redraw as soon as the other pending events are cleared.
 		+/
 		void redrawOpenGlSceneSoon() {
+			if(redrawOpenGlScene is null)
+				return;
+
 			if(!redrawOpenGlSceneSoonSet) {
 				redrawOpenGlSceneEvent = new RedrawOpenGlSceneEvent(this);
 				this.addEventListener((RedrawOpenGlSceneEvent e) { e.w.redrawOpenGlSceneNow(); });
@@ -4281,6 +4311,7 @@ struct EventLoopImpl {
 						}
 						throw new Exception("epoll wait failure");
 					}
+					// writeln(nfds, " ", events[0].data.fd);
 
 					SimpleWindow.processAllCustomEvents(); // anyway
 					//version(sdddd) { writeln("nfds=", nfds, "; [0]=", events[0].data.fd); }
@@ -4334,6 +4365,8 @@ struct EventLoopImpl {
 								read(customEventFDRead, &n, n.sizeof); // reset counter value to zero again
 								//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
 								//SimpleWindow.processAllCustomEvents();
+
+								forceXPending = true;
 							} else {
 								// some other timer
 								version(sdddd) { writeln("unknown fd: ", fd); }
@@ -10904,7 +10937,8 @@ version(Windows) {
 			Uint8 mask[]
 			*/
 
-			ubyte[4096] data;
+			// FIXME: this sux, needs to be dynamic
+			ubyte[/*4096*/ 256*256*4 + 256*256/8] data;
 
 			void fromMemoryImage(MemoryImage mi, out int icon_len, out int width, out int height) {
 				width = mi.width;
@@ -10914,8 +10948,10 @@ version(Windows) {
 				if(indexedImage is null)
 					indexedImage = quantize(mi.getAsTrueColorImage());
 
-				assert(width %8 == 0); // i don't want padding nor do i want the and mask to get fancy
-				assert(height %4 == 0);
+				assert(width <= 256, "image too wide");
+				assert(height <= 256, "image too tall");
+				assert(width %8 == 0, "image not multiple of 8 width"); // i don't want padding nor do i want the and mask to get fancy
+				assert(height %4 == 0, "image not multiple of 4 height");
 
 				int icon_plen = height*((width+3)&~3);
 				int icon_mlen = height*((((width+7)/8)+3)&~3);

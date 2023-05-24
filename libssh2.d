@@ -385,6 +385,8 @@ extern(C) {
 	enum LIBSSH2_CHANNEL_WINDOW_DEFAULT = (256*1024);
 	enum LIBSSH2_CHANNEL_PACKET_DEFAULT = 32768;
 
+	int libssh2_session_last_error(LIBSSH2_SESSION *session, char **errmsg, int *errmsg_len, int want_buf);
+
 	int libssh2_channel_request_pty_ex(LIBSSH2_CHANNEL *channel, const char *term, uint term_len, const char *modes, uint modes_len, int width, int height, int width_px, int height_px);
 
 	int libssh2_channel_process_startup(

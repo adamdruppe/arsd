@@ -766,6 +766,58 @@ version(Windows) {
 		WORD wRightMotorSpeed; // high frequency motor. use any value between 0-65535 here
 	}
 
+	struct XINPUT_KEYSTROKE {
+		WORD VirtualKey;
+		WCHAR Unicode;
+		WORD Flags;
+		BYTE UserIndex;
+		BYTE HidCode;
+	}
+
+	enum XUSER_INDEX_ANY = 0xff;
+
+	enum VK_PAD_A                        = 0x5800;
+	enum VK_PAD_B                        = 0x5801;
+	enum VK_PAD_X                        = 0x5802;
+	enum VK_PAD_Y                        = 0x5803;
+	enum VK_PAD_RSHOULDER                = 0x5804;
+	enum VK_PAD_LSHOULDER                = 0x5805;
+	enum VK_PAD_LTRIGGER                 = 0x5806;
+	enum VK_PAD_RTRIGGER                 = 0x5807;
+
+	enum VK_PAD_DPAD_UP                  = 0x5810;
+	enum VK_PAD_DPAD_DOWN                = 0x5811;
+	enum VK_PAD_DPAD_LEFT                = 0x5812;
+	enum VK_PAD_DPAD_RIGHT               = 0x5813;
+	enum VK_PAD_START                    = 0x5814;
+	enum VK_PAD_BACK                     = 0x5815;
+	enum VK_PAD_LTHUMB_PRESS             = 0x5816;
+	enum VK_PAD_RTHUMB_PRESS             = 0x5817;
+
+	enum VK_PAD_LTHUMB_UP                = 0x5820;
+	enum VK_PAD_LTHUMB_DOWN              = 0x5821;
+	enum VK_PAD_LTHUMB_RIGHT             = 0x5822;
+	enum VK_PAD_LTHUMB_LEFT              = 0x5823;
+	enum VK_PAD_LTHUMB_UPLEFT            = 0x5824;
+	enum VK_PAD_LTHUMB_UPRIGHT           = 0x5825;
+	enum VK_PAD_LTHUMB_DOWNRIGHT         = 0x5826;
+	enum VK_PAD_LTHUMB_DOWNLEFT          = 0x5827;
+
+	enum VK_PAD_RTHUMB_UP                = 0x5830;
+	enum VK_PAD_RTHUMB_DOWN              = 0x5831;
+	enum VK_PAD_RTHUMB_RIGHT             = 0x5832;
+	enum VK_PAD_RTHUMB_LEFT              = 0x5833;
+	enum VK_PAD_RTHUMB_UPLEFT            = 0x5834;
+	enum VK_PAD_RTHUMB_UPRIGHT           = 0x5835;
+	enum VK_PAD_RTHUMB_DOWNRIGHT         = 0x5836;
+	enum VK_PAD_RTHUMB_DOWNLEFT          = 0x5837;
+
+	enum XINPUT_KEYSTROKE_KEYDOWN        = 0x0001;
+	enum XINPUT_KEYSTROKE_KEYUP          = 0x0002;
+	enum XINPUT_KEYSTROKE_REPEAT         = 0x0004;
+
+
+
 	struct WindowsXInput {
 		HANDLE dll;
 		bool loadDll() {
@@ -779,6 +831,8 @@ version(Windows) {
 
 			XInputGetState = cast(typeof(XInputGetState)) GetProcAddress(dll, "XInputGetState");
 			XInputSetState = cast(typeof(XInputSetState)) GetProcAddress(dll, "XInputSetState");
+
+			XInputGetKeystroke = cast(typeof(XInputGetKeystroke)) GetProcAddress(dll, "XInputGetKeystroke");
 
 			return true;
 		}
@@ -798,6 +852,7 @@ version(Windows) {
 		extern(Windows) {
 			DWORD function(DWORD, XINPUT_STATE*) XInputGetState;
 			DWORD function(DWORD, XINPUT_VIBRATION*) XInputSetState;
+			DWORD function(DWORD, DWORD, XINPUT_KEYSTROKE*) XInputGetKeystroke;
 		}
 
 		// there's other functions but I don't use them; my controllers

@@ -45,17 +45,32 @@ MemoryImage readPngFromBytes(const(ubyte)[] bytes) {
 
 /++
 	Saves a MemoryImage to a png file. See also: [writeImageToPngFile] which uses memory a little more efficiently
+
+	See_Also:
+		[writePngToArray]
 +/
 void writePng(string filename, MemoryImage mi) {
 	// FIXME: it would be nice to write the file lazily so we don't have so many intermediate buffers here
+	import std.file;
+	std.file.write(filename, writePngToArray(mi));
+}
+
+/++
+	Creates an in-memory png file from the given memory image, returning it.
+
+	History:
+		Added April 21, 2023 (dub v11.0)
+	See_Also:
+		[writePng]
++/
+ubyte[] writePngToArray(MemoryImage mi) {
 	PNG* png;
 	if(auto p = cast(IndexedImage) mi)
 		png = pngFromImage(p);
 	else if(auto p = cast(TrueColorImage) mi)
 		png = pngFromImage(p);
 	else assert(0);
-	import std.file;
-	std.file.write(filename, writePng(png));
+	return writePng(png);
 }
 
 /++

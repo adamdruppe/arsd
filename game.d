@@ -12,10 +12,14 @@
 	$(PITFALL
 		I AM NO LONGER HAPPY WITH THIS INTERFACE AND IT WILL CHANGE.
 
-		At least, I am going to change the delta time over to drawFrame
-		for fractional interpolation while keeping the time step fixed.
+		While arsd 11 included an overhaul (so you might want to fork
+		an older version if you relied on it, but the transition is worth
+		it and wasn't too hard for my game), there's still more stuff changing.
 
-		If you depend on it the way it is, you'll want to fork.
+		This is considered unstable as of arsd 11.0 and will not re-stabilize
+		until some 11.x release to be determined in the future (and then it might
+		break again in 12.0, but i'll commit to long term stabilization after that
+		at the latest).
 	)
 
 
@@ -118,6 +122,9 @@
 
 	In the overview, I mentioned that there's input available through a few means. Among the functions are:
 
+	Checking capabilities:
+		keyboardIsPresent, mouseIsPresent, gamepadIsPresent, joystickIsPresent, touchIsPresent - return true if there's a physical device for this (tho all can be emulated from just keyboard/mouse)
+
 	Gamepads, mouse buttons, and keyboards:
 		wasPressed - returns true if the button was not pressed but became pressed over the update period.
 		wasReleased - returns true if the button was pressed, but was released over the update period
@@ -135,6 +142,8 @@
 		stopRecordingCharacters - stops recording characters and clears the recording
 
 		You might use this for taking input for chat or character name selection.
+
+		FIXME: add an on-screen keyboard thing you can use with gamepads too
 	Mouse and joystick:
 		startRecordingPath - starts recording paths, each point coming off the operating system is noted with a timestamp relative to when the recording started
 		getRecordedPath - gets the current recorded path
@@ -153,6 +162,7 @@
 		changeInPosition - returns the change in position since last time you asked
 
 		There may also be raw input data available, since this uses arsd.joystick.
+	Touch-specific:
 
 	$(H2 Window control)
 
@@ -383,6 +393,17 @@ class GameScreenBase {
 	abstract void load();
 
 	private bool loaded;
+	final void ensureLoaded(GameHelperBase game) {
+		if(!this.loaded) {
+			// FIXME: unpause the update thread when it is done
+			synchronized(game) {
+				if(!this.loaded) {
+					this.load();
+					this.loaded = true;
+				}
+			}
+		}
+	}
 }
 
 /+
@@ -429,7 +450,7 @@ class GameScreen(Game) : GameScreenBase {
 
 	// You are not supposed to call this.
 	final void setGame(Game game) {
-		assert(game_ is null);
+		// assert(game_ is null);
 		assert(game !is null);
 		this.game_ = game;
 	}
@@ -547,6 +568,8 @@ public import arsd.simpleaudio;
 import std.math;
 public import core.time;
 
+import arsd.core;
+
 public import arsd.joystick;
 
 /++
@@ -609,14 +632,14 @@ abstract class GameHelperBase {
 			Previous to August 27, 2022, this took no arguments. It could thus not interpolate frames!
 	+/
 	deprecated("Move to void drawFrame(float) in a GameScreen instead") void drawFrame(float interpolateToNextFrame) {
+		drawFrameInternal(interpolateToNextFrame);
+	}
+
+	final void drawFrameInternal(float interpolateToNextFrame) {
 		if(currentScreen is null)
 			return;
-		if(!currentScreen.loaded) {
-			// FIXME: unpause the update thread when it is done
-			currentScreen.load();
-			currentScreen.loaded = true;
-			return;
-		}
+
+		currentScreen.ensureLoaded(this);
 		currentScreen.drawFrame(interpolateToNextFrame);
 	}
 
@@ -652,7 +675,8 @@ abstract class GameHelperBase {
 		if(currentScreen is null)
 			return false;
 		synchronized(this) {
-			(cast() this).currentScreen.update();
+			if(currentScreen.loaded)
+				(cast() this).currentScreen.update();
 			bookkeeping();
 			return false;
 		}
@@ -928,14 +952,16 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 	auto drawer = delegate bool() {
 		if(gameClock is MonoTime.init)
 			return false; // can't draw uninitialized info
+		/* // i think this is the same as if delta < 0 below...
 		auto time = MonoTime.currTime;
 		if(gameClock + (1000.msecs / targetUpdateRate) < time) {
-			import std.stdio; writeln("frame skip ", gameClock, " vs ", time);
+			writeln("frame skip ", gameClock, " vs ", time);
 			return false; // we're behind on updates, skip this frame
 		}
+		*/
 
 		if(false && isImmediateUpdate) {
-			game.drawFrame(0.0);
+			game.drawFrameInternal(0.0);
 			isImmediateUpdate = false;
 		} else {
 			auto now = MonoTime.currTime - lastUpdate;
@@ -943,25 +969,27 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 			auto delta = cast(float) ((nextFrame - now).total!"usecs") / cast(float) nextFrame.total!"usecs";
 
 			if(delta < 0) {
+				//writeln("behind ", cast(int)(delta * 100));
 				return false; // the render is too far ahead of the updater! time to skip frames to let it catch up
 			}
 
-			game.drawFrame(1.0 - delta);
+			game.drawFrameInternal(1.0 - delta);
 		}
 
 		rframeCounter++;
+		/+
 		if(rframeCounter % 60 == 0) {
-			import std.stdio;
 			writeln("frame");
 		}
+		+/
 
 		return true;
 	};
 
 	import core.thread;
 	import core.volatile;
-	Thread renderThread;
-	Thread updateThread;
+	Thread renderThread; // FIXME: low priority
+	Thread updateThread; // FIXME: slightly high priority
 
 	// shared things to communicate with threads
 	ubyte exit;
@@ -1085,7 +1113,7 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 
 		// FIXME: rate limiting
 		// FIXME: triple buffer it.
-		if(changed) {
+		if(changed && renderThread is null) {
 			isImmediateUpdate = true;
 			window.redrawOpenGlSceneSoon();
 		}
@@ -1100,10 +1128,13 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 		renderThread = new Thread({
 			// FIXME: catch exception and inform the parent
 			int frames = 0;
+			int skipped = 0;
 
 			Duration renderTime;
 			Duration flipTime;
 			Duration renderThrottleTime;
+
+			MonoTime initial = MonoTime.currTime;
 
 			while(!volatileLoad(&exit)) {
 				MonoTime start = MonoTime.currTime;
@@ -1120,6 +1151,7 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 					actuallyDrew = drawer();
 
 				MonoTime end = MonoTime.currTime;
+
 				if(actuallyDrew) {
 					window.mtLock();
 					scope(exit)
@@ -1133,6 +1165,15 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 					glFinish();
 					clearOpenGlScreen(window);
 				}
+
+				// this is just to wake up the UI thread to check X events again
+				// (any custom event will force a check of XPending) just cuz apparently
+				// the readiness of the file descriptor can be reset by one of the vsync functions
+				static if(UsingSimpledisplayX11) {
+					__gshared thing = new Object;
+					window.postEvent(thing);
+				}
+
 				MonoTime flip = MonoTime.currTime;
 
 				renderTime += end - start;
@@ -1142,14 +1183,20 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 					renderThrottleTime += maxRedrawTime - (flip - start);
 					Thread.sleep(maxRedrawTime - (flip - start));
 				}
-				frames++;
-				//import std.stdio; if(frames % 60 == 0) writeln("frame");
+
+				if(actuallyDrew)
+					frames++;
+				else
+					skipped++;
+				// if(frames % 60 == 0) writeln("frame");
 			}
 
-			import std.stdio;
+			MonoTime finalt = MonoTime.currTime;
+
 			writeln("Average render time: ", renderTime / frames);
 			writeln("Average flip time: ", flipTime / frames);
 			writeln("Average throttle time: ", renderThrottleTime / frames);
+			writeln("Frames: ", frames, ", skipped: ", skipped, " over ", finalt - initial);
 		});
 
 		updateThread = new Thread({
@@ -1170,7 +1217,7 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 				updateTime += end - start;
 
 				frames++;
-				import std.stdio; if(frames % game.designFps == 0) writeln("update");
+				// if(frames % game.designFps == 0) writeln("update");
 
 				const now = MonoTime.currTime - lastUpdate;
 				Duration nextFrame = msecs(1000) / targetUpdateRate;
@@ -1179,14 +1226,13 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 					// falling behind on update...
 				} else {
 					waitTime += sleepTime;
-					// import std.stdio; writeln(sleepTime);
+					// writeln(sleepTime);
 					Thread.sleep(sleepTime);
 				}
 			}
 
-			import std.stdio;
-			writeln("Average update time:" , updateTime / frames);
-			writeln("Average wait time:" , waitTime / frames);
+			writeln("Average update time: " , updateTime / frames);
+			writeln("Average wait time: " , waitTime / frames);
 		});
 	} else {
 		// single threaded, vsync a bit dangeresque here since it
@@ -1218,8 +1264,9 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 			// FIXME: set viewport prior to render if width/height changed
 			window.releaseCurrentOpenGlContext(); // need to let the render thread take it
 			renderThread.start();
+			renderThread.priority = Thread.PRIORITY_MIN;
 		} else {
-			window.redrawOpenGlScene = { drawer(); };
+			window.redrawOpenGlScene = { synchronized(game) drawer(); };
 			renderTimer = new Timer(1000 / 60, { window.redrawOpenGlSceneSoon(); });
 		}
 	};
@@ -1245,6 +1292,8 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 			updateThread = null;
 		}
 	};
+
+	Thread.getThis.priority = Thread.PRIORITY_MAX;
 
 	window.eventLoop(0,
 		delegate (KeyEvent ke) {
@@ -1284,6 +1333,7 @@ final class OpenGlTexture {
 
 	/// Calls glBindTexture
 	void bind() {
+		doLazyLoad();
 		glBindTexture(GL_TEXTURE_2D, _tex);
 	}
 
@@ -1294,6 +1344,7 @@ final class OpenGlTexture {
 
 	///
 	void draw(float x, float y, int width = 0, int height = 0, float rotation = 0.0, Color bg = Color.white) {
+		doLazyLoad();
 		glPushMatrix();
 		glTranslatef(x, y, 0);
 
@@ -1325,7 +1376,7 @@ final class OpenGlTexture {
 	float texCoordHeight() { return _texCoordHeight; } /// ditto
 
 	/// Returns the texture ID
-	uint tex() { return _tex; }
+	uint tex() { doLazyLoad(); return _tex; }
 
 	/// Returns the size of the image
 	int originalImageWidth() { return _width; }
@@ -1349,9 +1400,21 @@ final class OpenGlTexture {
 	/// Using it when not bound is undefined behavior.
 	this() {}
 
+	private TrueColorImage pendingImage;
 
+	private final void doLazyLoad() {
+		if(pendingImage !is null) {
+			auto tmp = pendingImage;
+			pendingImage = null;
+			bindFrom(tmp);
+		}
+	}
 
-	/// After you delete it with dispose, you may rebind it to something else with this.
+	/++
+		After you delete it with dispose, you may rebind it to something else with this.
+
+		If the current thread doesn't own an opengl context, it will save the image to try to lazy load it later.
+	+/
 	void bindFrom(TrueColorImage from) {
 		assert(from !is null);
 		assert(from.width > 0 && from.height > 0);
@@ -1362,6 +1425,11 @@ final class OpenGlTexture {
 		_height = from.height;
 
 		this.from = from;
+
+		if(openGLCurrentContext() is null) {
+			pendingImage = from;
+			return;
+		}
 
 		auto _texWidth = _width;
 		auto _texHeight = _height;

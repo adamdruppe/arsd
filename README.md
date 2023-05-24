@@ -36,7 +36,7 @@ minigui.d now also depends on a new textlayouter.d, bringing its total dependenc
 
 Generally speaking, I am relaxing my dependency policy somewhat to permit a little more code sharing and interoperability throughout the modules. While I will make efforts to maintain some degree of stand-alone functionality, many new features and even some old features may be changed to use the new module. As such, I reserve to right to use core.d from any module from this point forward. You should be prepared to add it to your builds using any arsd component.
 
-Note that arsd.core may require user32.lib on Windows. This is added automatically in most cases, and is a core component so it will be there, but if you see a linker error, this might be why.
+Note that arsd.core may require user32.lib and ws2_32.lib on Windows. This is added automatically in most cases, and is a core component so it will be there, but if you see a linker error, this might be why.
 
 I recommend you clone the repo and use `dmd -i` to let the compiler automatically included imported modules. It really is quite nice to use! But, of course, I don't require it and will call out other required cross-module dependencies in the future too.
 
@@ -62,6 +62,20 @@ lld-link: error: undefined symbol: _D4arsd4core21AsyncOperationRequest5startMFZv
 
 Indicates a missing `core.d` in the build.
 
+### Still coming
+
+11.0 focused on getting breaking changes in before the deadline. Some additive features that had to be deferred will be coming in 11.1 and beyond, including, but not limited to:
+
+	* simpleaudio synthesis
+	* game.d reorganization
+	* minigui drag and drop
+	* simpledisplay touch
+	* ssl server for cgi.d
+	* tui helpers
+	* database improvements
+	* i should prolly rewrite the script.d parser someday but maybe that will be a 12.0 thing
+	* click and drag capture behavior in minigui and the terminal emulator widget in particular
+	* more dox
 
 ## 10.0
 

@@ -14,6 +14,9 @@
 	on-demand (meaning it won't be loaded if you don't use it, but if you do
 	use it, the openssl dynamic libraries must be found in the system search path).
 
+	On Windows, you can bundle the openssl dlls with your exe and they will be picked
+	up when distributed.
+
 	You can compile with `-version=without_openssl` to entirely disable ssl support.
 
 	http2.d, despite its name, does NOT implement HTTP/2.0, but this
