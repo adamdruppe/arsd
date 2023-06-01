@@ -67,7 +67,16 @@
 				"arsd-official:simpledisplay":"*",
 				"arsd-official:image_files":"*",
 				"arsd-official:svg":"*",
-				"arsd-official:ttf":"*"
+				"arsd-official:ttf":"*",
+
+				"bindbc-freetype": {
+					"version": "*",
+					"optional": true,
+				},
+				"bindbc-opengl": {
+					"version": "*",
+					"optional": true,
+				},
 			},
 			"importPaths": ["."],
 			"libs-posix": ["freetype", "fontconfig"],

@@ -576,9 +576,15 @@ version (bindbc) {
   version = nanovg_builtin_freetype_bindings;
   version = nanovg_builtin_opengl_bindings; // use `arsd.simpledisplay` to get basic bindings
 } else {
+  version (Have_bindbc_opengl)
+    version = nanovg_bindbc_opengl_bindings;
+   else
+    version = nanovg_builtin_opengl_bindings; // use `arsd.simpledisplay` to get basic bindings
+  version (Have_bindbc_freetype)
+    version = nanovg_bindbc_freetype_bindings;
+   else
+    version = nanovg_builtin_freetype_bindings;
   version = nanovg_builtin_fontconfig_bindings;
-  version = nanovg_builtin_freetype_bindings;
-  version = nanovg_builtin_opengl_bindings; // use `arsd.simpledisplay` to get basic bindings
 }
 
 version(nanovg_disable_fontconfig) {
