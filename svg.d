@@ -4654,7 +4654,7 @@ void nsvg__flattenShapeStroke (NSVGrasterizer r, const(NSVG.Shape)* shape, float
   }
 }
 
-extern(C) int nsvg__cmpEdge (in void *p, in void *q) nothrow @trusted @nogc {
+extern(C) int nsvg__cmpEdge (scope const void *p, scope const void *q) nothrow @trusted @nogc {
   NSVGedge* a = cast(NSVGedge*)p;
   NSVGedge* b = cast(NSVGedge*)q;
   if (a.y0 < b.y0) return -1;
