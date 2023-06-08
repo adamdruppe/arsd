@@ -114,9 +114,6 @@ unittest {
 	}
 }
 
-// FIXME: multipart encoded file uploads needs implementation
-// future: do web client api stuff
-
 private __gshared bool defaultVerifyPeer_ = true;
 
 void defaultVerifyPeer(bool v) {
@@ -2825,6 +2822,8 @@ class HttpClient {
 	/++
 		Creates a request without updating the current url state. If you want to save cookies, either call [retainCookies] with the response yourself
 		or set [HttpRequest.retainCookies|request.retainCookies] to `true` on the returned object. But see important implementation shortcomings on [retainCookies].
+
+		To upload files, you can use the [FormData] overload.
 	+/
 	HttpRequest request(Uri uri, HttpVerb method = HttpVerb.GET, ubyte[] bodyData = null, string contentType = null) {
 		string proxyToUse = getProxyFor(uri);
@@ -2846,8 +2845,13 @@ class HttpClient {
 		populateCookies(request);
 
 		return request;
-
 	}
+
+	/// ditto
+	HttpRequest request(Uri uri, FormData fd, HttpVerb method = HttpVerb.POST) {
+		return request(uri, method, fd.toBytes, fd.contentType);
+	}
+
 
 	private void populateCookies(HttpRequest request) {
 		// FIXME: what about expiration and the like? or domain/path checks? or Secure checks?
@@ -2857,13 +2861,6 @@ class HttpClient {
 				request.requestParameters.cookies[cookie.name] = cookie.value;
 		}
 	}
-
-
-	/// ditto
-	HttpRequest request(Uri uri, FormData fd, HttpVerb method = HttpVerb.POST) {
-		return request(uri, method, fd.toBytes, fd.contentType);
-	}
-
 
 	private Uri currentUrl;
 	private string currentDomain;
@@ -4304,29 +4301,152 @@ class HttpApiClient() {
 
 
 // see also: arsd.cgi.encodeVariables
-/// Creates a multipart/form-data object that is suitable for file uploads and other kinds of POST
+/++
+	Creates a multipart/form-data object that is suitable for file uploads and other kinds of POST.
+
+	It has a set of names and values of mime components. Names can be repeated. They will be presented in the same order in which you add them. You will mostly want to use the [append] method.
+
+	You can pass this directly to [HttpClient.request].
+
+	Based on: https://developer.mozilla.org/en-US/docs/Web/API/FormData
+
+	---
+		auto fd = new FormData();
+		// add some data, plain string first
+		fd.append("name", "Adam");
+		// then a file
+		fd.append("photo", std.file.read("adam.jpg"), "image/jpeg", "adam.jpg");
+
+		// post it!
+		auto client = new HttpClient();
+		client.request(Uri("http://example.com/people"), fd).waitForCompletion();
+	---
+
+	History:
+		Added June 8, 2018
++/
 class FormData {
-	struct MimePart {
+	static struct MimePart {
 		string name;
 		const(void)[] data;
 		string contentType;
 		string filename;
 	}
 
-	MimePart[] parts;
+	private MimePart[] parts;
+	private string boundary = "0016e64be86203dd36047610926a"; // FIXME
 
-	///
-	void append(string key, in void[] value, string contentType = null, string filename = null) {
+	/++
+		Appends the given entry to the request. This can be a simple key/value pair of strings or file uploads.
+
+		For a simple key/value pair, leave `contentType` and `filename` as `null`.
+
+		For file uploads, please note that many servers require filename be given for a file upload and it may not allow you to put in a path. I suggest using [std.path.baseName] to strip off path information from a file you are loading.
+
+		The `contentType` is generally verified by servers for file uploads.
+	+/
+	void append(string key, const(void)[] value, string contentType = null, string filename = null) {
 		parts ~= MimePart(key, value, contentType, filename);
 	}
 
-	private string boundary = "0016e64be86203dd36047610926a"; // FIXME
+	/++
+		Deletes any entries from the set with the given key.
 
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	void deleteKey(string key) {
+		MimePart[] newParts;
+		foreach(part; parts)
+			if(part.name != key)
+				newParts ~= part;
+		parts = newParts;
+	}
+
+	/++
+		Returns the first entry with the given key, or `MimePart.init` if there is nothing.
+
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	MimePart get(string key) {
+		foreach(part; parts)
+			if(part.name == key)
+				return part;
+		return MimePart.init;
+	}
+
+	/++
+		Returns the all entries with the given key.
+
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	MimePart[] getAll(string key) {
+		MimePart[] answer;
+		foreach(part; parts)
+			if(part.name == key)
+				answer ~= part;
+		return answer;
+	}
+
+	/++
+		Returns true if the given key exists in the set.
+
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	bool has(string key) {
+		return get(key).name == key;
+	}
+
+	/++
+		Sets the given key to the given value if it exists, or appends it if it doesn't.
+
+		You probably want [append] instead.
+
+		See_Also:
+			[append]
+
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	void set(string key, const(void)[] value, string contentType, string filename) {
+		foreach(ref part; parts)
+			if(part.name == key) {
+				part.data = value;
+				part.contentType = contentType;
+				part.filename = filename;
+				return;
+			}
+
+		append(key, value, contentType, filename);
+	}
+
+	/++
+		Returns all the current entries in the object.
+
+		History:
+			Added June 7, 2023 (dub v11.0)
+	+/
+	MimePart[] entries() {
+		return parts;
+	}
+
+	// FIXME:
+	// keys iterator
+	// values iterator
+
+	/++
+		Gets the content type header that should be set in the request. This includes the type and boundary that is applicable to the [toBytes] method.
+	+/
 	string contentType() {
 		return "multipart/form-data; boundary=" ~ boundary;
 	}
 
-	///
+	/++
+		Returns bytes applicable for the body of this request. Use the [contentType] method to get the appropriate content type header with the right boundary.
+	+/
 	ubyte[] toBytes() {
 		string data;
 
