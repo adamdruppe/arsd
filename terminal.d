@@ -633,7 +633,7 @@ struct Terminal {
 							if(terminalInFamily("linux"))
 								writeStringRaw("\033[?0c");
 							else
-								writeStringRaw("\033[0 q");
+								writeStringRaw("\033[2 q"); // assuming non-blinking block are the desired default
 						break;
 						case TerminalCursor.insert:
 							if(terminalInFamily("linux"))
