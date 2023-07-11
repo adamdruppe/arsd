@@ -29,7 +29,15 @@ module arsd.mvd;
 import std.traits;
 
 /// This exists just to make the documentation of [mvd] nicer looking.
-alias CommonReturnOfOverloads(alias fn) = CommonType!(staticMap!(ReturnType, __traits(getOverloads, __traits(parent, fn), __traits(identifier, fn))));
+template CommonReturnOfOverloads(alias fn) {
+	alias overloads = __traits(getOverloads, __traits(parent, fn), __traits(identifier, fn));
+	static if (overloads.length == 1) {
+		alias CommonReturnOfOverloads = ReturnType!(overloads[0]);
+	}
+	else {
+		alias CommonReturnOfOverloads = CommonType!(staticMap!(ReturnType, overloads));
+	}
+}
 
 /// See details on the [arsd.mvd] page.
 CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
@@ -148,4 +156,21 @@ unittest {
 	assert(wrapper.mvdObj!(wrapper.foo)(new OtherClass, new MyClass) == 21);
 
 	//mvd!bar(new OtherClass);
+}
+
+///
+unittest {
+	class MyClass {}
+
+	static bool success = false;
+
+	static struct Wrapper {
+		static:
+		void foo(MyClass a) { success = true; }
+	}
+
+	with(Wrapper) {
+		mvd!foo(new MyClass);
+		assert(success);
+	}
 }
