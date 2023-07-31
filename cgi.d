@@ -5809,17 +5809,18 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 			throw new Exception("abstract unix sockets not supported on this system");
 		}
 	} else {
+		auto address = host.length ? parseAddress(host, port) : new InternetAddress(port);
 		version(cgi_use_fiber) {
 			version(Windows)
 				listener = new PseudoblockingOverlappedSocket(AddressFamily.INET, SocketType.STREAM);
 			else
-				listener = new TcpSocket();
+				listener = new Socket(address.addressFamily, SocketType.STREAM);
 		} else {
-			listener = new TcpSocket();
+			listener = new Socket(address.addressFamily, SocketType.STREAM);
 		}
 		cloexec(listener);
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-		listener.bind(host.length ? parseAddress(host, port) : new InternetAddress(port));
+		listener.bind(address);
 		cleanup = delegate() {
 			listener.close();
 		};
