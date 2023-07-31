@@ -10,7 +10,7 @@
 
 
 	It has no dependencies for basic operation, but does require OpenSSL
-	libraries (or compatible) to be support HTTPS. This dynamically loaded
+	libraries (or compatible) to support HTTPS. This dynamically loaded
 	on-demand (meaning it won't be loaded if you don't use it, but if you do
 	use it, the openssl dynamic libraries must be found in the system search path).
 
@@ -2784,6 +2784,25 @@ class HttpClient {
 	+/
 	bool defaultVerifyPeer = true;
 
+	/++
+		Adds a header to be automatically appended to each request created through this client.
+
+		If you add duplicate headers, it will add multiple copies.
+
+		You should NOT use this to add headers that can be set through other properties like [userAgent], [authorization], or [setCookie].
+
+		History:
+			Added July 12, 2023
+	+/
+	void addDefaultHeader(string key, string value) {
+		defaultHeaders ~= key ~ ": " ~ value;
+	}
+
+	private string[] defaultHeaders;
+
+	// FIXME: getCookies api
+	// FIXME: an easy way to download files
+
 	// FIXME: try to not make these static
 	private static string certFilename;
 	private static string keyFilename;
@@ -2841,6 +2860,8 @@ class HttpClient {
 
 		request.requestParameters.bodyData = bodyData;
 		request.requestParameters.contentType = contentType;
+
+		request.requestParameters.headers = this.defaultHeaders;
 
 		populateCookies(request);
 
