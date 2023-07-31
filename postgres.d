@@ -257,7 +257,7 @@ class PostgresResult : ResultSet {
 		void fetchNext() {
 			Row r;
 			r.resultSet = this;
-			string[] row;
+			DatabaseDatum[] row;
 
 			for(int i = 0; i < numFields; i++) {
 				string a;
@@ -287,7 +287,7 @@ class PostgresResult : ResultSet {
 					}
 
 				}
-				row ~= a;
+				row ~= DatabaseDatum(a);
 			}
 
 			r.row = row;

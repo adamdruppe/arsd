@@ -144,16 +144,16 @@ class MySqlResult : ResultSet {
 			throw new Exception("there is no next row");
 		uint numFields = mysql_num_fields(result);
 		auto lengths = mysql_fetch_lengths(result);
-		string[] row;
+		DatabaseDatum[] row;
 		// potential FIXME: not really binary safe
 
 		columnIsNull.length = numFields;
 		for(int a = 0; a < numFields; a++) {
 			if(*(r+a) is null) {
-				row ~= null;
+				row ~= DatabaseDatum(null);
 				columnIsNull[a] = true;
 			} else {
-				row ~= fromCstring(*(r+a), *(lengths + a));
+				row ~= DatabaseDatum(fromCstring(*(r+a), *(lengths + a)));
 				columnIsNull[a] = false;
 			}
 		}

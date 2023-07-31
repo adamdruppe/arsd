@@ -236,9 +236,9 @@ class SqliteResult :  ResultSet {
 			throw new Exception("Result is empty");
 		foreach(c; rows[position]) {
 			if(auto t = c.peek!(immutable(byte)[]))
-				r.row ~= cast(string) *t;
+				r.row ~= DatabaseDatum(cast(string) *t);
 			else
-				r.row ~= c.coerce!(string);
+				r.row ~= DatabaseDatum(c.coerce!(string));
 		}
 
 		return r;

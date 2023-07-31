@@ -160,7 +160,7 @@ class MsSqlResult : ResultSet {
 			if(SQLFetch(statement) == SQL_SUCCESS) {
 				Row r;
 				r.resultSet = this;
-				string[] row;
+				DatabaseDatum[] row;
 
 				for(int i = 0; i < numFields; i++) {
 					string a;
@@ -181,7 +181,7 @@ class MsSqlResult : ResultSet {
 						if(ptr)
 							goto more;
 					}
-					row ~= a;
+					row ~= DatabaseDatum(a);
 				}
 
 				r.row = row;

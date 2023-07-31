@@ -31,6 +31,8 @@
 
 		Be aware I don't like this string interface much anymore and want to change it significantly but idk
 		how to work it in without breaking a decade of code.
+
+		On June 7, 2023 (dub 11.0), I started the process of moving away from strings as the inner storage unit. This is a potentially breaking change, but you can use `.toString` to convert as needed and `alias this` will try to do this automatically in many situations. See [DatabaseDatum] for details. This transition is not yet complete.
 +/
 module arsd.database;
 
@@ -39,6 +41,9 @@ module arsd.database;
 public import std.variant;
 import std.string;
 public import std.datetime;
+
+static import arsd.core;
+private import arsd.core : LimitedVariant;
 
 /*
 	Database 2.0 plan, WIP:
@@ -138,51 +143,127 @@ struct Query {
 	}
 }
 
-/+
+/++
+	Represents a single item in a result. A row is a set of these `DatabaseDatum`s.
+
+	History:
+		Added June 2, 2023 (dub v11.0). Prior to this, it would always use `string`. This has `alias toString this` to try to maintain compatibility.
++/
 struct DatabaseDatum {
-	int tag;
-	union {
-		string text;
-		immutable(ubyte)[] blob;
-		int number;
-		double floating;
+	int platformSpecificTag;
+	LimitedVariant storage;
+
+	/++
+		These are normally constructed by the library, so you shouldn't need these constructors. If you're writing a new database implementation though, here it is.
+	+/
+	package this(string s) {
+		storage = s;
 	}
 
+	/++
+		Returns `true` if the item was `NULL` in the database.
+	+/
 	bool isNull() {
-		return true;
+		return storage.contains == LimitedVariant.Contains.null_;
 	}
 
+	/++
+		Converts the datum to a string in a format specified by the database.
+	+/
 	string toString() {
-		return null;
+		return storage.toString();
 	}
 	/++
 		For compatibility with earlier versions of the api, all data can easily convert to string implicitly.
 	+/
 	alias toString this;
 }
-+/
 
+/++
+	A row in a result set from a query.
+
+	You can access this as either an array or associative array:
+
+	---
+		foreach(Row row; db.query("SELECT id, name FROM mytable")) {
+			// can access by index or by name
+			row[0] == row["id"];
+			row[1] == row["name"];
+
+			// can also iterate over the results
+			foreach(name, data; row) {
+				 // will send name = "id", data = the thing
+				 // and then next loop will be name = "name", data = the thing
+			}
+		}
+	---
++/
 struct Row {
-	package string[] row;
+	package DatabaseDatum[] row;
 	package ResultSet resultSet;
 
-	string opIndex(size_t idx, string file = __FILE__, int line = __LINE__) {
+	/++
+		Allows for access by index or column name.
+	+/
+	DatabaseDatum opIndex(size_t idx, string file = __FILE__, int line = __LINE__) {
 		if(idx >= row.length)
 			throw new Exception(text("index ", idx, " is out of bounds on result"), file, line);
 		return row[idx];
 	}
 
-	string opIndex(string name, string file = __FILE__, int line = __LINE__) {
+	/// ditto
+	DatabaseDatum opIndex(string name, string file = __FILE__, int line = __LINE__) {
 		auto idx = resultSet.getFieldIndex(name);
 		if(idx >= row.length)
 			throw new Exception(text("no field ", name, " in result"), file, line);
 		return row[idx];
 	}
 
+	/++
+		Provides a string representation of the row, for quick eyeball debugging. You probably won't want the format this prints in (and don't rely upon it, as it is subject to change at any time without notice!), but it might be useful for use with `writeln`.
+	+/
 	string toString() {
 		return to!string(row);
 	}
 
+	/++
+		Allows iteration over the columns with the `foreach` statement.
+
+		History:
+			Prior to June 11, 2023 (dub v11.0), the order of iteration was undefined. It is now guaranteed to be in the same order as it was returned by the database (which is determined by your original query). Additionally, prior to this date, the datum was typed `string`. `DatabaseDatum` should implicitly convert to string, so your code is unlikely to break, but if you did specify the type explicitly you may need to update your code.
+
+			The overload with one argument, having just the datum without the name, was also added on June 11, 2023 (dub v11.0).
+	+/
+	int opApply(int delegate(string, DatabaseDatum) dg) {
+		string[] fn = resultSet.fieldNames();
+		foreach(idx, item; row)
+			mixin(yield("fn[idx], item"));
+
+		return 0;
+	}
+
+	/// ditto
+	int opApply(int delegate(DatabaseDatum) dg) {
+		foreach(item; row)
+			mixin(yield("item"));
+		return 0;
+	}
+
+	/++
+		Hacky conversion to simpler types.
+
+		I'd recommend against using these in new code. I wrote them back around 2011 as a hack for something I was doing back then. Among the downsides of these is type information loss in both functions (since strings discard the information tag) and column order loss in `toAA` (since D associative arrays do not maintain any defined order). Additionally, they to make an additional copy of the result row, which you may be able to avoid by looping over it directly.
+
+		I may formally deprecate them in a future release.
+	+/
+	string[] toStringArray() {
+		string[] row;
+		foreach(item; this.row)
+			row ~= item;
+		return row;
+	}
+
+	/// ditto
 	string[string] toAA() {
 		string[string] a;
 
@@ -194,18 +275,6 @@ struct Row {
 		return a;
 	}
 
-	int opApply(int delegate(ref string, ref string) dg) {
-		foreach(a, b; toAA())
-			mixin(yield("a, b"));
-
-		return 0;
-	}
-
-
-
-	string[] toStringArray() {
-		return row;
-	}
 }
 import std.conv;
 
