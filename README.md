@@ -34,7 +34,9 @@ terminal.d and http2.d used to be stand-along. They now depend on core.d.
 
 minigui.d now also depends on a new textlayouter.d, bringing its total dependencies from minigui.d, simpledisplay.d, color.d up to minigui.d, simpledisplay.d, color.d, core.d, and textlayouter.d
 
-Generally speaking, I am relaxing my dependency policy somewhat to permit a little more code sharing and interoperability throughout the modules. While I will make efforts to maintain some degree of stand-alone functionality, many new features and even some old features may be changed to use the new module. As such, I reserve to right to use core.d from any module from this point forward. You should be prepared to add it to your builds using any arsd component.
+dom.d, database.d, png.d, and others may start importing it at any time, so you have to assume they do from here on and have the file in your build.
+
+Generally speaking, I am relaxing my dependency policy somewhat to permit a little more code sharing and interoperability throughout the modules. While I will make efforts to maintain some degree of stand-alone functionality, many new features and even some old features may be changed to use the new module. As such, I reserve to right to use core.d from *any* module from this point forward. You should be prepared to add it to your builds using any arsd component.
 
 Note that arsd.core may require user32.lib and ws2_32.lib on Windows. This is added automatically in most cases, and is a core component so it will be there, but if you see a linker error, this might be why.
 
@@ -43,8 +45,8 @@ I recommend you clone the repo and use `dmd -i` to let the compiler automaticall
 Also:
 
 	* dom.d's XmlDocument no longer treats `<script>` and `<style>` tags as CDATA; that was meant to be a html-specific behavior, not applicable to generic xml.
-	* game.d had significant changes, making the Game object be a manager of GameScreen objects, which use delta time interpolated renders and fixed time updates (before it was vice versa).
-	* database.d got its first overhaul in a decade.
+	* game.d had significant changes, making the Game object be a manager of GameScreen objects, which use delta time interpolated renders and fixed time updates (before it was vice versa). As of 11.0, its new api is not fully stable.
+	* database.d got some tweaks. A greater overhaul is still planned but might be delayed to 12.0.
 	* Support for Windows XP has been dropped (though it may still work in certain places, there's no promises since arsd.core uses some Windows Vista features without fallback.)
 	* Support for older compilers has been dropped (arsd.core uses some newer druntime features). The new minimum version is likely gdc 10, the tester now runs gdc version 12. gdc 9 might still sometimes work but I'm going to be removing some of those compatibility branches soon anyway.
 
@@ -53,7 +55,7 @@ Also:
 lld-link: error: undefined symbol: _MsgWaitForMultipleObjectsEx@20
 >>> referenced by core.obj:(__D4arsd4core27CoreEventLoopImplementation7runOnceMFZv)
 
-Indicates a missing `user32.lib`.
+Indicates a missing `user32.lib` in the link. This should generally be automatic but if not, you can simply mention it on the dmd command line (like `dmd yourfile.d user32.lb`) or add it to an explicit dub config `libs`.
 
 
 ACTUALLY WRONG: i need the right one
@@ -67,15 +69,15 @@ Indicates a missing `core.d` in the build.
 11.0 focused on getting breaking changes in before the deadline. Some additive features that had to be deferred will be coming in 11.1 and beyond, including, but not limited to:
 
 	* simpleaudio synthesis
-	* game.d reorganization
+	* game.d reorganization (11.0 marks it broken, then it will restablize later)
 	* minigui drag and drop
 	* simpledisplay touch
 	* ssl server for cgi.d
 	* tui helpers
-	* database improvements
-	* i should prolly rewrite the script.d parser someday but maybe that will be a 12.0 thing
+	* database improvements if I can do it without breakage, if it has major breakage, I'll leave it to 12.0.
 	* click and drag capture behavior in minigui and the terminal emulator widget in particular
 	* more dox
+	* i should prolly rewrite the script.d parser someday but maybe that will be a 12.0 thing
 
 ## 10.0
 
