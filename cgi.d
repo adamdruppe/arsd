@@ -1985,6 +1985,12 @@ class Cgi {
 			if(headerNumber == 1) {
 				// request line
 				auto parts = al.splitter(header, " ");
+				if(parts.front == "PRI") {
+					// this is an HTTP/2.0 line - "PRI * HTTP/2.0" - which indicates their payload will follow
+					// we're going to immediately refuse this, im not interested in implementing http2 (it is unlikely
+					// to bring me benefit)
+					throw new HttpVersionNotSupportedException();
+				}
 				requestMethod = to!RequestMethod(parts.front);
 				parts.popFront();
 				requestUri = parts.front;
@@ -3639,8 +3645,8 @@ string plainHttpError(bool isCgi, string type, Throwable t) {
 	auto message = messageFromException(t);
 	message = simpleHtmlEncode(message);
 
-	return format("%s %s\r\nContent-Length: %s\r\n\r\n%s",
-		isCgi ? "Status:" : "HTTP/1.0",
+	return format("%s %s\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s",
+		isCgi ? "Status:" : "HTTP/1.1",
 		type, message.length, message);
 }
 
@@ -4167,6 +4173,10 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 							if(processPoolSize <= 1)
 								closeConnection = true;
 							//cgi = emplace!CustomCgi(cgiContainer, ir, &closeConnection);
+						} catch(HttpVersionNotSupportedException he) {
+							sendAll(ir.source, plainHttpError(false, "505 HTTP Version Not Supported", he));
+							closeConnection = true;
+							break;
 						} catch(Throwable t) {
 							// a construction error is either bad code or bad request; bad request is what it should be since this is bug free :P
 							// anyway let's kill the connection
@@ -4912,6 +4922,10 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 			break;
 		} catch(ConnectionException ce) {
 			// broken pipe or something, just abort the connection
+			closeConnection = true;
+			break;
+		} catch(HttpVersionNotSupportedException ve) {
+			sendAll(connection, plainHttpError(false, "505 HTTP Version Not Supported", ve));
 			closeConnection = true;
 			break;
 		} catch(Throwable t) {
@@ -5848,6 +5862,12 @@ class ConnectionException : Exception {
 	this(Socket s, string msg, string file = __FILE__, size_t line = __LINE__) {
 		this.socket = s;
 		super(msg, file, line);
+	}
+}
+
+class HttpVersionNotSupportedException : Exception {
+	this(string file = __FILE__, size_t line = __LINE__) {
+		super("HTTP Version Not Supported", file, line);
 	}
 }
 
