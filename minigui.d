@@ -1,8 +1,12 @@
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
+// if doing nested menus, make sure the straight line from where it pops up to any destination on the new popup is not going to disappear the menu until at least a delay
+
 // me@arsd:~/.kde/share/config$ vim kdeglobals
 
 // FIXME: i kinda like how you can show find locations in scrollbars in the chrome browisers i wanna support that here too.
+
+// https://www.freedesktop.org/wiki/Accessibility/AT-SPI2/
 
 // for responsive design, a collapsible widget that if it doesn't have enough room, it just automatically becomes a "more" button or whatever.
 
@@ -11517,7 +11521,7 @@ class Button : MouseActivatedWidget {
 }
 
 /++
-	A button with a consistent size, suitable for user commands like OK and cANCEL.
+	A button with a consistent size, suitable for user commands like OK and CANCEL.
 +/
 class CommandButton : Button {
 	this(string label, Widget parent) {
