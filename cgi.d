@@ -1435,7 +1435,7 @@ class Cgi {
 		string contentFilename; /// the file where we dumped the content, if contentInMemory == false. Note that if you want to keep it, you MUST move the file, since otherwise it is considered garbage when cgi is disposed.
 
 		///
-		ulong fileSize() {
+		ulong fileSize() const {
 			if(contentInMemory)
 				return content.length;
 			import std.file;
@@ -6703,6 +6703,11 @@ version(cgi_with_websocket) {
 
 	}
 
+	/++
+		Returns true if the request headers are asking for a websocket upgrade.
+
+		If this returns true, and you want to accept it, call [acceptWebsocket].
+	+/
 	bool websocketRequested(Cgi cgi) {
 		return
 			"sec-websocket-key" in cgi.requestHeaders
@@ -6715,6 +6720,9 @@ version(cgi_with_websocket) {
 			;
 	}
 
+	/++
+		If [websocketRequested], you can call this to accept it and upgrade the connection. It returns the new [WebSocket] object you use for future communication on this connection; the `cgi` object should no longer be used.
+	+/
 	WebSocket acceptWebsocket(Cgi cgi) {
 		assert(!cgi.closed);
 		assert(!cgi.outputtedResponseData);
@@ -9203,6 +9211,8 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 					case idents[idx]:
 						static if(is(param == Cgi.UploadedFile)) {
 							params[idx] = cgi.files[name];
+						} else static if(is(param : const Cgi.UploadedFile[])) {
+							(cast() params[idx]) = cgi.filesArray[name];
 						} else {
 							setVariable(name, paramName, &params[idx], value);
 						}
@@ -9544,6 +9554,7 @@ css";
 	<script>document.documentElement.classList.remove("no-script");</script>
 	<style>.no-script requires-script { display: none; }</style>
 	<title>D Application</title>
+	<meta name="viewport" content="initial-scale=1, width=device-width" />
 	<link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -9561,7 +9572,7 @@ html", true, true);
 		return document.requireSelector("main");
 	}
 
-	/// Renders a response as an HTTP error
+	/// Renders a response as an HTTP error with associated html body
 	void renderBasicError(Cgi cgi, int httpErrorCode) {
 		cgi.setResponseStatus(getHttpCodeText(httpErrorCode));
 		auto c = htmlContainer();
@@ -9796,7 +9807,20 @@ html", true, true);
 		auto div = Element.make("div");
 		div.addClass("form-field");
 
-		static if(is(T == Cgi.UploadedFile)) {
+		static if(is(T : const Cgi.UploadedFile)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			i.attrs.type = "file";
+			i.attrs.multiple = "multiple";
+		} else static if(is(T == Cgi.UploadedFile)) {
 			Element lbl;
 			if(displayName !is null) {
 				lbl = div.addChild("label");
