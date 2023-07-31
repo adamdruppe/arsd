@@ -1,11 +1,25 @@
 /++
-	Please note: the api and behavior of this module is not externally stable at this time. See the documentation on specific functions.
+	$(PITFALL
+		Please note: the api and behavior of this module is not externally stable at this time. See the documentation on specific functions for details.
+	)
 
 	Shared core functionality including exception helpers, library loader, event loop, and possibly more. Maybe command line processor and uda helper and some basic shared annotation types.
 
-	I'll probably move the url, websocket, and ssl stuff in here too as they are often shared. Maybe a small internationalization helper type (a hook for external implementation) and COM helpers too.
+	I'll probably move the url, websocket, and ssl stuff in here too as they are often shared. Maybe a small internationalization helper type (a hook for external implementation) and COM helpers too. I might move the process helpers out to their own module - even things in here are not considered stable to library users at this time!
 
-	If you use this directly outside the arsd library, you might consider using `static import` since names in here are likely to clash with Phobos if you use them together. `static import` will let you easily disambiguate and avoid name conflict errors if I add more here. Some names even clash deliberately to remind me to avoid some antipatterns inside the arsd modules!
+	If you use this directly outside the arsd library despite its current instability caveats, you might consider using `static import` since names in here are likely to clash with Phobos if you use them together. `static import` will let you easily disambiguate and avoid name conflict errors if I add more here. Some names even clash deliberately to remind me to avoid some antipatterns inside the arsd modules!
+
+	## Contributor notes
+
+	arsd.core should be focused on things that enable interoperability primarily and secondarily increased code quality between other, otherwise independent arsd modules. As a foundational library, it is not permitted to import anything outside the druntime `core` namespace, except in templates and examples not normally compiled in. This keeps it independent and avoids transitive dependency spillover to end users while also keeping compile speeds fast. To help keep builds snappy, also avoid significant use of ctfe inside this module.
+
+	On my linux computer, `dmd -unittest -main core.d` takes about a quarter second to run. We do not want this to grow.
+
+	`@safe` compatibility is ok when it isn't too big of a hassle. `@nogc` is a non-goal. I might accept it on some of the trivial functions but if it means changing the logic in any way to support, you will need a compelling argument to justify it. The arsd libs are supposed to be reliable and easy to use. That said, of course, don't be unnecessarily wasteful - if you can easily provide a reliable and easy to use way to let advanced users do their thing without hurting the other cases, let's discuss it.
+
+	If functionality is not needed by multiple existing arsd modules, consider adding a new module instead of adding it to the core.
+
+	Unittests should generally be hidden behind a special version guard so they don't interfere with end user tests.
 
 	History:
 		Added March 2023 (dub v11.0). Several functions were migrated in here at that time, noted individually. Members without a note were added with the module.
@@ -1372,6 +1386,10 @@ class InvalidArgumentsException : ArsdExceptionBase {
 		], functionName, file, line, next);
 	}
 
+	this(string argumentName, string argumentDescription, string functionName = __PRETTY_FUNCTION__, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this(argumentName, argumentDescription, LimitedVariant.init, functionName, file, line, next);
+	}
+
 	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
 		// FIXME: print the details better
 		foreach(arg; invalidArguments)
@@ -1841,7 +1859,7 @@ enum ThreadToRunIn {
 
 		Ad-Hoc thread - something running an event loop that isn't another thing
 		Controller thread - running an explicit event loop instance set as not a task runner or blocking worker
-		UI thread - simpledisplay's event loop, which it will require remain live for the duration of the program (running two .eventLoops without a parent EventLoop instance will become illegal, throwing at runtime if it happens telling people to change their code
+		UI thread - simpledisplay's event loop, which it will require remain live for the duration of the program (running two .eventLoops without a parent EventLoop instance will become illegal, throwing at runtime if it happens telling people to change their code)
 
 		Windows HANDLES will always be listened on the thread itself that is requesting, UNLESS it is a worker/helper thread, in which case it goes to a coordinator thread. since it prolly can't rely on the parent per se this will have to be one created by arsd core init, UNLESS the parent is inside an explicit EventLoop structure.
 
@@ -4941,7 +4959,7 @@ class WritableStream {
 	/++
 
 	+/
-	final void put(T)(T value, ByteOrder byteOrder = ByteOrder.irrelevant) {
+	final void put(T)(T value, ByteOrder byteOrder = ByteOrder.irrelevant, string file = __FILE__, size_t line = __LINE__) {
 		static if(T.sizeof == 8)
 			ulong b;
 		else static if(T.sizeof == 4)
@@ -4953,7 +4971,7 @@ class WritableStream {
 		else static assert(0, "unimplemented type, try using just the basic types");
 
 		if(byteOrder == ByteOrder.irrelevant && T.sizeof > 1)
-			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte");
+			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte", "WritableStream.put", file, line);
 
 		final switch(byteOrder) {
 			case ByteOrder.irrelevant:
@@ -4976,9 +4994,9 @@ class WritableStream {
 	}
 
 	/// ditto
-	final void put(T : E[], E)(T value, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+	final void put(T : E[], E)(T value, ByteOrder elementByteOrder = ByteOrder.irrelevant, string file = __FILE__, size_t line = __LINE__) {
 		foreach(item; value)
-			put(item, elementByteOrder);
+			put(item, elementByteOrder, file, line);
 	}
 
 	/++
@@ -5051,9 +5069,9 @@ class ReadableStream {
 		ubyte[] data = stream.get!(ubyte[])(i);
 		---
 	+/
-	final T get(T)(ByteOrder byteOrder = ByteOrder.irrelevant) {
+	final T get(T)(ByteOrder byteOrder = ByteOrder.irrelevant, string file = __FILE__, size_t line = __LINE__) {
 		if(byteOrder == ByteOrder.irrelevant && T.sizeof > 1)
-			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte");
+			throw new InvalidArgumentsException("byteOrder", "byte order must be specified for type " ~ T.stringof ~ " because it is bigger than one byte", "ReadableStream.get", file, line);
 
 		// FIXME: what if it is a struct?
 
@@ -5093,9 +5111,9 @@ class ReadableStream {
 	}
 
 	/// ditto
-	final T get(T : E[], E)(size_t length, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+	final T get(T : E[], E)(size_t length, ByteOrder elementByteOrder = ByteOrder.irrelevant, string file = __FILE__, size_t line = __LINE__) {
 		if(elementByteOrder == ByteOrder.irrelevant && E.sizeof > 1)
-			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte");
+			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte", "ReadableStream.get", file, line);
 
 		// if the stream is closed before getting the length or the terminator, should we send partial stuff
 		// or just throw?
@@ -5120,9 +5138,9 @@ class ReadableStream {
 	}
 
 	/// ditto
-	final T get(T : E[], E)(scope bool delegate(E e) isTerminatingSentinel, ByteOrder elementByteOrder = ByteOrder.irrelevant) {
+	final T get(T : E[], E)(scope bool delegate(E e) isTerminatingSentinel, ByteOrder elementByteOrder = ByteOrder.irrelevant, string file = __FILE__, size_t line = __LINE__) {
 		if(byteOrder == ByteOrder.irrelevant && E.sizeof > 1)
-			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte");
+			throw new InvalidArgumentsException("elementByteOrder", "byte order must be specified for type " ~ E.stringof ~ " because it is bigger than one byte", "ReadableStream.get", file, line);
 
 		assert(0, "Not implemented");
 	}
@@ -5234,6 +5252,8 @@ unittest {
 }
 
 /++
+	UNSTABLE, NOT FULLY IMPLEMENTED. DO NOT USE YET.
+
 	You might use this like:
 
 	---
@@ -5292,12 +5312,14 @@ class ExternalProcess {
 		version(Posix) {
 			assert(0, "not implemented command line to posix args yet");
 		}
+		else throw new NotYetImplementedException();
 	}
 
 	this(string commandLine) {
 		version(Posix) {
 			assert(0, "not implemented command line to posix args yet");
 		}
+		else throw new NotYetImplementedException();
 	}
 
 	this(string[] args) {
@@ -5305,7 +5327,7 @@ class ExternalProcess {
 			this.program = FilePath(args[0]);
 			this.args = args;
 		}
-
+		else throw new NotYetImplementedException();
 	}
 
 	/++
@@ -5316,6 +5338,7 @@ class ExternalProcess {
 			this.program = program;
 			this.args = args;
 		}
+		else throw new NotYetImplementedException();
 	}
 
 	// you can modify these before calling start
