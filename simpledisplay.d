@@ -11767,6 +11767,10 @@ version(Windows) {
 		}
 
 		void closeWindow() {
+			if(ghRC) {
+				wglDeleteContext(ghRC);
+				ghRC = null;
+			}
 			DestroyWindow(hwnd);
 		}
 
@@ -14951,6 +14955,12 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				customEventFDRead = -1;
 				customEventFDWrite = -1;
 			}
+
+			if(glc !is null) {
+				glXDestroyContext(display, glc);
+				glc = null;
+			}
+
 			if(buffer)
 				XFreePixmap(display, buffer);
 			bufferw = bufferh = 0;
