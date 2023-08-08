@@ -556,6 +556,12 @@ template WebPresenterWithTemplateSupport(CTRP) {
 	}
 }
 
+/++
+	Serves up a directory of template files as html. This is meant to be used for some near-static html in the midst of an application, giving you a little bit of dynamic content and conveniences with the ease of editing files without recompiles.
+
+	History:
+		Added July 28, 2021 (documented dub v11.0)
++/
 auto serveTemplateDirectory()(string urlPrefix, string directory = null, string skeleton = null, string extension = ".html") {
 	import arsd.cgi;
 	import std.file;

@@ -2751,98 +2751,328 @@ class NamedPipeServer {
 	// can be on a specific thread or on any thread
 }
 
-/++
-	Looking these up might be done asynchronously. The objects both represent an async request and its result, which is the actual address the operating system uses.
-
-	When you create an address, it holds a request. You can call `start` and `waitForCompletion` like with other async requests. The request may be run in a helper thread.
-
-	Unlike most the async objects though, its methods will implicitly call `waitForCompletion`.
-
-	Note that The current implementation just blocks.
-+/
-class SocketAddress /* : AsyncOperationRequest, AsyncOperationResponse */ {
-	// maybe accept url?
-	// unix:///home/me/thing
-	// ip://0.0.0.0:4555
-	// ipv6://[00:00:00:00:00:00]
-
-	// address info
-	abstract int domain();
-	// FIXME: find all cases of this and make sure it is completed first
-	abstract sockaddr* rawAddr();
-	abstract socklen_t rawAddrLength();
-
-	/+
-	// request interface
-	abstract void start();
-	abstract SocketAddress waitForCompletion();
-	abstract bool isComplete();
-
-	// response interface
-	abstract bool wasSuccessful();
-	+/
+private version(Windows) extern(Windows) {
+	const(char)* inet_ntop(int, const void*, char*, socklen_t);
 }
 
-/+
-class BluetoothAddress : SocketAddress {
+/++
+	Some functions that return arrays allow you to provide your own buffer. These are indicated in the type system as `UserProvidedBuffer!Type`, and you get to decide what you want to happen if the buffer is too small via the [OnOutOfSpace] parameter.
+
+	These are usually optional, since an empty user provided buffer with the default policy of reallocate will also work fine for whatever needs to be returned, thanks to the garbage collector taking care of it for you.
+
+	The API inside `UserProvidedBuffer` is all private to the arsd library implementation; your job is just to provide the buffer to it with [provideBuffer] or a constructor call and decide on your on-out-of-space policy.
+
+	$(TIP
+		To properly size a buffer, I suggest looking at what covers about 80% of cases. Trying to cover everything often leads to wasted buffer space, and if you use a reallocate policy it can cover the rest. You might be surprised how far just two elements can go!
+	)
+
+	History:
+		Added August 4, 2023 (dub v11.0)
++/
+struct UserProvidedBuffer(T) {
+	private T[] buffer;
+	private int actualLength;
+	private OnOutOfSpace policy;
+
+	/++
+
+	+/
+	public this(scope T[] buffer, OnOutOfSpace policy = OnOutOfSpace.reallocate) {
+		this.buffer = buffer;
+		this.policy = policy;
+	}
+
+	package(arsd) bool append(T item) {
+		if(actualLength < buffer.length) {
+			buffer[actualLength++] = item;
+			return true;
+		} else final switch(policy) {
+			case OnOutOfSpace.discard:
+				return false;
+			case OnOutOfSpace.exception:
+				throw ArsdException!"Buffer out of space"(buffer.length, actualLength);
+			case OnOutOfSpace.reallocate:
+				buffer ~= item;
+				actualLength++;
+				return true;
+		}
+	}
+
+	package(arsd) T[] slice() return {
+		return buffer[0 .. actualLength];
+	}
+}
+
+/// ditto
+UserProvidedBuffer!T provideBuffer(T)(scope T[] buffer, OnOutOfSpace policy = OnOutOfSpace.reallocate) {
+	return UserProvidedBuffer!T(buffer, policy);
+}
+
+/++
+	Possible policies for [UserProvidedBuffer]s that run out of space.
++/
+enum OnOutOfSpace {
+	reallocate, /// reallocate the buffer with the GC to make room
+	discard, /// discard all contents that do not fit in your provided buffer
+	exception, /// throw an exception if there is data that would not fit in your provided buffer
+}
+
+
+/++
+	For functions that give you an unknown address, you can use this to hold it.
+
+	Can get:
+		ip4
+		ip6
+		unix
+		abstract_
+
+		name lookup for connect (stream or dgram)
+			request canonical name?
+
+		interface lookup for bind (stream or dgram)
++/
+struct SocketAddress {
+	import core.sys.posix.netdb;
+
+	/++
+		Provides the set of addresses to listen on all supported protocols on the machine for the given interfaces. `localhost` only listens on the loopback interface, whereas `allInterfaces` will listen on loopback as well as the others on the system (meaning it may be publicly exposed to the internet).
+
+		If you provide a buffer, I recommend using one of length two, so `SocketAddress[2]`, since this usually provides one address for ipv4 and one for ipv6.
+	+/
+	static SocketAddress[] localhost(ushort port, return UserProvidedBuffer!SocketAddress buffer = null) {
+		buffer.append(ip6("::1", port));
+		buffer.append(ip4("127.0.0.1", port));
+		return buffer.slice;
+	}
+
+	/// ditto
+	static SocketAddress[] allInterfaces(ushort port, return UserProvidedBuffer!SocketAddress buffer = null) {
+		char[16] str;
+		return allInterfaces(intToString(port, str[]), buffer);
+	}
+
+	/// ditto
+	static SocketAddress[] allInterfaces(scope const char[] serviceOrPort, return UserProvidedBuffer!SocketAddress buffer = null) {
+		addrinfo hints;
+		hints.ai_flags = AI_PASSIVE;
+		hints.ai_socktype = SOCK_STREAM; // just to filter it down a little tbh
+		return get(null, serviceOrPort, &hints, buffer);
+	}
+
+	/++
+		Returns a single address object for the given protocol and parameters.
+
+		You probably should generally prefer [get], [localhost], or [allInterfaces] to have more flexible code.
+	+/
+	static SocketAddress ip4(scope const char[] address, ushort port, bool forListening = false) {
+		return getSingleAddress(AF_INET, AI_NUMERICHOST | (forListening ? AI_PASSIVE : 0), address, port);
+	}
+
+	/// ditto
+	static SocketAddress ip4(ushort port) {
+		return ip4(null, port, true);
+	}
+
+	/// ditto
+	static SocketAddress ip6(scope const char[] address, ushort port, bool forListening = false) {
+		return getSingleAddress(AF_INET6, AI_NUMERICHOST | (forListening ? AI_PASSIVE : 0), address, port);
+	}
+
+	/// ditto
+	static SocketAddress ip6(ushort port) {
+		return ip6(null, port, true);
+	}
+
+	/// ditto
+	static SocketAddress unix(scope const char[] path) {
+		// FIXME
+		SocketAddress addr;
+		return addr;
+	}
+
+	/// ditto
+	static SocketAddress abstract_(scope const char[] path) {
+		char[190] buffer = void;
+		buffer[0] = 0;
+		buffer[1 .. path.length] = path[];
+		return unix(buffer[0 .. 1 + path.length]);
+	}
+
+	private static SocketAddress getSingleAddress(int family, int flags, scope const char[] address, ushort port) {
+		addrinfo hints;
+		hints.ai_family = family;
+		hints.ai_flags = flags;
+
+		char[16] portBuffer;
+		char[] portString = intToString(port, portBuffer[]);
+
+		SocketAddress[1] addr;
+		auto res = get(address, portString, &hints, provideBuffer(addr[]));
+		if(res.length == 0)
+			throw ArsdException!"bad address"(address.idup, port);
+		return res[0];
+	}
+
+	/++
+		Calls `getaddrinfo` and returns the array of results. It will populate the data into the buffer you provide, if you provide one, otherwise it will allocate its own.
+	+/
+	static SocketAddress[] get(scope const char[] nodeName, scope const char[] serviceOrPort, addrinfo* hints = null, return UserProvidedBuffer!SocketAddress buffer = null, scope bool delegate(scope addrinfo* ai) filter = null) @trusted {
+		addrinfo* res;
+		CharzBuffer node = nodeName;
+		CharzBuffer service = serviceOrPort;
+		auto ret = getaddrinfo(nodeName is null ? null : node.ptr, serviceOrPort is null ? null : service.ptr, hints, &res);
+		if(ret == 0) {
+			auto current = res;
+			while(current) {
+				if(filter is null || filter(current)) {
+					SocketAddress addr;
+					addr.addrlen = cast(socklen_t) current.ai_addrlen;
+					switch(current.ai_family) {
+						case AF_INET:
+							addr.in4 = * cast(sockaddr_in*) current.ai_addr;
+							break;
+						case AF_INET6:
+							addr.in6 = * cast(sockaddr_in6*) current.ai_addr;
+							break;
+						case AF_UNIX:
+							addr.unix_address = * cast(sockaddr_un*) current.ai_addr;
+							break;
+						default:
+							// skip
+					}
+
+					if(!buffer.append(addr))
+						break;
+				}
+
+				current = current.ai_next;
+			}
+
+			freeaddrinfo(res);
+		} else {
+			version(Windows) {
+				throw new WindowsApiException("getaddrinfo", ret);
+			} else {
+				const char* error = gai_strerror(ret);
+			}
+		}
+
+		return buffer.slice;
+	}
+
+	/++
+		Returns a string representation of the address that identifies it in a custom format.
+
+		$(LIST
+			* Unix domain socket addresses are their path prefixed with "unix:", unless they are in the abstract namespace, in which case it is prefixed with "abstract:" and the zero is trimmed out. For example, "unix:/tmp/pipe".
+
+			* IPv4 addresses are written in dotted decimal followed by a colon and the port number. For example, "127.0.0.1:8080".
+
+			* IPv6 addresses are written in colon separated hex format, but enclosed in brackets, then followed by the colon and port number. For example, "[::1]:8080".
+		)
+	+/
+	string toString() const @trusted {
+		char[200] buffer;
+		switch(address.sa_family) {
+			case AF_INET:
+				auto writable = stringz(inet_ntop(address.sa_family, &in4.sin_addr, buffer.ptr, buffer.length));
+				auto it = writable.borrow;
+				buffer[it.length] = ':';
+				auto numbers = intToString(port, buffer[it.length + 1 .. $]);
+				return buffer[0 .. it.length + 1 + numbers.length].idup;
+			case AF_INET6:
+				buffer[0] = '[';
+				auto writable = stringz(inet_ntop(address.sa_family, &in6.sin6_addr, buffer.ptr + 1, buffer.length - 1));
+				auto it = writable.borrow;
+				buffer[it.length + 1] = ']';
+				buffer[it.length + 2] = ':';
+				auto numbers = intToString(port, buffer[it.length + 3 .. $]);
+				return buffer[0 .. it.length + 3 + numbers.length].idup;
+			case AF_UNIX:
+				// FIXME: it might be abstract in which case stringz is wrong!!!!!
+				auto writable = stringz(cast(char*) unix_address.sun_path.ptr).borrow;
+				if(writable.length == 0)
+					return "unix:";
+				string prefix = writable[0] == 0 ? "abstract:" : "unix:";
+				buffer[0 .. prefix.length] = prefix[];
+				buffer[prefix.length .. prefix.length + writable.length] = writable[writable[0] == 0 ? 1 : 0 .. $];
+				return buffer.idup;
+			case AF_UNSPEC:
+				return "<unspecified address>";
+			default:
+				return "<unsupported address>"; // FIXME
+		}
+	}
+
+	ushort port() const @trusted {
+		switch(address.sa_family) {
+			case AF_INET:
+				return ntohs(in4.sin_port);
+			case AF_INET6:
+				return ntohs(in6.sin6_port);
+			default:
+				return 0;
+		}
+	}
+
+	/+
+	@safe unittest {
+		SocketAddress[4] buffer;
+		foreach(addr; SocketAddress.get("arsdnet.net", "http", null, provideBuffer(buffer[])))
+			writeln(addr.toString());
+	}
+	+/
+
+	/+
+	unittest {
+		// writeln(SocketAddress.ip4(null, 4444, true));
+		// writeln(SocketAddress.ip4("400.3.2.1", 4444));
+		// writeln(SocketAddress.ip4("bar", 4444));
+		foreach(addr; localhost(4444))
+			writeln(addr.toString());
+	}
+	+/
+
+	socklen_t addrlen = typeof(this).sizeof - socklen_t.sizeof; // the size of the union below
+
+	union {
+		sockaddr address;
+
+		sockaddr_storage storage;
+
+		sockaddr_in in4;
+		sockaddr_in6 in6;
+
+		sockaddr_un unix_address;
+	}
+
+	/+
+	this(string node, string serviceOrPort, int family = 0) {
+		// need to populate the approrpiate address and the length and make sure you set sa_family
+	}
+	+/
+
+	int domain() {
+		return address.sa_family;
+	}
+	sockaddr* rawAddr() return {
+		return &address;
+	}
+	socklen_t rawAddrLength() {
+		return addrlen;
+	}
+
 	// FIXME it is AF_BLUETOOTH
 	// see: https://people.csail.mit.edu/albert/bluez-intro/x79.html
 	// see: https://learn.microsoft.com/en-us/windows/win32/Bluetooth/bluetooth-programming-with-windows-sockets
 }
-+/
 
-version(Posix) // FIXME: find the sockaddr_un definition for Windows too and add it in
-final class UnixAddress : SocketAddress {
-	sockaddr_un address;
-
-	override int domain() {
-		return AF_UNIX;
+private version(Windows) {
+	struct sockaddr_un {
+		ushort sun_family;
+		char[108] sun_path;
 	}
-
-	override sockaddr* rawAddr() {
-		return cast(sockaddr*) &address;
-	}
-	override socklen_t rawAddrLength() {
-		return address.sizeof;
-	}
-}
-
-final class IpAddress : SocketAddress {
-	sockaddr_in address;
-
-	override int domain() {
-		return AF_INET;
-	}
-
-	override sockaddr* rawAddr() {
-		return cast(sockaddr*) &address;
-	}
-	override socklen_t rawAddrLength() {
-		return address.sizeof;
-	}
-}
-
-final class Ipv6Address : SocketAddress {
-	sockaddr_in6 address;
-
-	override int domain() {
-		return AF_INET6;
-	}
-
-	override sockaddr* rawAddr() {
-		return cast(sockaddr*) &address;
-	}
-	override socklen_t rawAddrLength() {
-		return address.sizeof;
-	}
-}
-
-/++
-	For functions that give you an unknown address, you can use this to hold it.
-+/
-struct SocketAddressBuffer {
-	sockaddr address;
-	socklen_t addrlen;
 }
 
 class AsyncSocket : AsyncFile {
@@ -2963,8 +3193,8 @@ class AsyncSocket : AsyncFile {
 	/++
 		You can also construct your own request externally to control the memory more.
 	+/
-	AsyncConnectRequest connect(SocketAddress address) {
-		return new AsyncConnectRequest(this, address);
+	AsyncConnectRequest connect(SocketAddress address, ubyte[] bufferToSend = null) {
+		return new AsyncConnectRequest(this, address, bufferToSend);
 	}
 
 	/++
@@ -2993,25 +3223,29 @@ class AsyncSocket : AsyncFile {
 	/++
 		You can also construct your own request externally to control the memory more.
 	+/
-	AsyncSendRequest sendTo(const(ubyte)[] buffer, SocketAddress address, int flags = 0) {
+	AsyncSendRequest sendTo(const(ubyte)[] buffer, SocketAddress* address, int flags = 0) {
 		return new AsyncSendRequest(this, buffer, address, flags);
 	}
 	/++
 		You can also construct your own request externally to control the memory more.
 	+/
-	AsyncReceiveRequest receiveFrom(ubyte[] buffer, SocketAddressBuffer* address, int flags = 0) {
+	AsyncReceiveRequest receiveFrom(ubyte[] buffer, SocketAddress* address, int flags = 0) {
 		return new AsyncReceiveRequest(this, buffer, address, flags);
 	}
 
 	/++
 	+/
 	SocketAddress localAddress() {
-		return null; // FIXME
+		SocketAddress addr;
+		getsockname(handle, &addr.address, &addr.addrlen);
+		return addr;
 	}
 	/++
 	+/
 	SocketAddress peerAddress() {
-		return null; // FIXME
+		SocketAddress addr;
+		getpeername(handle, &addr.address, &addr.addrlen);
+		return addr;
 	}
 
 	// for unix sockets on unix only: send/receive fd, get peer creds
@@ -3027,9 +3261,17 @@ class AsyncSocket : AsyncFile {
 }
 
 /++
+	Initiates a connection request and optionally sends initial data as soon as possible.
+
+	Calls `ConnectEx` on Windows and emulates it on other systems.
+
+	The entire buffer is sent before the operation is considered complete.
+
+	NOT IMPLEMENTED / NOT STABLE
 +/
 class AsyncConnectRequest : AsyncOperationRequest {
-	this(AsyncSocket socket, SocketAddress address) {
+	// FIXME: i should take a list of addresses and take the first one that succeeds, so a getaddrinfo can be sent straight in.
+	this(AsyncSocket socket, SocketAddress address, ubyte[] dataToWrite) {
 
 	}
 
@@ -3053,23 +3295,77 @@ class AsyncConnectResponse : AsyncOperationResponse {
 
 }
 
+// FIXME: TransmitFile/sendfile support
+
 /++
+	Calls `AcceptEx` on Windows and emulates it on other systems.
+
+	NOT IMPLEMENTED / NOT STABLE
 +/
 class AsyncAcceptRequest : AsyncOperationRequest {
-	this(AsyncSocket socket) {
-
-	}
+	AsyncSocket socket;
 
 	override void start() {}
 	override void cancel() {}
 	override bool isComplete() { return true; }
 	override AsyncConnectResponse waitForCompletion() { assert(0); }
+
+
+	struct LowLevelOperation {
+		AsyncSocket file;
+		ubyte[] buffer;
+		SocketAddress* address;
+
+		this(typeof(this.tupleof) args) {
+			this.tupleof = args;
+		}
+
+		version(Windows) {
+			auto opCall(OVERLAPPED* overlapped, LPOVERLAPPED_COMPLETION_ROUTINE ocr) {
+				WSABUF buf;
+				buf.len = cast(int) buffer.length;
+				buf.buf = cast(typeof(buf.buf)) buffer.ptr;
+
+				uint flags;
+
+				if(address is null)
+					return WSARecv(file.handle, &buf, 1, null, &flags, overlapped, ocr);
+				else {
+					return WSARecvFrom(file.handle, &buf, 1, null, &flags, &(address.address), &(address.addrlen), overlapped, ocr);
+				}
+			}
+		} else {
+			auto opCall() {
+				int flags;
+				if(address is null)
+					return core.sys.posix.sys.socket.recv(file.handle, buffer.ptr, buffer.length, flags);
+				else
+					return core.sys.posix.sys.socket.recvfrom(file.handle, buffer.ptr, buffer.length, flags, &(address.address), &(address.addrlen));
+			}
+		}
+
+		string errorString() {
+			return "Receive";
+		}
+	}
+	mixin OverlappedIoRequest!(AsyncAcceptResponse, LowLevelOperation);
+
+	this(AsyncSocket socket, ubyte[] buffer = null, SocketAddress* address = null) {
+		llo = LowLevelOperation(socket, buffer, address);
+		this.response = typeof(this.response).defaultConstructed;
+	}
+
+	// can also look up the local address
 }
 /++
 +/
 class AsyncAcceptResponse : AsyncOperationResponse {
 	AsyncSocket newSocket;
 	const SystemErrorCode errorCode;
+
+	this(SystemErrorCode errorCode, ubyte[] buffer) {
+		this.errorCode = errorCode;
+	}
 
 	this(AsyncSocket newSocket, SystemErrorCode errorCode) {
 		this.newSocket = newSocket;
@@ -3088,7 +3384,7 @@ class AsyncReceiveRequest : AsyncOperationRequest {
 		AsyncSocket file;
 		ubyte[] buffer;
 		int flags;
-		SocketAddressBuffer* address;
+		SocketAddress* address;
 
 		this(typeof(this.tupleof) args) {
 			this.tupleof = args;
@@ -3123,7 +3419,7 @@ class AsyncReceiveRequest : AsyncOperationRequest {
 	}
 	mixin OverlappedIoRequest!(AsyncReceiveResponse, LowLevelOperation);
 
-	this(AsyncSocket socket, ubyte[] buffer, SocketAddressBuffer* address, int flags) {
+	this(AsyncSocket socket, ubyte[] buffer, SocketAddress* address, int flags) {
 		llo = LowLevelOperation(socket, buffer, flags, address);
 		this.response = typeof(this.response).defaultConstructed;
 	}
@@ -3152,7 +3448,7 @@ class AsyncSendRequest : AsyncOperationRequest {
 		AsyncSocket file;
 		const(ubyte)[] buffer;
 		int flags;
-		SocketAddress address;
+		SocketAddress* address;
 
 		this(typeof(this.tupleof) args) {
 			this.tupleof = args;
@@ -3185,7 +3481,7 @@ class AsyncSendRequest : AsyncOperationRequest {
 	}
 	mixin OverlappedIoRequest!(AsyncSendResponse, LowLevelOperation);
 
-	this(AsyncSocket socket, const(ubyte)[] buffer, SocketAddress address, int flags) {
+	this(AsyncSocket socket, const(ubyte)[] buffer, SocketAddress* address, int flags) {
 		llo = LowLevelOperation(socket, buffer, flags, address);
 		this.response = typeof(this.response).defaultConstructed;
 	}
@@ -3209,22 +3505,58 @@ class AsyncSendResponse : AsyncOperationResponse {
 }
 
 /++
-	A socket bound and ready to accept connections.
+	A set of sockets bound and ready to accept connections on worker threads.
 
-	Depending on the specified address, it can be tcp, tcpv6, or unix domain.
+	Depending on the specified address, it can be tcp, tcpv6, unix domain, or all of the above.
+
+	NOT IMPLEMENTED / NOT STABLE
 +/
 class StreamServer {
-	this(SocketAddress listenTo) {
+	AsyncSocket[] sockets;
 
+	this(SocketAddress[] listenTo, int backlog = 8) {
+		foreach(listen; listenTo) {
+			auto socket = new AsyncSocket(listen, SOCK_STREAM);
+
+			// FIXME: allInterfaces for ipv6 also covers ipv4 so the bind can fail...
+			// so we have to permit it to fail w/ address in use if we know we already
+			// are listening to ipv6
+
+			// or there is a setsockopt ipv6 only thing i could set.
+
+			socket.bind(listen);
+			socket.listen(backlog);
+			sockets ~= socket;
+
+			// writeln(socket.localAddress.port);
+		}
+
+		// i have to start accepting on each thread for each socket...
 	}
 	// when a new connection arrives, it calls your callback
 	// can be on a specific thread or on any thread
+
+
+	void start() {
+		foreach(socket; sockets) {
+			auto request = socket.accept();
+			request.start();
+		}
+	}
 }
+
+/+
+unittest {
+	auto ss = new StreamServer(SocketAddress.localhost(0));
+}
++/
 
 /++
 	A socket bound and ready to use receiveFrom
 
 	Depending on the address, it can be udp or unix domain.
+
+	NOT IMPLEMENTED / NOT STABLE
 +/
 class DatagramListener {
 	// whenever a udp message arrives, it calls your callback
@@ -3425,6 +3757,7 @@ unittest {
 	// dispatches change event to either your thread or maybe the any task` queue.
 
 /++
+	PARTIALLY IMPLEMENTED / NOT STABLE
 
 +/
 class DirectoryWatcher {
@@ -5276,11 +5609,12 @@ unittest {
 	proc.start();
 	---
 
-	Please note that this does not currently and I have no plans as of this writing to add support for any kind of direct file descriptor passing. It always pipes them back to the parent for processing. If you don't want this, call the lower level functions yourself; the reason this class is here is to aid integration in the arsd.core event loop.
+	Please note that this does not currently and I have no plans as of this writing to add support for any kind of direct file descriptor passing. It always pipes them back to the parent for processing. If you don't want this, call the lower level functions yourself; the reason this class is here is to aid integration in the arsd.core event loop. Of course, I might change my mind on this.
 
-	Of course, I might change my mind on this.
+	Bugs:
+		Not implemented at all on Windows yet.
 +/
-class ExternalProcess {
+class ExternalProcess /*: AsyncOperationRequest*/ {
 
 	private static version(Posix) {
 		__gshared ExternalProcess[pid_t] activeChildren;
@@ -5511,6 +5845,7 @@ class ExternalProcess {
 				// also need to listen to SIGCHLD to queue up the terminated callback. FIXME
 
 				stdoutUnregisterToken = getThisThreadEventLoop().addCallbackOnFdReadable(stdoutFd, new CallbackHelper(&stdoutReadable));
+				stderrUnregisterToken = getThisThreadEventLoop().addCallbackOnFdReadable(stderrFd, new CallbackHelper(&stderrReadable));
 			}
 		}
 	}
@@ -5524,6 +5859,7 @@ class ExternalProcess {
 		int stderrFd = -1;
 
 		ICoreEventLoop.UnregisterToken stdoutUnregisterToken;
+		ICoreEventLoop.UnregisterToken stderrUnregisterToken;
 
 		pid_t pid = -1;
 
@@ -5533,12 +5869,13 @@ class ExternalProcess {
 		string[] args;
 
 		void stdoutReadable() {
-			ubyte[1024] buffer;
-			auto ret = read(stdoutFd, buffer.ptr, buffer.length);
+			if(stdoutReadBuffer is null)
+				stdoutReadBuffer = new ubyte[](stdoutBufferSize);
+			auto ret = read(stdoutFd, stdoutReadBuffer.ptr, stdoutReadBuffer.length);
 			if(ret == -1)
 				throw new ErrnoApiException("read", errno);
 			if(onStdoutAvailable) {
-				onStdoutAvailable(buffer[0 .. ret]);
+				onStdoutAvailable(stdoutReadBuffer[0 .. ret]);
 			}
 
 			if(ret == 0) {
@@ -5548,7 +5885,28 @@ class ExternalProcess {
 				stdoutFd = -1;
 			}
 		}
+
+		void stderrReadable() {
+			if(stderrReadBuffer is null)
+				stderrReadBuffer = new ubyte[](stderrBufferSize);
+			auto ret = read(stderrFd, stderrReadBuffer.ptr, stderrReadBuffer.length);
+			if(ret == -1)
+				throw new ErrnoApiException("read", errno);
+			if(onStderrAvailable) {
+				onStderrAvailable(stderrReadBuffer[0 .. ret]);
+			}
+
+			if(ret == 0) {
+				stderrUnregisterToken.unregister();
+
+				close(stderrFd);
+				stderrFd = -1;
+			}
+		}
 	}
+
+	private ubyte[] stdoutReadBuffer;
+	private ubyte[] stderrReadBuffer;
 
 	void waitForCompletion() {
 		getThisThreadEventLoop().run(&this.isComplete);
@@ -5617,22 +5975,6 @@ unittest {
 
 	static int received;
 
-	static void tester() {
-		received++;
-		//writeln(cast(void*) Thread.getThis, " ", received);
-	}
-
-	foreach(ref thread; pool) {
-		thread = new Thread(() {
-			getThisThreadEventLoop().run(() {
-				return shouldExit;
-			});
-		});
-		thread.start();
-	}
-
-
-
 	proc.writeToStdin("hello!");
 	proc.writeToStdin(null); // closes the pipe
 
@@ -5641,6 +5983,8 @@ unittest {
 	assert(proc.status == 0);
 
 	assert(c == 2);
+
+	// writeln("here");
 }
 +/
 
@@ -5674,42 +6018,53 @@ unittest {
 	=================
 +/
 
+private void appendToBuffer(ref char[] buffer, ref int pos, scope const(char)[] what) {
+	auto required = pos + what.length;
+	if(buffer.length < required)
+		buffer.length = required;
+	buffer[pos .. pos + what.length] = what[];
+	pos += what.length;
+}
+
+private void appendToBuffer(ref char[] buffer, ref int pos, long what) {
+	if(buffer.length < pos + 16)
+		buffer.length = pos + 16;
+	auto sliced = intToString(what, buffer[pos .. $]);
+	pos += sliced.length;
+}
+
 /++
-	A `writeln` that actually works.
+	A `writeln` that actually works, at least for some basic types.
 
 	It works correctly on Windows, using the correct functions to write unicode to the console.  even allocating a console if needed. If the output has been redirected to a file or pipe, it writes UTF-8.
 
-	This always does text. See also WritableStream and WritableTextStream
+	This always does text. See also WritableStream and WritableTextStream when they are implemented.
 +/
 void writeln(T...)(T t) {
 	char[256] bufferBacking;
 	char[] buffer = bufferBacking[];
 	int pos;
+
 	foreach(arg; t) {
 		static if(is(typeof(arg) : const char[])) {
-			buffer[pos .. pos + arg.length] = arg[];
-			pos += arg.length;
+			appendToBuffer(buffer, pos, arg);
 		} else static if(is(typeof(arg) : stringz)) {
-			auto b = arg.borrow;
-			buffer[pos .. pos + b.length] = b[];
-			pos += b.length;
+			appendToBuffer(buffer, pos, arg.borrow);
 		} else static if(is(typeof(arg) : long)) {
-			auto sliced = intToString(arg, buffer[pos .. $]);
-			pos += sliced.length;
+			appendToBuffer(buffer, pos, arg);
 		} else static if(is(typeof(arg.toString()) : const char[])) {
-			auto s = arg.toString();
-			buffer[pos .. pos + s.length] = s[];
-			pos += s.length;
+			appendToBuffer(buffer, pos, arg.toString());
 		} else {
-			auto s = "<unsupported type>";
-			buffer[pos .. pos + s.length] = s[];
-			pos += s.length;
-			// static assert(0, "Unsupported type: " ~ T.stringof);
+			appendToBuffer(buffer, pos, "<" ~ typeof(arg).stringof ~ ">");
 		}
 	}
 
-	buffer[pos++] = '\n';
+	appendToBuffer(buffer, pos, "\n");
 
+	actuallyWriteToStdout(buffer[0 .. pos]);
+}
+
+private void actuallyWriteToStdout(scope char[] buffer) @trusted {
 	version(Windows) {
 		import core.sys.windows.wincon;
 
@@ -5721,17 +6076,17 @@ void writeln(T...)(T t) {
 
 		if(GetFileType(hStdOut) == FILE_TYPE_CHAR) {
 			wchar[256] wbuffer;
-			auto toWrite = makeWindowsString(buffer[0 .. pos], wbuffer, WindowsStringConversionFlags.convertNewLines);
+			auto toWrite = makeWindowsString(buffer, wbuffer, WindowsStringConversionFlags.convertNewLines);
 
 			DWORD written;
 			WriteConsoleW(hStdOut, toWrite.ptr, cast(DWORD) toWrite.length, &written, null);
 		} else {
 			DWORD written;
-			WriteFile(hStdOut, buffer.ptr, pos, &written, null);
+			WriteFile(hStdOut, buffer.ptr, cast(DWORD) buffer.length, &written, null);
 		}
 	} else {
 		import unix = core.sys.posix.unistd;
-		unix.write(1, buffer.ptr, pos);
+		unix.write(1, buffer.ptr, buffer.length);
 	}
 }
 

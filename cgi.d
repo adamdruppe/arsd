@@ -3759,12 +3759,34 @@ bool trySimulatedRequest(alias fun, CustomCgi = Cgi)(string[] args) if(is(Custom
 }
 
 /++
-	A server control and configuration struct, as a potential alternative to calling [GenericMain] or [cgiMainImpl]. See the source of [cgiMainImpl] to an example of how you can use it.
+	A server control and configuration struct, as a potential alternative to calling [GenericMain] or [cgiMainImpl]. See the source of [cgiMainImpl] for a complete, up-to-date, example of how it is used internally.
+
+	As of version 11 (released August 2023), you can also make things like this:
+
+	---
+		// listens on both a unix domain socket called `foo` and on the loopback interfaces port 8080
+		RequestServer server = RequestServer(["http://unix:foo", "http://localhost:8080"]);
+
+		// can also:
+		// RequestServer server = RequestServer(0); // listen on an OS-provided port on all interfaces
+
+		// NOT IMPLEMENTED YET
+		// server.initialize(); // explicit initialization will populate any "any port" things and throw if a bind failed
+
+		foreach(listenSpec; server.listenSpecs) {
+			// you can check what it actually bound to here and see your assigned ports
+		}
+
+		// NOT IMPLEMENTED YET
+		// server.start!handler(); // starts and runs in the arsd.core event loop
+
+		server.serve!handler(); // blocks the thread until the server exits
+	---
 
 	History:
 		Added Sept 26, 2020 (release version 8.5).
 
-		The `listen` member was added July 31, 2023.
+		The `listenSpec` member was added July 31, 2023.
 +/
 struct RequestServer {
 	/++
@@ -3774,8 +3796,29 @@ struct RequestServer {
 	/// ditto
 	ushort listeningPort = defaultListeningPort();
 
+	static struct ListenSpec {
+		enum Protocol {
+			http,
+			https,
+			scgi
+		}
+		Protocol protocol;
+
+		enum AddressType {
+			ip,
+			unix,
+			abstract_
+		}
+		AddressType addressType;
+
+		string address;
+		ushort port;
+	}
+
 	/++
 		The array of addresses you want to listen on. The format looks like a url but has a few differences.
+
+		This ONLY works on embedded_httpd_threads, embedded_httpd_hybrid, and scgi builds at this time.
 
 		`http://localhost:8080`
 
@@ -3793,7 +3836,7 @@ struct RequestServer {
 
 		`8080` or `:8080` assumes default protocol on localhost.
 
-		The protocols can be `http:`, `https:`, `scgi:`, and (if compiled in), `fcgi:`. Original `cgi` is not supported with this, since it is transactional with a single process.
+		The protocols can be `http:`, `https:`, and `scgi:`. Original `cgi` is not supported with this, since it is transactional with a single process.
 
 		Valid hosts are an IPv4 address (with a mandatory port), an IPv6 address (with a mandatory port), just a port alone, `unix:/path/to/unix/socket` (which may be a relative path without a leading slash), or `abstract:/path/to/linux/abstract/namespace`.
 
@@ -3802,6 +3845,9 @@ struct RequestServer {
 		$(PITFALL
 			If you set this to anything non-null (including a non-null, zero-length array) any `listenSpec` entries, [listeningHost] and [listeningPort] are ignored.
 		)
+
+		Bugs:
+			The implementation currently ignores the protocol spec in favor of the default compiled in option.
 
 		History:
 			Added July 31, 2023 (dub v11.0)
@@ -6499,7 +6545,7 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 version(cgi_with_websocket) {
 	// http://tools.ietf.org/html/rfc6455
 
-	/**
+	/++
 		WEBSOCKET SUPPORT:
 
 		Full example:
@@ -6527,12 +6573,14 @@ version(cgi_with_websocket) {
 					}
 
 					websocket.close();
-				} else assert(0, "i want a web socket!");
+				} else {
+					cgi.write("You are loading the websocket endpoint in a browser instead of a websocket client. Use a websocket client on this url instead.\n", true);
+				}
 			}
 
 			mixin GenericMain!websocketEcho;
 		---
-	*/
+	+/
 
 	class WebSocket {
 		Cgi cgi;
