@@ -18,19 +18,19 @@ Please note that I DO consider changes to build process to be a breaking change,
 
 ## 12.0
 
-Future release, 2024 or later.
+Future release, likely May 2024 or later.
 
 Nothing is planned for it at this time.
 
 ## 11.0
 
-Released: Planned for May 2023
+Released: Planned for May 2023, actually out August 2023.
 
 arsd.core was added, causing a general build system break for users who download individual files:
 
 simpledisplay.d used to depend only on color.d. It now also depends on core.d.
 
-terminal.d and http2.d used to be stand-along. They now depend on core.d.
+terminal.d and http2.d used to be stand-alone. They now depend on core.d.
 
 minigui.d now also depends on a new textlayouter.d, bringing its total dependencies from minigui.d, simpledisplay.d, color.d up to minigui.d, simpledisplay.d, color.d, core.d, and textlayouter.d
 
@@ -46,23 +46,29 @@ Also:
 
 	* dom.d's XmlDocument no longer treats `<script>` and `<style>` tags as CDATA; that was meant to be a html-specific behavior, not applicable to generic xml.
 	* game.d had significant changes, making the Game object be a manager of GameScreen objects, which use delta time interpolated renders and fixed time updates (before it was vice versa). As of 11.0, its new api is not fully stable.
-	* database.d got some tweaks. A greater overhaul is still planned but might be delayed to 12.0.
+	* database.d got some tweaks. A greater overhaul is still planned but might be delayed to 12.0. Nevertheless, some types are already changed from `string` to `DatabaseDatum` (which converts back to string via `alias this` so it should limit the code breakage).
 	* Support for Windows XP has been dropped (though it may still work in certain places, there's no promises since arsd.core uses some Windows Vista features without fallback.)
 	* Support for older compilers has been dropped (arsd.core uses some newer druntime features). The new minimum version is likely gdc 10, the tester now runs gdc version 12. gdc 9 might still sometimes work but I'm going to be removing some of those compatibility branches soon anyway.
+	* minigui's default theme has been slightly modified to use a different font on linux.
+
+Note that dub currently gives a warning when you do `dub test` about there being no import paths. Ignore this, it is meaningless.
 
 ### Diagnostics
 
+```
 lld-link: error: undefined symbol: _MsgWaitForMultipleObjectsEx@20
 >>> referenced by core.obj:(__D4arsd4core27CoreEventLoopImplementation7runOnceMFZv)
+```
 
 Indicates a missing `user32.lib` in the link. This should generally be automatic but if not, you can simply mention it on the dmd command line (like `dmd yourfile.d user32.lb`) or add it to an explicit dub config `libs`.
 
-
-ACTUALLY WRONG: i need the right one
+Errors like:
+```
 lld-link: error: undefined symbol: _D4arsd4core21AsyncOperationRequest5startMFZv
 >> referenced by yourfile.obj:(_D4arsd4core21AsyncOperationRequest6__vtblZ)
+```
 
-Indicates a missing `core.d` in the build.
+Generally, any symbol that starts with `_D4arsd4core` indicates a missing `core.d` in the build. Make sure you have it downloaded and included.
 
 ### Still coming
 

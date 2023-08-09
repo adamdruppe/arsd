@@ -167,6 +167,22 @@
 			"sourceFiles": ["gamehelpers.d"]
 		},
 		{
+			"name": "game",
+			"description": "Basic game helper classes (work in progress)",
+			"targetType": "library",
+			"dflags-dmd": ["-mv=arsd.game=$PACKAGE_DIR/game.d"],
+			"dflags-ldc": ["--mv=arsd.game=$PACKAGE_DIR/game.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.game=$PACKAGE_DIR/game.d"],
+			"dependencies": {
+				"arsd-official:core":"*",
+				"arsd-official:minigui":"*",
+				"arsd-official:joystick":"*",
+				"arsd-official:simpleaudio":"*",
+				"arsd-official:gamehelpers":"*"
+			},
+			"sourceFiles": ["game.d"]
+		},
+		{
 			"name": "joystick",
 			"description": "joystick reading for Windows XInput and Linux",
 			"targetType": "library",
@@ -192,12 +208,12 @@
 			"name": "email",
 			"description": "Email helper library, both sending MIME messages and parsing incoming mbox/maildir messages",
 			"targetType": "library",
-			"dependencies": {"arsd-official:htmltotext":"*"},
 			"dflags-dmd": ["-mv=arsd.email=$PACKAGE_DIR/email.d"],
 			"dflags-ldc": ["--mv=arsd.email=$PACKAGE_DIR/email.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.email=$PACKAGE_DIR/email.d"],
 			"dependencies": {
-				"arsd-official:core":"*"
+				"arsd-official:core":"*",
+				"arsd-official:htmltotext":"*"
 			},
 			"sourceFiles": ["email.d"]
 		},
@@ -205,12 +221,12 @@
 			"name": "mailserver",
 			"description": "Bare-bones incoming-only smtp server",
 			"targetType": "library",
-			"dependencies": {"arsd-official:email":"*"},
 			"dflags-dmd": ["-mv=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
 			"dflags-ldc": ["--mv=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.mailserver=$PACKAGE_DIR/mailserver.d"],
 			"dependencies": {
-				"arsd-official:core":"*"
+				"arsd-official:core":"*",
+				"arsd-official:email":"*"
 			},
 			"sourceFiles": ["mailserver.d"]
 		},
