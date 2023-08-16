@@ -5838,12 +5838,12 @@ class ListeningConnectionManager {
 
 					void existing_connection_new_data() {
 						// wait until a slot opens up
-						//int waited = 0;
+						// int waited = 0;
 						while(queueLength >= queue.length) {
 							Thread.sleep(1.msecs);
-							//waited ++;
+							// waited ++;
 						}
-						//if(waited) {import std.stdio; writeln(waited);}
+						// if(waited) {import std.stdio; writeln(waited);}
 						synchronized(this) {
 							queue[nextIndexBack] = sn;
 							nextIndexBack++;
@@ -6259,7 +6259,7 @@ class WorkerThread : Thread {
 		}
 
 		foreach(listener; lcm.listeners) {
-		epoll_event ev;
+			epoll_event ev;
 			ev.events = EPOLLIN | EPOLLEXCLUSIVE; // EPOLLEXCLUSIVE is only available on kernels since like 2017 but that's prolly good enough.
 			ev.data.fd = listener.handle;
 			if(epoll_ctl(epfd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
@@ -6296,7 +6296,7 @@ class WorkerThread : Thread {
 							// might have beat us to it, but the wakeup event thundered our herds.
 								try
 								sn = listener.accept(); // don't need to do the acceptCancelable here since the epoll checks it better
-								catch(SocketAcceptException e) { continue; }
+								catch(SocketAcceptException e) { continue outer; }
 
 							cloexec(sn);
 							if(lcm.tcp) {
@@ -6310,11 +6310,13 @@ class WorkerThread : Thread {
 
 							dg(sn);
 							continue outer;
+						} else {
+							// writeln(events[idx].data.ptr);
 						}
 					}
 
 					if(cast(size_t) events[idx].data.ptr < 1024) {
-						throw new Exception("this doesn't look like a fiber pointer...");
+						throw arsd.core.ArsdException!"this doesn't look like a fiber pointer... "(cast(size_t) events[idx].data.ptr);
 					}
 					auto fiber = cast(CgiFiber) events[idx].data.ptr;
 					fiber.proceed();
@@ -9921,8 +9923,22 @@ html", true, true);
 			case "html":
 				presentExceptionAsHtml(cgi, t, meta);
 			break;
+			case "json":
+				presentExceptionAsJsonImpl(cgi, t);
+			break;
 			default:
 		}
+	}
+
+	private void presentExceptionAsJsonImpl()(Cgi cgi, Throwable t) {
+		cgi.setResponseStatus("500 Internal Server Error");
+		cgi.setResponseContentType("application/json");
+		import arsd.jsvar;
+		var v = var.emptyObject;
+		v.type = typeid(t).toString;
+		v.msg = t.msg;
+		v.fullString = t.toString();
+		cgi.write(v.toJson(), true);
 	}
 
 
