@@ -399,6 +399,19 @@
 			"sourceFiles": ["bmp.d"]
 		},
 		{
+			"name": "ico",
+			"description": "Windows icon and crsor file format support",
+			"targetType": "library",
+			"dflags-dmd": ["-mv=arsd.ico=$PACKAGE_DIR/ico.d"],
+			"dflags-ldc": ["--mv=arsd.ico=$PACKAGE_DIR/ico.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.ico=$PACKAGE_DIR/ico.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*",
+				"arsd-official:core":"*"
+			},
+			"sourceFiles": ["ico.d"]
+		},
+		{
 			"name": "htmltotext",
 			"description": "HTML to plain text conversion",
 			"targetType": "library",
