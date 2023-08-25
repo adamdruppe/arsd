@@ -131,7 +131,7 @@ void main() {
 	to change versions. The possible options for `VALUE_HERE` are:
 
 	$(LIST
-		* `embedded_httpd` for the embedded httpd version (built-in web server). This is the default for dub builds. You can run the program then connect directly to it from your browser.
+		* `embedded_httpd` for the embedded httpd version (built-in web server). This is the default for dub builds. You can run the program then connect directly to it from your browser. Note: prior to version 11, this would be embedded_httpd_processes on Linux and embedded_httpd_threads everywhere else. It now means embedded_httpd_hybrid everywhere supported and embedded_httpd_threads everywhere else.
 		* `cgi` for traditional cgi binaries. These are run by an outside web server as-needed to handle requests.
 		* `fastcgi` for FastCGI builds. FastCGI is managed from an outside helper, there's one built into Microsoft IIS, Apache httpd, and Lighttpd, and a generic program you can use with nginx called `spawn-fcgi`. If you don't already know how to use it, I suggest you use one of the other modes.
 		* `scgi` for SCGI builds. SCGI is a simplified form of FastCGI, where you run the server as an application service which is proxied by your outside webserver.
@@ -617,6 +617,20 @@ void cloexec(Socket s) {
 	}
 }
 
+// the servers must know about the connections to talk to them; the interfaces are vital
+version(with_addon_servers)
+	version=with_addon_servers_connections;
+
+version(embedded_httpd) {
+	version=embedded_httpd_hybrid;
+	/*
+	version(with_openssl) {
+		pragma(lib, "crypto");
+		pragma(lib, "ssl");
+	}
+	*/
+}
+
 version(embedded_httpd_hybrid) {
 	version=embedded_httpd_threads;
 	version(cgi_no_fork) {} else version(Posix)
@@ -628,25 +642,6 @@ version(cgi_use_fork)
 	enum cgi_use_fork_default = true;
 else
 	enum cgi_use_fork_default = false;
-
-// the servers must know about the connections to talk to them; the interfaces are vital
-version(with_addon_servers)
-	version=with_addon_servers_connections;
-
-version(embedded_httpd) {
-	version(linux)
-		version=embedded_httpd_processes;
-	else {
-		version=embedded_httpd_threads;
-	}
-
-	/*
-	version(with_openssl) {
-		pragma(lib, "crypto");
-		pragma(lib, "ssl");
-	}
-	*/
-}
 
 version(embedded_httpd_processes)
 	version=embedded_httpd_processes_accept_after_fork; // I am getting much better average performance on this, so just keeping it. But the other way MIGHT help keep the variation down so i wanna keep the code to play with later
