@@ -15508,6 +15508,9 @@ abstract class BaseVisualTheme {
 
 	deprecated("Use selectionForegroundColor and selectionBackgroundColor instead") Color selectionColor() { return selectionBackgroundColor(); }
 
+	/++
+		If you return `null` it will use simpledisplay's default. Otherwise, you return what font you want and it will cache it internally.
+	+/
 	abstract OperatingSystemFont defaultFont();
 
 	private OperatingSystemFont defaultFontCache_;
@@ -15537,6 +15540,10 @@ abstract class BaseVisualTheme {
 
 /++
 	This is your entry point to create your own visual theme for custom widgets.
+
+	You will want to inherit from this with a `final` class, passing your own class as the `CRTP` argument, then define the necessary methods.
+
+	Compatibility note: future versions of minigui may add new methods here. You will likely need to implement them when updating.
 +/
 abstract class VisualTheme(CRTP) : BaseVisualTheme {
 	override string getPropertyString(Widget widget, string propertyName) {
@@ -15583,6 +15590,16 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 	}
 
 	// I have to put these here even though I kinda don't want to since dmd regressed on detecting unimplemented interface functions through abstract classes
+	// mixin Beautiful95Theme;
+	mixin DefaultLightTheme;
+
+	private static struct Cached {
+		// i prolly want to do this
+	}
+}
+
+/// ditto
+mixin template Beautiful95Theme() {
 	override Color windowBackgroundColor() { return Color(212, 212, 212); }
 	override Color widgetBackgroundColor() { return Color.white; }
 	override Color foregroundColor() { return Color.black; }
@@ -15591,11 +15608,44 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
 	override OperatingSystemFont defaultFont() { return null; } // will just use the default out of simpledisplay's xfontstr
+}
 
-	private static struct Cached {
-		// i prolly want to do this
+/// ditto
+mixin template DefaultLightTheme() {
+	override Color windowBackgroundColor() { return Color(232, 232, 232); }
+	override Color widgetBackgroundColor() { return Color.white; }
+	override Color foregroundColor() { return Color.black; }
+	override Color darkAccentColor() { return Color(172, 172, 172); }
+	override Color lightAccentColor() { return Color(223, 223, 223); }
+	override Color selectionForegroundColor() { return Color.white; }
+	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
+	override OperatingSystemFont defaultFont() {
+		version(Windows)
+			return new OperatingSystemFont("Segoe UI", 12);
+		else
+			return new OperatingSystemFont("DejaVu Sans", 9);
 	}
 }
+
+/// ditto
+mixin template DefaultDarkTheme() {
+	override Color windowBackgroundColor() { return Color(64, 64, 64); }
+	override Color widgetBackgroundColor() { return Color.black; }
+	override Color foregroundColor() { return Color.white; }
+	override Color darkAccentColor() { return Color(20, 20, 20); }
+	override Color lightAccentColor() { return Color(80, 80, 80); }
+	override Color selectionForegroundColor() { return Color.white; }
+	override Color selectionBackgroundColor() { return Color(128, 0, 128); }
+	override OperatingSystemFont defaultFont() {
+		version(Windows)
+			return new OperatingSystemFont("Segoe UI", 12);
+		else
+			return new OperatingSystemFont("DejaVu Sans", 9);
+	}
+}
+
+/// ditto
+alias DefaultTheme = DefaultLightTheme;
 
 final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 	/+
