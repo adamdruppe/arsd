@@ -1205,6 +1205,8 @@ class TextLayouter {
 		Please note that the `caretPosition` can be `Rectangle.init`, indicating it is not present in this segment. If it is not that, it will be the bounding box of the glyph.
 
 		You can use the `startFrom` parameter to skip ahead. The intended use case for this is to start from a scrolling position in the box; the first segment given will include this point. FIXME: maybe it should just go ahead and do a bounding box. Note that the segments may extend outside the point; it is just meant that it will include that and try to trim the rest.
+
+		The segment may include all forms of whitespace, including newlines, tab characters, etc. Generally, a tab character will be in its own segment and \n will appear at the end of a segment. You will probably want to `stripRight` each segment depending on your drawing functions.
 	+/
 	void getDrawableText(scope bool delegate(scope const(char)[] segment, TextStyle style, DrawingInformation information, CaretInformation[] carets...) dg, Rectangle box = Rectangle.init) {
 		relayoutIfNecessary();
