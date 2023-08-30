@@ -8844,11 +8844,7 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 				void newConnection() {
 					// on edge triggering, it is important that we get it all
 					while(true) {
-						version(Android) {
-							auto size = cast(int) addr.sizeof;
-						} else {
-							auto size = cast(uint) addr.sizeof;
-						}
+						auto size = cast(socklen_t) addr.sizeof;
 						auto ns = accept(sock, cast(sockaddr*) &addr, &size);
 						if(ns == -1) {
 							if(errno == EAGAIN || errno == EWOULDBLOCK) {
