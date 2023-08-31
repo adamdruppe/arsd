@@ -174,9 +174,15 @@ struct DatabaseDatum {
 		return storage.toString();
 	}
 	/++
-		For compatibility with earlier versions of the api, all data can easily convert to string implicitly.
+		For compatibility with earlier versions of the api, all data can easily convert to string implicitly and opCast keeps to!x(this) working.
 	+/
 	alias toString this;
+
+	/// ditto
+	T opCast(T)() {
+		import std.conv;
+		return to!T(this.toString);
+	}
 }
 
 /++
