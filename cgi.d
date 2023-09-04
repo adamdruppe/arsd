@@ -5714,7 +5714,7 @@ class ListeningConnectionManager {
 	int defaultNumberOfThreads() {
 		import std.parallelism;
 		version(cgi_use_fiber) {
-			return totalCPUs * 1 + 1;
+			return totalCPUs * 2 + 1; // still chance some will be pointlessly blocked anyway
 		} else {
 			// I times 4 here because there's a good chance some will be blocked on i/o.
 			return totalCPUs * 4;
@@ -6025,7 +6025,7 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 		}
 		cloexec(listener);
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-		if(cast(Internet6Address) address)
+		if(address.addressFamily == AddressFamily.INET6)
 			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.IPV6_V6ONLY, true);
 		listener.bind(address);
 		cleanup = delegate() {
