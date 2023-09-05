@@ -3139,7 +3139,7 @@ class AsyncSocket : AsyncFile {
 
 		if(address.domain == AF_INET6) {
 			int opt = 1;
-			setsockopt(handle, SOL_SOCKET, IPV6_V6ONLY, &opt, opt.sizeof);
+			setsockopt(handle, IPPROTO_IPV6 /*SOL_IPV6*/, IPV6_V6ONLY, &opt, opt.sizeof);
 		}
 
 		// FIXME: chekc for broadcast

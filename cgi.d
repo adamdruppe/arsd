@@ -6026,7 +6026,7 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 		cloexec(listener);
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
 		if(address.addressFamily == AddressFamily.INET6)
-			listener.setOption(SocketOptionLevel.SOCKET, SocketOption.IPV6_V6ONLY, true);
+			listener.setOption(SocketOptionLevel.IPV6, SocketOption.IPV6_V6ONLY, true);
 		listener.bind(address);
 		cleanup = delegate() {
 			listener.close();
