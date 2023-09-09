@@ -162,7 +162,8 @@
 			"dflags-ldc": ["--mv=arsd.gamehelpers=$PACKAGE_DIR/gamehelpers.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.gamehelpers=$PACKAGE_DIR/gamehelpers.d"],
 			"dependencies": {
-				"arsd-official:core":"*"
+				"arsd-official:core":"*",
+				"arsd-official:color_base":"*"
 			},
 			"sourceFiles": ["gamehelpers.d"]
 		},

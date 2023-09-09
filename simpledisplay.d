@@ -1863,6 +1863,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			[onDpiChanged] is changed when `actualDpi` has changed.
 	+/
 	int actualDpi() {
+		version(X11) bool useFallbackDpi = false;
 		if(!actualDpiLoadAttempted) {
 			// FIXME: do the actual monitor we are on
 			// and on X this is a good chance to load the monitor map.
@@ -1945,11 +1946,18 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 					// make sure we disable events that aren't coming
 					xrrEventBase = -1;
 					// best guess... respect the custom scaling user command to some extent at least though
-					actualDpi_ = cast(int) (getDpi()[0] * customScalingFactorForMonitor(0));
+					useFallbackDpi = true;
 				}
 			}
 			actualDpiLoadAttempted = true;
+		} else version(X11) if(MonitorInfo.info.length == 0) {
+			useFallbackDpi = true;
 		}
+
+		version(X11)
+		if(useFallbackDpi)
+			actualDpi_ = cast(int) (getDpi()[0] * customScalingFactorForMonitor(0));
+
 		return actualDpi_;
 	}
 
@@ -12664,7 +12672,7 @@ version(X11) {
 				break;
 			}
 
-			XSetLineAttributes(display, gc, p.width, style, 0, 0);
+			XSetLineAttributes(display, gc, p.width, style, style == 0 ? 3 : 0, 0);
 			if(dashLength)
 				XSetDashes(display, gc, 0, &dashLength, 1);
 
@@ -12980,6 +12988,7 @@ version(X11) {
 			}
 			if(foregroundIsNotTransparent) {
 				XDrawArc(display, d, gc, x1, y1, width, height, start, finish);
+
 				// Windows draws the straight lines on the edges too so FIXME sort of
 			}
 		}
@@ -22153,6 +22162,7 @@ float customScalingFactorForMonitor(int monitorNumber) {
 	import core.stdc.stdlib;
 	auto val = getenv("ARSD_SCALING_FACTOR");
 
+	// FIXME: maybe we should assume a default nbased on the dpi thing if this isn't given
 	if(val is null)
 		return 1.0;
 

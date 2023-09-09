@@ -36,6 +36,8 @@
 +/
 module arsd.database;
 
+// FIXME: add some kind of connection pool thing we can easily use
+
 // I should do a prepared statement as a template string arg
 
 public import std.variant;

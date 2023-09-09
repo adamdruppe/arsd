@@ -614,14 +614,7 @@ class Widget : ReflectableProperties {
 			return int.min;
 		if(value == 0)
 			return 0;
-
-		auto divide = (parentWindow && parentWindow.win) ? parentWindow.win.actualDpi : assumedDpi;
-		//divide = 138;
-		// for lower values it is something i don't really want changed anyway since it is an old monitor and you don't want to scale down.
-		// this also covers the case when actualDpi returns 0.
-		if(divide < 96)
-			divide = 96;
-		return value * divide / assumedDpi;
+		return value * currentDpi(assumedDpi) / assumedDpi;
 	}
 
 	/// ditto
@@ -629,14 +622,49 @@ class Widget : ReflectableProperties {
 		return Point(scaleWithDpi(value.x, assumedDpi), scaleWithDpi(value.y, assumedDpi));
 	}
 
+	/++
+		Returns the current scaling factor as a logical dpi value for this widget. Generally speaking, this divided by 96 gives you the user scaling factor.
+
+		Not entirely stable.
+
+		History:
+			Added August 25, 2023 (dub v11.1)
+	+/
+	final int currentDpi(int assumedDpi = 96) {
+		// assert(parentWindow !is null);
+		// assert(parentWindow.win !is null);
+		auto divide = (parentWindow && parentWindow.win) ? parentWindow.win.actualDpi : assumedDpi;
+		//divide = 138; // to test 1.5x
+		// for lower values it is something i don't really want changed anyway since it is an old monitor and you don't want to scale down.
+		// this also covers the case when actualDpi returns 0.
+		if(divide < 96)
+			divide = 96;
+		return divide;
+	}
+
 	// avoid this it just forwards to a soon-to-be-deprecated function and is not remotely stable
 	// I'll think up something better eventually
+
+	// FIXME: the defaultLineHeight should probably be removed and replaced with the calculations on the outside based on defaultTextHeight.
 	protected final int defaultLineHeight() {
 		auto cs = getComputedStyle();
 		if(cs.font && !cs.font.isNull)
 			return cs.font.height() * 5 / 4;
 		else
-			return scaleWithDpi(Window.lineHeight * 5/4);
+			return scaleWithDpi(Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * 5/4);
+	}
+
+	/++
+
+		History:
+			Added August 25, 2023 (dub v11.1)
+	+/
+	protected final int defaultTextHeight(int numberOfLines = 1) {
+		auto cs = getComputedStyle();
+		if(cs.font && !cs.font.isNull)
+			return cs.font.height() * numberOfLines;
+		else
+			return Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * numberOfLines;
 	}
 
 	protected final int defaultTextWidth(const(char)[] text) {
@@ -644,7 +672,7 @@ class Widget : ReflectableProperties {
 		if(cs.font && !cs.font.isNull)
 			return cs.font.stringWidth(text);
 		else
-			return scaleWithDpi(Window.lineHeight * cast(int) text.length / 2);
+			return scaleWithDpi(Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * cast(int) text.length / 2);
 	}
 
 	/++
@@ -2471,6 +2499,8 @@ class DropDownSelection : ComboboxBase {
 
 		painter.outlineColor = cs.foregroundColor;
 		painter.fillColor = cs.foregroundColor;
+
+		/+
 		Point[4] triangle;
 		enum padding = 6;
 		enum paddingV = 7;
@@ -2480,6 +2510,17 @@ class DropDownSelection : ComboboxBase {
 		triangle[2] = Point(width - padding - 0, paddingV);
 		triangle[3] = triangle[0];
 		painter.drawPolygon(triangle[]);
+		+/
+
+		auto offset = Point((this.width - scaleWithDpi(16)), (this.height - scaleWithDpi(16)) / 2);
+
+		painter.drawPolygon(
+			scaleWithDpi(Point(2, 6) + offset),
+			scaleWithDpi(Point(7, 11) + offset),
+			scaleWithDpi(Point(12, 6) + offset),
+			scaleWithDpi(Point(2, 6) + offset)
+		);
+
 
 		return bounds;
 	}
@@ -2522,7 +2563,7 @@ class FreeEntrySelection : ComboboxBase {
 					super(ArrowDirection.down, hl);
 				}
 				override int maxHeight() {
-					return int.max;
+					return lineEdit.maxHeight;
 				}
 			};
 			//btn.addDirectEventListener("focus", &lineEdit.focus);
@@ -3133,6 +3174,9 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 				auto maximum = childStyle.maxWidth();
 			}
 
+			if(mixin("child._" ~ relevantMeasure) >= maximum)
+				continue;
+
 			mixin("child._" ~ relevantMeasure) -= removalPerItem + remainder; // this is removing more than needed to trigger the next thing. ugh.
 
 			spaceRemaining += removalPerItem + remainder;
@@ -3224,7 +3268,21 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			}
 			break; // apparently nothing more we can do
 		}
+	}
 
+	foreach(child; parent.children) {
+		auto childStyle = child.getComputedStyle();
+		if(cast(StaticPosition) child)
+			continue;
+		if(child.hidden)
+			continue;
+
+		static if(calcingV)
+			auto maximum = childStyle.maxHeight();
+		else
+			auto maximum = childStyle.maxWidth();
+		if(mixin("child._" ~ relevantMeasure) > maximum)
+			mixin("child._" ~ relevantMeasure) = maximum;
 	}
 
 	// position
@@ -3562,7 +3620,7 @@ struct WidgetPainter {
 	this(ScreenPainter screenPainter, Widget drawingUpon) {
 		this.drawingUpon = drawingUpon;
 		this.screenPainter = screenPainter;
-		if(auto font = visualTheme.defaultFontCached)
+		if(auto font = visualTheme.defaultFontCached(drawingUpon.currentDpi))
 			this.screenPainter.setFont(font);
 	}
 
@@ -3690,7 +3748,7 @@ struct WidgetPainter {
 		rect = drawBody(this, rect);
 
 		if(widgetFont !is null) {
-			if(auto vtFont = visualTheme.defaultFontCached)
+			if(auto vtFont = visualTheme.defaultFontCached(drawingUpon.currentDpi))
 				this.setFont(vtFont);
 			else
 				this.setFont(null);
@@ -4151,8 +4209,9 @@ struct StyleInformation {
 		w.useStyleProperties((scope Widget.Style props) {
 			prop = props.fontCached;
 		});
-		if(prop is null)
-			prop = visualTheme.defaultFontCached;
+		if(prop is null) {
+			prop = visualTheme.defaultFontCached(w.currentDpi);
+		}
 		return prop;
 	}
 
@@ -5508,6 +5567,8 @@ private class InternalScrollableContainerWidget : Widget {
 
 		this.tabStop = false;
 
+		super(parent);
+
 		horizontalScrollBar = new HorizontalScrollbar(this);
 		verticalScrollBar = new VerticalScrollbar(this);
 
@@ -5561,8 +5622,6 @@ private class InternalScrollableContainerWidget : Widget {
 		verticalScrollBar.addEventListener("scrolltrack", (Event event) {
 			verticalScrollBar.setPosition(event.intValue);
 		});
-
-		super(parent);
 	}
 
 	// this is supposed to be basically invisible...
@@ -6844,7 +6903,7 @@ class TabMessageWidget : Widget {
 	version(custom_widgets) {
 		private int currentTab_;
 		private int tabBarHeight() { return defaultLineHeight; }
-		int tabWidth = 80;
+		int tabWidth() { return scaleWithDpi(80); }
 	}
 
 	version(win32_widgets)
@@ -7782,7 +7841,7 @@ class ScrollMessageWidget : Widget {
 	}
 
 	override int minHeight() {
-		int min = container ? container.minHeight : 0;
+		int min = mymax(container ? container.minHeight : 0, (verticalScrollBar.showing ? verticalScrollBar.minHeight : 0));
 		if(header !is null)
 			min += header.minHeight;
 		if(horizontalScrollBar.showing)
@@ -7953,10 +8012,14 @@ class Window : Widget {
 	/++
 		Gives the height of a line according to the default font. You should try to use your computed font instead of this, but until May 8, 2021, this was the only real option.
 	+/
-	static int lineHeight() {
+	deprecated("Use the non-static Widget.defaultLineHeight() instead") static int lineHeight() {
+		return lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback();
+	}
+
+	private static int lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback() {
 		OperatingSystemFont font;
 		if(auto vt = WidgetPainter.visualTheme) {
-			font = vt.defaultFontCached();
+			font = vt.defaultFontCached(96); // FIXME
 		}
 
 		if(font is null) {
@@ -8673,6 +8736,10 @@ debug private class DevToolWindow : Window {
 				list ~= "\n\tmaxHeight: " ~ toInternal!string(s.maxHeight);
 				list ~= "\n\theightStretchiness: " ~ toInternal!string(s.heightStretchiness);
 				list ~= "\n\theight: " ~ toInternal!string(s.height);
+				list ~= "\n\tminWidth: " ~ toInternal!string(s.minWidth);
+				list ~= "\n\tmaxWidth: " ~ toInternal!string(s.maxWidth);
+				list ~= "\n\twidthStretchiness: " ~ toInternal!string(s.widthStretchiness);
+				list ~= "\n\twidth: " ~ toInternal!string(s.width);
 				list ~= "\n\tmarginTop: " ~ toInternal!string(s.marginTop);
 				list ~= "\n\tmarginBottom: " ~ toInternal!string(s.marginBottom);
 			}
@@ -9507,7 +9574,17 @@ class Labeled(T) : Widget {
 		tabStop = false;
 		horizontal = is(L == HorizontalLayout);
 		auto hl = new L(this);
-		this.label = new TextLabel(label, alignment, hl);
+		if(horizontal) {
+			static class SpecialTextLabel : TextLabel {
+				this(string label, TextAlignment alignment, Widget parent) {
+					super(label, alignment, parent);
+				}
+
+				override int paddingTop() { return 6; }
+			}
+			this.label = new SpecialTextLabel(label, alignment, hl);
+		} else
+			this.label = new TextLabel(label, alignment, hl);
 		this.lineEdit = new T(hl);
 
 		this.label.labelFor = this.lineEdit;
@@ -10282,7 +10359,7 @@ class StatusBar : Widget {
 		///
 		Part opIndex(int p) {
 			if(owner.partsArray.length == 0)
-				this ~= new StatusBar.Part(300);
+				this ~= new StatusBar.Part(0);
 			return owner.partsArray[p];
 		}
 
@@ -10292,19 +10369,19 @@ class StatusBar : Widget {
 			p.owner = this.owner;
 			p.idx = cast(int) owner.partsArray.length;
 			owner.partsArray ~= p;
+
+			owner.recomputeChildLayout();
+
 			version(win32_widgets) {
 				int[256] pos;
-				int cpos = 0;
+				int cpos;
 				foreach(idx, part; owner.partsArray) {
-					if(part.width)
-						cpos += part.width;
-					else
-						cpos += 100;
-
 					if(idx + 1 == owner.partsArray.length)
 						pos[idx] = -1;
-					else
+					else {
+						cpos += part.currentlyAssignedWidth;
 						pos[idx] = cpos;
+					}
 				}
 				SendMessageW(owner.hwnd, WM_USER + 4 /*SB_SETPARTS*/, owner.partsArray.length, cast(size_t) pos.ptr);
 			} else version(custom_widgets) {
@@ -10321,13 +10398,62 @@ class StatusBar : Widget {
 		return _parts;
 	}
 
-	///
-	static class Part {
-		int width;
-		StatusBar owner;
+	/++
 
-		///
-		this(int w = 100) { width = w; }
+	+/
+	static class Part {
+		/++
+			History:
+				Added September 1, 2023 (dub v11.1)
+		+/
+		enum WidthUnits {
+			/++
+				Unscaled pixels as they appear on screen.
+
+				If you pass 0, it will treat it as a [Proportional] unit for compatibility with code written against older versions of minigui.
+			+/
+			DeviceDependentPixels,
+			/++
+				Pixels at the assumed DPI, but will be automatically scaled with the rest of the ui.
+			+/
+			DeviceIndependentPixels,
+			/++
+				An approximate character count in the currently selected font (at layout time) of the status bar. This will use the x-width (similar to css `ch`).
+			+/
+			ApproximateCharacters,
+			/++
+				These take a proportion of the remaining space in the window after all other parts have been assigned. The sum of all proportional parts is then divided by the current item to get the amount of space it uses.
+
+				If you pass 0, it will assume that this item takes an average of all remaining proportional space. This is there primarily to provide compatibility with code written against older versions of minigui.
+			+/
+			Proportional
+		}
+		private WidthUnits units;
+		private int width;
+		private StatusBar owner;
+
+		private int currentlyAssignedWidth;
+
+		/++
+			History:
+				Prior to September 1, 2023, this took a default value of 100 and was interpreted as pixels, unless the value was 0 and it was the last item in the list, in which case it would use the remaining space in the window.
+
+				It now allows you to provide your own value for [WidthUnits].
+
+				Additionally, the default value used to be an arbitrary value of 100. It is now 0, to take advantage of the automatic proportional calculator in the new version. If you want the old behavior, pass `100, StatusBar.Part.WidthUnits.DeviceIndependentPixels`.
+		+/
+		this(int w, WidthUnits units = WidthUnits.Proportional) {
+			this.units = units;
+			this.width = w;
+		}
+
+		/// ditto
+		this(int w = 0) {
+			if(w == 0)
+				this(w, WidthUnits.Proportional);
+			else
+				this(w, WidthUnits.DeviceDependentPixels);
+		}
 
 		private int idx;
 		private string _content;
@@ -10368,6 +10494,52 @@ class StatusBar : Widget {
 		} else static assert(false);
 	}
 
+	override void recomputeChildLayout() {
+		int remainingLength = this.width;
+
+		int proportionalSum;
+		int proportionalCount;
+		foreach(idx, part; this.partsArray) {
+			with(Part.WidthUnits)
+			final switch(part.units) {
+				case DeviceDependentPixels:
+					part.currentlyAssignedWidth = part.width;
+					remainingLength -= part.currentlyAssignedWidth;
+				break;
+				case DeviceIndependentPixels:
+					part.currentlyAssignedWidth = scaleWithDpi(part.width);
+					remainingLength -= part.currentlyAssignedWidth;
+				break;
+				case ApproximateCharacters:
+					auto cs = getComputedStyle();
+					auto font = cs.font;
+
+					part.currentlyAssignedWidth = font.averageWidth * this.width;
+					remainingLength -= part.currentlyAssignedWidth;
+				break;
+				case Proportional:
+					proportionalSum += part.width;
+					proportionalCount ++;
+				break;
+			}
+		}
+
+		foreach(part; this.partsArray) {
+			if(part.units == Part.WidthUnits.Proportional) {
+				auto proportion = part.width == 0 ? proportionalSum / proportionalCount : part.width;
+				if(proportion == 0)
+					proportion = 1;
+
+				if(proportionalSum == 0)
+					proportionalSum = proportionalCount;
+
+				part.currentlyAssignedWidth = remainingLength * proportion / proportionalSum;
+			}
+		}
+
+		super.recomputeChildLayout();
+	}
+
 	version(win32_widgets)
 	override protected void dpiChanged() {
 		RECT rect;
@@ -10381,9 +10553,9 @@ class StatusBar : Widget {
 		auto cs = getComputedStyle();
 		this.draw3dFrame(painter, FrameStyle.sunk, cs.background.color);
 		int cpos = 0;
-		int remainingLength = this.width;
 		foreach(idx, part; this.partsArray) {
-			auto partWidth = part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
+			auto partWidth = part.currentlyAssignedWidth;
+			// part.width ? part.width : ((idx + 1 == this.partsArray.length) ? remainingLength : 100);
 			painter.setClipRectangle(Point(cpos, 0), partWidth, height);
 			draw3dFrame(cpos, 0, partWidth, height, painter, FrameStyle.sunk, cs.background.color);
 			painter.setClipRectangle(Point(cpos + 2, 2), partWidth - 4, height - 4);
@@ -10393,7 +10565,6 @@ class StatusBar : Widget {
 
 			painter.drawText(Point(cpos + 4, 0), part.content, Point(width, height), TextAlignment.VerticalCenter);
 			cpos += partWidth;
-			remainingLength -= partWidth;
 		}
 	}
 
@@ -10581,10 +10752,12 @@ class Fieldset : Widget {
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
+		auto dlh = defaultLineHeight;
+
 		painter.fillColor = Color.transparent;
 		auto cs = getComputedStyle();
 		painter.pen = Pen(cs.foregroundColor, 1);
-		painter.drawRectangle(Point(0, defaultLineHeight / 2), width, height - defaultLineHeight / 2);
+		painter.drawRectangle(Point(0, dlh / 2), width, height - dlh / 2);
 
 		auto tx = painter.textSize(legend);
 		painter.outlineColor = Color.transparent;
@@ -10625,6 +10798,10 @@ class Fieldset : Widget {
 			m += child.marginTop();
 		}
 		return m + 6;
+	}
+
+	override int minWidth() {
+		return 6 + cast(int) this.legend.length * 7;
 	}
 }
 
@@ -11107,8 +11284,9 @@ class Checkbox : MouseActivatedWidget {
 		override int maxHeight() { return scaleWithDpi(16); }
 		override int minHeight() { return scaleWithDpi(16); }
 	} else version(custom_widgets) {
-		override int maxHeight() { return defaultLineHeight; }
-		override int minHeight() { return defaultLineHeight; }
+		private enum buttonSize = 16;
+		override int maxHeight() { return mymax(defaultLineHeight, scaleWithDpi(buttonSize)); }
+		override int minHeight() { return maxHeight(); }
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
@@ -11186,18 +11364,24 @@ class Checkbox : MouseActivatedWidget {
 		}
 
 
-		enum buttonSize = 16;
-
 		painter.outlineColor = Color.black;
 		painter.fillColor = Color.white;
-		painter.drawRectangle(scaleWithDpi(Point(2, 2)), scaleWithDpi(buttonSize - 2), scaleWithDpi(buttonSize - 2));
+		enum rectOffset = 2;
+		painter.drawRectangle(scaleWithDpi(Point(rectOffset, rectOffset)), scaleWithDpi(buttonSize - rectOffset - rectOffset), scaleWithDpi(buttonSize - rectOffset - rectOffset));
 
 		if(isChecked) {
-			painter.pen = Pen(Color.black, 2);
+			auto size = scaleWithDpi(2);
+			painter.pen = Pen(Color.black, size);
 			// I'm using height so the checkbox is square
-			enum padding = 5;
-			painter.drawLine(scaleWithDpi(Point(padding, padding)), scaleWithDpi(Point(buttonSize - (padding-2), buttonSize - (padding-2))));
-			painter.drawLine(scaleWithDpi(Point(buttonSize-(padding-2), padding)), scaleWithDpi(Point(padding, buttonSize - (padding-2))));
+			enum padding = 3;
+			painter.drawLine(
+				scaleWithDpi(Point(rectOffset + padding, rectOffset + padding)),
+				scaleWithDpi(Point(buttonSize - padding - rectOffset, buttonSize - padding - rectOffset)) - Point(1 - size % 2, 1 - size % 2)
+			);
+			painter.drawLine(
+				scaleWithDpi(Point(buttonSize - padding - rectOffset, padding + rectOffset)) - Point(1 - size % 2, 0),
+				scaleWithDpi(Point(padding + rectOffset, buttonSize - padding - rectOffset)) - Point(0,1 -  size % 2)
+			);
 
 			painter.pen = Pen(Color.black, 1);
 		}
@@ -11206,8 +11390,13 @@ class Checkbox : MouseActivatedWidget {
 			painter.outlineColor = cs.foregroundColor();
 			painter.fillColor = cs.foregroundColor();
 
-			// FIXME: should prolly just align the baseline or something
-			painter.drawText(scaleWithDpi(Point(buttonSize + 4, 2)), label, Point(width, height), TextAlignment.Left | TextAlignment.VerticalCenter);
+			// i want the centerline of the text to be aligned with the centerline of the checkbox
+			/+
+			auto font = cs.font();
+			auto y = scaleWithDpi(rectOffset + buttonSize / 2) - font.height / 2;
+			painter.drawText(Point(scaleWithDpi(buttonSize + 4), y), label);
+			+/
+			painter.drawText(scaleWithDpi(Point(buttonSize + 4, rectOffset)), label, Point(width, height - scaleWithDpi(rectOffset)), TextAlignment.Left | TextAlignment.VerticalCenter);
 		}
 	}
 
@@ -11258,8 +11447,9 @@ class Radiobox : MouseActivatedWidget {
 		override int maxHeight() { return scaleWithDpi(16); }
 		override int minHeight() { return scaleWithDpi(16); }
 	} else version(custom_widgets) {
-		override int maxHeight() { return defaultLineHeight; }
-		override int minHeight() { return defaultLineHeight; }
+		private enum buttonSize = 16;
+		override int maxHeight() { return mymax(defaultLineHeight, scaleWithDpi(buttonSize)); }
+		override int minHeight() { return maxHeight(); }
 	} else static assert(0);
 
 	override int marginLeft() { return 4; }
@@ -11286,6 +11476,7 @@ class Radiobox : MouseActivatedWidget {
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
 		auto cs = getComputedStyle();
+
 		if(isFocused) {
 			painter.fillColor = cs.windowBackgroundColor;
 			painter.pen = Pen(Color.black, 1, Pen.Style.Dotted);
@@ -11296,8 +11487,6 @@ class Radiobox : MouseActivatedWidget {
 		painter.drawRectangle(Point(0, 0), width, height);
 
 		painter.pen = Pen(Color.black, 1, Pen.Style.Solid);
-
-		enum buttonSize = 16;
 
 		painter.outlineColor = Color.black;
 		painter.fillColor = Color.white;
@@ -11721,8 +11910,8 @@ class ImageBox : Widget {
 
 ///
 class TextLabel : Widget {
-	override int maxHeight() { return defaultLineHeight; }
-	override int minHeight() { return defaultLineHeight; }
+	override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultTextHeight()))).height; }
+	override int maxHeight() { return minHeight; }
 	override int minWidth() { return 32; }
 
 	override int flexBasisHeight() { return minHeight(); }
@@ -11756,7 +11945,15 @@ class TextLabel : Widget {
 			redraw();
 	}
 
-	///
+	override void defaultEventHandler_click(scope ClickEvent ce) {
+		if(this.labelFor !is null)
+			this.labelFor.focus();
+	}
+
+	/++
+		WARNING: this currently sets TextAlignment.Right as the default. That will change in a future version.
+		For future-proofing of your code, if you rely on TextAlignment.Right, you MUST specify that explicitly.
+	+/
 	this(string label, TextAlignment alignment, Widget parent) {
 		this.label_ = label;
 		this.alignment = alignment;
@@ -11767,26 +11964,17 @@ class TextLabel : Widget {
 		createWin32Window(this, "static"w, label, (alignment & TextAlignment.Center) ? SS_CENTER : 0, (alignment & TextAlignment.Right) ? WS_EX_RIGHT : WS_EX_LEFT);
 	}
 
-	override void defaultEventHandler_click(scope ClickEvent ce) {
-		if(this.labelFor !is null)
-			this.labelFor.focus();
-	}
-
-	/++
-		WARNING: this currently sets TextAlignment.Right as the default. That will change in a future version.
-		For future-proofing of your code, if you rely on TextAlignment.Right, you MUST specify that explicitly.
-	+/
+	/// ditto
 	this(string label, Widget parent) {
 		this(label, TextAlignment.Right, parent);
 	}
-
 
 	TextAlignment alignment;
 
 	version(custom_widgets)
 	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
 		painter.outlineColor = getComputedStyle().foregroundColor;
-		painter.drawText(Point(0, 0), this.label, Point(width, height), alignment);
+		painter.drawText(bounds.upperLeft, this.label, bounds.lowerRight, alignment);
 		return bounds;
 	}
 
@@ -12260,7 +12448,7 @@ class TextDisplayHelper : Widget {
 	}
 	mixin OverrideStyle!Style;
 
-	override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, Window.lineHeight))).height; }
+	override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultTextHeight))).height; }
 	override int maxHeight() {
 		if(singleLine)
 			return minHeight;
@@ -12312,12 +12500,13 @@ class TextDisplayHelper : Widget {
 				);
 			}
 
-			if(txt.stripInternal.length)
+			if(txt.stripInternal.length) {
 				drawTextSegment(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRightInternal);
+			}
 
-			if(info.boundingBox.upperLeft.y - smw.position().y > this.height)
+			if(info.boundingBox.upperLeft.y - smw.position().y > this.height) {
 				return false;
-			else {
+			} else {
 				return true;
 			}
 		}, Rectangle(smw.position(), bounds.size));
@@ -12537,13 +12726,18 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	version(use_new_text_system)
 	TextStyle defaultTextStyle() {
+		return new TextDisplayHelper.MyTextStyle(getUsedFont());
+	}
+
+	version(use_new_text_system)
+	private OperatingSystemFont getUsedFont() {
 		auto cs = getComputedStyle();
 		auto font = cs.font;
 		if(font is null) {
 			font = new OperatingSystemFont;
 			font.loadDefault();
 		}
-		return new TextDisplayHelper.MyTextStyle(font);
+		return font;
 	}
 
 	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
@@ -12562,6 +12756,17 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				this.tabStop = false;
 				smw.tabStop = false;
 				tdh = textDisplayHelperFactory(textLayout, smw);
+
+				this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
+					if(textLayout) {
+						if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
+							// the dpi change can change the font, so this informs the layouter that it has changed too
+							style.font_ = getUsedFont();
+
+							// arsd.core.writeln(this.parentWindow.win.actualDpi);
+						}
+					}
+				});
 			}
 
 		} else {
@@ -12967,44 +13172,33 @@ class MessageBox : Window {
 
 		this.message = message;
 
-		int buttonsWidth = cast(int) buttons.length * 50 + (cast(int) buttons.length - 1) * 16;
-		buttonsWidth = scaleWithDpi(buttonsWidth);
+		auto label = new TextLabel(message, TextAlignment.Center, this);
 
-		int x = this.width / 2 - buttonsWidth / 2;
+		auto hl = new HorizontalLayout(this);
+		auto spacer = new HorizontalSpacer(hl); // to right align
 
 		foreach(idx, buttonText; buttons) {
-			auto button = new Button(buttonText, this);
-			button.x = x;
-			button.y = height - (button.height + 10);
+			auto button = new CommandButton(buttonText, hl);
+
 			button.addEventListener(EventType.triggered, ((size_t idx) { return () {
 				this.buttonPressed = buttonIds[idx];
 				win.close();
 			}; })(idx));
 
-			button.registerMovement();
-			x += button.width;
-			x += scaleWithDpi(16);
 			if(idx == 0)
 				button.focus();
 		}
+
+		if(buttons.length == 1)
+			auto spacer2 = new HorizontalSpacer(hl); // to center it
+
+		win.resize(scaleWithDpi(300), this.minHeight());
 
 		win.show();
 		redraw();
 	}
 
-	override void paint(WidgetPainter painter) {
-		super.paint(painter);
-
-		auto cs = getComputedStyle();
-
-		painter.outlineColor = cs.foregroundColor();
-		painter.fillColor = cs.foregroundColor();
-
-		painter.drawText(Point(0, 0), message, Point(width, height / 2), TextAlignment.Center | TextAlignment.VerticalCenter);
-	}
-
-	// this one is all fixed position
-	override void recomputeChildLayout() {}
+	mixin Padding!q{16};
 }
 
 ///
@@ -15037,7 +15231,7 @@ class AutomaticDialog(T) : Dialog {
 		}
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + 4 + 2) + Window.lineHeight + 56, title);
+		super(400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + scaleWithDpi(4 + 2)) + defaultLineHeight + scaleWithDpi(56), title);
 
 		static if(is(T == class))
 			this.addDataControllerWidget(t);
@@ -15511,17 +15705,15 @@ abstract class BaseVisualTheme {
 	/++
 		If you return `null` it will use simpledisplay's default. Otherwise, you return what font you want and it will cache it internally.
 	+/
-	abstract OperatingSystemFont defaultFont();
+	abstract OperatingSystemFont defaultFont(int dpi);
 
-	private OperatingSystemFont defaultFontCache_;
-	private bool defaultFontCachePopulated;
-	private OperatingSystemFont defaultFontCached() {
-		if(!defaultFontCachePopulated) {
+	private OperatingSystemFont[int] defaultFontCache_;
+	private OperatingSystemFont defaultFontCached(int dpi) {
+		if(dpi !in defaultFontCache_) {
 			// FIXME: set this to false if X disconnect or if visual theme changes
-			defaultFontCache_ = defaultFont();
-			defaultFontCachePopulated = true;
+			defaultFontCache_[dpi] = defaultFont(dpi);
 		}
-		return defaultFontCache_;
+		return defaultFontCache_[dpi];
 	}
 }
 
@@ -15589,6 +15781,8 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 			widget.paint(painter);
 	}
 
+	deprecated("Add an `int dpi` argument to your override now.") OperatingSystemFont defaultFont() { return null; }
+
 	// I have to put these here even though I kinda don't want to since dmd regressed on detecting unimplemented interface functions through abstract classes
 	// mixin Beautiful95Theme;
 	mixin DefaultLightTheme;
@@ -15607,7 +15801,7 @@ mixin template Beautiful95Theme() {
 	override Color lightAccentColor() { return Color(223, 223, 223); }
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
-	override OperatingSystemFont defaultFont() { return null; } // will just use the default out of simpledisplay's xfontstr
+	override OperatingSystemFont defaultFont(int dpi) { return null; } // will just use the default out of simpledisplay's xfontstr
 }
 
 /// ditto
@@ -15619,11 +15813,13 @@ mixin template DefaultLightTheme() {
 	override Color lightAccentColor() { return Color(223, 223, 223); }
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
-	override OperatingSystemFont defaultFont() {
+	override OperatingSystemFont defaultFont(int dpi) {
 		version(Windows)
-			return new OperatingSystemFont("Segoe UI", 12);
-		else
-			return new OperatingSystemFont("DejaVu Sans", 9);
+			return new OperatingSystemFont("Segoe UI");
+		else {
+			// FIXME: undo xft's scaling so we don't end up double scaled
+			return new OperatingSystemFont("DejaVu Sans", 9 * dpi / 96);
+		}
 	}
 }
 
@@ -15636,11 +15832,11 @@ mixin template DefaultDarkTheme() {
 	override Color lightAccentColor() { return Color(80, 80, 80); }
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(128, 0, 128); }
-	override OperatingSystemFont defaultFont() {
+	override OperatingSystemFont defaultFont(int dpi) {
 		version(Windows)
 			return new OperatingSystemFont("Segoe UI", 12);
 		else
-			return new OperatingSystemFont("DejaVu Sans", 9);
+			return new OperatingSystemFont("DejaVu Sans", 9 * dpi / 96);
 	}
 }
 
