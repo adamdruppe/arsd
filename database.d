@@ -33,6 +33,18 @@
 		how to work it in without breaking a decade of code.
 
 		On June 7, 2023 (dub 11.0), I started the process of moving away from strings as the inner storage unit. This is a potentially breaking change, but you can use `.toString` to convert as needed and `alias this` will try to do this automatically in many situations. See [DatabaseDatum] for details. This transition is not yet complete.
+
+		Notably, passing it to some std.string functions will cause errors referencing DatabaseDatum like:
+
+		$(CONSOLE
+		Error: template `std.array.replace` cannot deduce function from argument types `!()(string, string, DatabaseDatum)`
+		path/phobos/std/array.d(2459):        Candidates are: `replace(E, R1, R2)(E[] subject, R1 from, R2 to)`
+		  with `E = immutable(char),
+		       R1 = string,
+		       R2 = DatabaseDatum`
+		)
+
+		Because templates do not trigger alias this - you will need to call `.toString()` yourself at the usage site.
 +/
 module arsd.database;
 
@@ -177,6 +189,8 @@ struct DatabaseDatum {
 	}
 	/++
 		For compatibility with earlier versions of the api, all data can easily convert to string implicitly and opCast keeps to!x(this) working.
+
+		The toArsdJsVar one is in particular subject to change.
 	+/
 	alias toString this;
 
@@ -185,6 +199,9 @@ struct DatabaseDatum {
 		import std.conv;
 		return to!T(this.toString);
 	}
+
+	/// ditto
+	string toArsdJsVar() { return this.toString; }
 }
 
 /++
