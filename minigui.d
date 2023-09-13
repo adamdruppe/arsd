@@ -6849,8 +6849,9 @@ class TabMessageWidget : Widget {
 			createWin32Window(this, WC_TABCONTROL, "", 0);
 		} else version(custom_widgets) {
 			addEventListener((ClickEvent event) {
-				if(event.target !is this && this.container !is null && event.target !is this.container) return;
-				if(event.clientY < tabBarHeight) {
+				if(event.target !is this)
+					return;
+				if(event.clientY >= 0 && event.clientY < tabBarHeight) {
 					auto t = (event.clientX / tabWidth);
 					if(t >= 0 && t < tabs.length) {
 						currentTab_ = t;
