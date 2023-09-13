@@ -38,6 +38,10 @@
 
 	History:
 		Things inside script tag were added on January 7, 2022.
+
+		This module was added to dub on September 11, 2023 (dub v11.2).
+
+		It was originally written in July 2019 to support a demonstration of moving a ruby on rails app to D.
 +/
 module arsd.webtemplate;
 

@@ -625,6 +625,21 @@
 			"sourceFiles": ["script.d"]
 		},
 		{
+			"name": "webtemplate",
+			"description": "A dom and script based web template system",
+			"targetType": "library",
+			"dependencies": {
+				"arsd-official:script":"*",
+				"arsd-official:dom":"*",
+				"arsd-official:jsvar":"*",
+				"arsd-official:cgi":"*"
+			},
+			"dflags-dmd": ["-mv=arsd.webtemplate=$PACKAGE_DIR/webtemplate.d"],
+			"dflags-ldc": ["--mv=arsd.webtemplate=$PACKAGE_DIR/webtemplate.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.webtemplate=$PACKAGE_DIR/webtemplate.d"],
+			"sourceFiles": ["webtemplate.d"]
+		},
+		{
 			"name": "terminal",
 			"description": "Cross-platform Terminal I/O with color, mouse support, real time input, etc.",
 			"targetType": "library",
