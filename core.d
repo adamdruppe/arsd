@@ -6648,7 +6648,7 @@ so the end result is you keep the last ones. it wouldn't report errors if multip
 
 +/
 
-private version(Windows) extern(Windows) {
+package(arsd) version(Windows) extern(Windows) {
 	BOOL CancelIoEx(HANDLE, LPOVERLAPPED);
 
 	struct WSABUF {

@@ -4758,6 +4758,11 @@ extern(Windows) private {
 	alias GROUP=uint;
 	alias LPWSAPROTOCOL_INFOW = void*;
 	SOCKET WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW lpProtocolInfo, GROUP g, DWORD dwFlags);
+	alias WSASend = arsd.core.WSASend;
+	alias WSARecv = arsd.core.WSARecv;
+	alias WSABUF = arsd.core.WSABUF;
+
+	/+
 	int WSASend(SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesSent, DWORD dwFlags, LPWSAOVERLAPPED lpOverlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
 	int WSARecv(SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesRecvd, LPDWORD lpFlags, LPWSAOVERLAPPED lpOverlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine);
 
@@ -4765,6 +4770,7 @@ extern(Windows) private {
 		ULONG len;
 		CHAR  *buf;
 	}
+	+/
 	alias LPWSABUF = WSABUF*;
 
 	alias WSAOVERLAPPED = OVERLAPPED;
@@ -4917,7 +4923,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 	override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) @trusted {
 		overlapped = overlapped.init;
 		buffer[0].len = cast(DWORD) buf.length;
-		buffer[0].buf = cast(CHAR*) buf.ptr;
+		buffer[0].buf = cast(ubyte*) buf.ptr;
 		fiber.setPostYield( () {
 			if(!WSASend(handle, buffer.ptr, cast(DWORD) buffer.length, null, 0, &overlapped, null)) {
 				if(GetLastError() != 997) {
@@ -4932,7 +4938,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 	override ptrdiff_t receive(scope void[] buf, SocketFlags flags) @trusted {
 		overlapped = overlapped.init;
 		buffer[0].len = cast(DWORD) buf.length;
-		buffer[0].buf = cast(CHAR*) buf.ptr;
+		buffer[0].buf = cast(ubyte*) buf.ptr;
 
 		DWORD flags2 = 0;
 
