@@ -1535,10 +1535,9 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 	History:
 		Added April 24, 2023  (dub v11.0)
 +/
+version(without_opengl) {} else
 auto openGLCurrentContext() {
-	version(without_opengl)
-		return null;
-	else version(Windows)
+	version(Windows)
 		return wglGetCurrentContext();
 	else
 		return glXGetCurrentContext();
