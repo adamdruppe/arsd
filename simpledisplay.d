@@ -1536,7 +1536,9 @@ void setOpenGLContextVersion() (ubyte hi, ubyte lo) { sdpyOpenGLContextVersion =
 		Added April 24, 2023  (dub v11.0)
 +/
 auto openGLCurrentContext() {
-	version(Windows)
+	version(without_opengl)
+		return null;
+	else version(Windows)
 		return wglGetCurrentContext();
 	else
 		return glXGetCurrentContext();
@@ -14965,6 +14967,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				customEventFDWrite = -1;
 			}
 
+			version(without_opengl) {} else
 			if(glc !is null) {
 				glXDestroyContext(display, glc);
 				glc = null;
