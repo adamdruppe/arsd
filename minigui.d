@@ -221,8 +221,6 @@ the virtual functions remain as the default calculated values. then the reads go
 +/
 module arsd.minigui;
 
-import arsd.core;
-
 /++
 	This hello world sample will have an oversized button, but that's ok, you see your first window!
 +/
@@ -233,6 +231,7 @@ unittest {
 	void main() {
 		auto window = new MainWindow();
 
+		// note the parent widget is almost always passed as the last argument to a constructor
 		auto hello = new TextLabel("Hello, world!", TextAlignment.Center, window);
 		auto button = new Button("Close", window);
 		button.addWhenTriggered({
@@ -319,6 +318,7 @@ unittest {
 }
 
 
+import arsd.core;
 public import arsd.simpledisplay;
 /++
 	Convenience import to override the Windows GDI Rectangle function (you can still use it through fully-qualified imports)
@@ -10264,7 +10264,9 @@ class ToolButton : Button {
 }
 
 
-///
+/++
+	You can make one of thse yourself but it is generally easer to use [MainWindow.setMenuAndToolbarFromAnnotatedCode].
++/
 class MenuBar : Widget {
 	MenuItem[] items;
 	Menu[] subMenus;
@@ -11459,20 +11461,20 @@ class Radiobox : MouseActivatedWidget {
 	private string label;
 	private dchar accelerator;
 
-	version(win32_widgets)
+	/++
+
+	+/
 	this(string label, Widget parent) {
 		super(parent);
-		this.label = label;
-		createWin32Window(this, "button"w, label, BS_AUTORADIOBUTTON);
+		version(win32_widgets) {
+			this.label = label;
+			createWin32Window(this, "button"w, label, BS_AUTORADIOBUTTON);
+		} else version(custom_widgets) {
+			label.extractWindowsStyleLabel(this.label, this.accelerator);
+			height = 16;
+			width = height + 4 + cast(int) label.length * 16;
+		}
 	}
-	else version(custom_widgets)
-	this(string label, Widget parent) {
-		super(parent);
-		label.extractWindowsStyleLabel(this.label, this.accelerator);
-		height = 16;
-		width = height + 4 + cast(int) label.length * 16;
-	}
-	else static assert(false);
 
 	version(custom_widgets)
 	override void paint(WidgetPainter painter) {
@@ -11496,7 +11498,8 @@ class Radiobox : MouseActivatedWidget {
 			painter.outlineColor = Color.black;
 			painter.fillColor = Color.black;
 			// I'm using height so the checkbox is square
-			painter.drawEllipse(scaleWithDpi(Point(5, 5)), scaleWithDpi(Point(buttonSize - 5, buttonSize - 5)));
+			auto size = scaleWithDpi(2);
+			painter.drawEllipse(scaleWithDpi(Point(5, 5)), scaleWithDpi(Point(buttonSize - 5, buttonSize - 5)) + Point(size % 2, size % 2));
 		}
 
 		painter.outlineColor = cs.foregroundColor();
