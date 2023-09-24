@@ -40,8 +40,6 @@
 +/
 module arsd.http2;
 
-static import arsd.core;
-
 ///
 unittest {
 	import arsd.http2;
@@ -60,6 +58,8 @@ unittest {
 
 	version(arsd_http2_integration_test) main(); // exclude from docs
 }
+
+static import arsd.core;
 
 // FIXME: I think I want to disable sigpipe here too.
 

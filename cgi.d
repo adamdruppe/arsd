@@ -486,10 +486,6 @@ void main() {
 +/
 module arsd.cgi;
 
-static import arsd.core;
-version(Posix)
-import arsd.core : makeNonBlocking;
-
 // FIXME: Nullable!T can be a checkbox that enables/disables the T on the automatic form
 // and a SumType!(T, R) can be a radio box to pick between T and R to disclose the extra boxes on the automatic form
 
@@ -573,6 +569,11 @@ unittest {
 }
 
 static import std.file;
+
+static import arsd.core;
+version(Posix)
+import arsd.core : makeNonBlocking;
+
 
 // for a single thread, linear request thing, use:
 // -version=embedded_httpd_threads -version=cgi_no_threads
