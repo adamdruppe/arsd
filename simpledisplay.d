@@ -471,6 +471,13 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	This program only draws the image once because that's all that is necessary, since it is static. If you want to do animation, you might set a pulse timer (which would be a fixed max fps, not necessarily consistent) or use a render loop in a separate thread.
 
+	$(H3 $(ID vulkan) Vulkan)
+
+	See a couple examples ported from GLFW to simpledisplay using the erupted vulkan bindings:
+
+	https://github.com/adamdruppe/VulkanSdpyDemo
+
+	https://github.com/Cy-Tek/VulkanizeD/compare/main...adamdruppe:VulkanizeDSdpy:main
 
 	$(H3 $(ID topic-images) Displaying images)
 		You can also load PNG images using [arsd.png].
@@ -759,6 +766,8 @@ interface->SetProgressValue(hwnd, 40, 100);
 	)
 
 	History:
+		Initial release in April 2011.
+
 		simpledisplay was stand alone until about 2015. It then added a dependency on [arsd.color] and changed its name to `arsd.simpledisplay`.
 
 		On March 4, 2023 (dub v11.0), it started importing [arsd.core] as well, making that a build-time requirement.
