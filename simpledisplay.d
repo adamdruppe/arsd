@@ -4706,16 +4706,68 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (!active) return;
 
 			auto display = XDisplayConnection.get;
-			auto gc = DefaultGC(display, DefaultScreen(display));
+			GC gc;
+
+		// from https://stackoverflow.com/questions/10492275/how-to-upload-32-bit-image-to-server-side-pixmap
+
+			int gc_depth(int depth, Display *dpy, Window root, GC *gc) {
+				int dbg = false;
+
+				Window win;
+				Visual *visual;
+				XVisualInfo vis_info;
+				XSetWindowAttributes win_attr;
+				c_ulong win_mask;
+
+				if(!XMatchVisualInfo(dpy, 0, depth, 4 /*TrueColor*/, &vis_info)) {
+					assert(0);
+					// return 1;
+				}
+
+				visual = vis_info.visual;
+
+				win_attr.colormap = XCreateColormap(dpy, root, visual, AllocNone);
+				win_attr.background_pixel = 0;
+				win_attr.border_pixel = 0;
+
+				win_mask = CWBackPixel | CWColormap | CWBorderPixel;
+
+				win = XCreateWindow(
+						dpy, root,
+						0, 0,
+						100, 100,        /* dummy size */
+						0, depth,
+						InputOutput, visual,
+						win_mask, &win_attr);
+				/* To flush out any errors */
+				if (dbg) XSync(dpy, true);
+
+				*gc = XCreateGC(dpy, win, 0, null);
+				if (dbg) XSync(dpy, true);
+
+				XDestroyWindow(dpy, win);
+				if (dbg) XSync(dpy, true);
+
+				return 0;
+			}
+
+			if(useAlpha)
+				gc_depth(32, display, RootWindow(display, DefaultScreen(display)), &gc);
+			else
+				gc = DefaultGC(display, DefaultScreen(display));
+
 			XClearWindow(display, nativeHandle);
 
-			XSetClipMask(display, gc, clippixmap);
+			if(!useAlpha && img !is null)
+				XSetClipMask(display, gc, clippixmap);
 
+			/+
 			XSetForeground(display, gc,
 				cast(uint) 0 << 16 |
 				cast(uint) 0 << 8 |
 				cast(uint) 0);
 			XFillRectangle(display, nativeHandle, gc, 0, 0, width, height);
+			+/
 
 			if (img is null) {
 				XSetForeground(display, gc,
@@ -4786,6 +4838,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				this.icon = this.img;
 		}
 
+		private bool useAlpha = false;
+
 		private void createXWin () {
 			// create window
 			auto display = XDisplayConnection.get;
@@ -4806,7 +4860,9 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				//throw new Exception("No notification area found");
 
 			Visual* v = cast(Visual*) CopyFromParent;
-			/+
+
+			int depth = 24;
+
 			auto visualProp = getX11PropertyData(trayOwner, GetAtom!("_NET_SYSTEM_TRAY_VISUAL", true)(display));
 			if(visualProp !is null) {
 				c_ulong[] info = cast(c_ulong[]) visualProp;
@@ -4819,18 +4875,39 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 					if(got !is null) {
 						if(returned == 1) {
 							v = got.visual;
-							writeln("using special visual ", *got);
+							depth = got.depth;
+							// writeln("using special visual ", got.depth);
+							// writeln(depth);
 						}
 						XFree(got);
 					}
 				}
 			}
-			+/
 
-			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, 16, 16, 0, 24, InputOutput, v, 0, null);
+			int CWFlags = CWBackPixel | CWBorderPixel | CWOverrideRedirect;
+			XSetWindowAttributes attr;
+			attr.background_pixel = 0;
+			attr.border_pixel = 0;
+			attr.override_redirect = 1;
+			if(v !is cast(Visual*) CopyFromParent) {
+				attr.colormap = XCreateColormap(display, RootWindow(display, DefaultScreen(display)), v, AllocNone);
+				CWFlags |= CWColormap;
+				if(depth == 32)
+					useAlpha = true;
+				else
+					goto plain;
+			} else {
+				plain:
+				attr.background_pixmap = 1 /* ParentRelative */;
+				CWFlags |= CWBackPixmap;
+			}
+
+			auto nativeWindow = XCreateWindow(display, RootWindow(display, DefaultScreen(display)), 0, 0, width, height, 0, depth, InputOutput, v, CWFlags, &attr);
+
 			assert(nativeWindow);
 
-			XSetWindowBackgroundPixmap(display, nativeWindow, 1 /* ParentRelative */);
+			if(!useAlpha)
+				XSetWindowBackgroundPixmap(display, nativeWindow, 1 /* ParentRelative */);
 
 			nativeHandle = nativeWindow;
 
@@ -4881,9 +4958,9 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 				// believe it or not, THIS is what xfce needed for the 9999 issue
 				XSizeHints sh;
-					c_long spr;
-					XGetWMNormalHints(display, nativeWindow, &sh, &spr);
-					sh.flags |= PMaxSize | PMinSize;
+				c_long spr;
+				XGetWMNormalHints(display, nativeWindow, &sh, &spr);
+				sh.flags |= PMaxSize | PMinSize;
 				// FIXME maybe nicer resizing
 				sh.min_width = 16;
 				sh.min_height = 16;
@@ -4900,6 +4977,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				EventMask.EnterWindowMask | EventMask.LeaveWindowMask);
 
 			sendTrayMessage(SYSTEM_TRAY_REQUEST_DOCK, nativeWindow, 0, 0);
+			// XMapWindow(display, nativeWindow); // to demo it w/o a tray
+
 			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
 			active = true;
 		}
@@ -5160,7 +5239,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			this.originalMemoryImage = i;
 			if (!active) return;
 			if (i !is null) {
-				this.img = Image.fromMemoryImage(i);
+				this.img = Image.fromMemoryImage(i, useAlpha);
 				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
 				// writeln("using pixmap ", clippixmap);
 				updateNetWmIcon();
