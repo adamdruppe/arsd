@@ -1126,14 +1126,12 @@ import arsd.core;
 // FIXME: asteroids demo
 
 
-/*
-version(OSX) {
+version(OSXCocoa) {
 	version=without_opengl;
 	version=allow_unimplemented_features;
-	version=OSXCocoa;
-	pragma(linkerDirective, "-framework Cocoa");
+	// version=OSXCocoa;
+	// pragma(linkerDirective, "-framework Cocoa");
 }
-*/
 
 version(without_opengl) {
 	enum SdpyIsUsingIVGLBinds = false;
@@ -2153,9 +2151,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			impl.window = nativeWindow;
 			if(nativeWindow)
 				display = XDisplayConnection.get(); // get initial display to not segfault
-		} else version(OSXCocoa)
-			throw new NotYetImplementedException();
-		else featureNotImplemented();
+		} else version(OSXCocoa) {
+			if(nativeWindow !is NativeWindowHandle.init) throw new NotYetImplementedException();
+		} else featureNotImplemented();
 		// FIXME: set the size correctly
 		_width = 1;
 		_height = 1;
@@ -8508,7 +8506,7 @@ class OperatingSystemFont : MeasurableFont {
 				}
 			}
 			return null;
-		}
+		} else throw new NotYetImplementedException();
 	}
 
 	// see also: XftLockFace(font) which gives a FT_Face. from /usr/include/X11/Xft/Xft.h line 352
@@ -8913,14 +8911,14 @@ class OperatingSystemFont : MeasurableFont {
 			this.fontset = ScreenPainterImplementation.defaultfontset;
 
 			prepareFontInfo();
+			return this;
 		} else version(Windows) {
 			ScreenPainterImplementation.ensureDefaultFontLoaded();
 			this.font = ScreenPainterImplementation.defaultGuiFont;
 
 			prepareFontInfo();
+			return this;
 		} else throw new NotYetImplementedException();
-
-		return this;
 	}
 
 	///
@@ -9058,6 +9056,7 @@ struct ScreenPainter {
 		originalPen = impl._activePen;
 		originalFillColor = impl._fillColor;
 		originalClipRectangle = impl._clipRectangle;
+		version(OSXCocoa) {} else
 		originalFont = impl._activeFont;
 	}
 
@@ -9751,6 +9750,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 	History:
 		Added November 20, 2021 (dub v10.4)
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 abstract class Gradient : Sprite {
 	protected this(int w, int h) {
 		version(X11) {
@@ -9818,6 +9818,7 @@ abstract class Gradient : Sprite {
 	Bugs:
 		Not yet implemented on Windows.
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 class LinearGradient : Gradient {
 	/++
 
@@ -9863,6 +9864,7 @@ class LinearGradient : Gradient {
 	Bugs:
 		Not yet implemented on Windows.
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 class ConicalGradient : Gradient {
 	/++
 
@@ -9916,6 +9918,7 @@ class ConicalGradient : Gradient {
 	Bugs:
 		Not yet implemented on Windows.
 +/
+version(OSXCocoa) {} else // NotYetImplementedException
 class RadialGradient : Gradient {
 	/++
 
@@ -16023,6 +16026,8 @@ extern(C) nothrow @nogc {
 
 	Colormap XCreateColormap(Display *display, Window w, Visual *visual, int alloc);
 
+	Status XMatchVisualInfo(Display  *display,  int screen, int depth, int class_, XVisualInfo *vinfo_return);
+
 	Status XGetWindowAttributes(Display*, Window, XWindowAttributes*);
 
 	XImage *XCreateImage(
@@ -17354,7 +17359,6 @@ enum GLX_ACCUM_ALPHA_SIZE=  17;      /* number of alpha accum bits */
 
 enum GL_TRUE = 1;
 enum GL_FALSE = 0;
-alias int GLint;
 }
 
 alias XID GLXContextID;
@@ -17951,7 +17955,7 @@ version(OSXCocoa) {
 	}
 
 
-        void createImage(int width, int height, bool forcexshm=false) {
+        void createImage(int width, int height, bool forcexshm=false, bool ignored = false) {
             auto colorSpace = CGColorSpaceCreateDeviceRGB();
             context = CGBitmapContextCreate(null, width, height, 8, 4*width,
                                             colorSpace,
@@ -17998,7 +18002,7 @@ version(OSXCocoa) {
 	void invalidateRect(Rectangle invalidRect) { }
 
 	// NotYetImplementedException
-	Size textSize(in char[] txt) { return Size(32, 16); throw new NotYetImplementedException(); }
+	Size textSize(in char[] txt) { return Size(32, 16); /*throw new NotYetImplementedException();*/ }
 	void rasterOp(RasterOp op) {}
 	Pen _activePen;
 	Color _fillColor;
@@ -18709,6 +18713,7 @@ extern(System) nothrow @nogc {
 
 	alias GLvoid = void;
 	alias GLboolean = ubyte;
+	alias GLint = int;
 	alias GLuint = uint;
 	alias GLenum = uint;
 	alias GLchar = char;
@@ -20665,7 +20670,7 @@ struct DropPackage {
 			}
 
 			return ret;
-		}
+		} else throw new NotYetImplementedException();
 	}
 
 	/++
@@ -20912,6 +20917,7 @@ class TextDropHandler : GenericDropHandlerBase {
 			return [
 				FormatHandler(CF_UNICODETEXT, &translator),
 			];
+		else throw new NotYetImplementedException();
 	}
 
 	private void translator(scope ubyte[] data) {
@@ -20951,6 +20957,7 @@ class FilesDropHandler : GenericDropHandlerBase {
 			return [
 				FormatHandler(CF_HDROP, &translator),
 			];
+		else throw new NotYetImplementedException();
 	}
 
 	private void translator(scope ubyte[] data) {
@@ -21034,6 +21041,7 @@ class FilesDropHandler : GenericDropHandlerBase {
 			}
 			dg(result[0 .. count]);
 		}
+		else throw new NotYetImplementedException();
 	}
 }
 
@@ -21095,7 +21103,7 @@ interface DraggableData {
 					auto count = GetClipboardFormatNameA(format, name.ptr, name.length);
 					return name[0 .. count].idup;
 			}
-		}
+		} else throw new NotYetImplementedException();
 	}
 
 	FormatId[] availableFormats();
@@ -21131,7 +21139,7 @@ DraggableData draggable(string s) {
 			return s.length;
 		}
 	};
-	version(Windows)
+	else version(Windows)
 	return new class DraggableData {
 		FormatId[] availableFormats() {
 			return [CF_UNICODETEXT];
@@ -21145,6 +21153,8 @@ DraggableData draggable(string s) {
 			return sizeOfConvertedWstring(s, WindowsStringConversionFlags.convertNewLines | WindowsStringConversionFlags.zeroTerminate) * wchar.sizeof;
 		}
 	};
+	else
+	throw new NotYetImplementedException();
 }
 
 /++
