@@ -7190,6 +7190,8 @@ enum Resizability {
 	+/
 	automaticallyScaleIfPossible,
 }
+/// ditto
+alias Resizeability = Resizability;
 
 
 /++
