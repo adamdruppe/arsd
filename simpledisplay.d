@@ -18387,7 +18387,6 @@ extern(System) nothrow @nogc {
 	static if (!SdpyIsUsingIVGLBinds) {
 	enum GL_TRUE = 1;
 	enum GL_FALSE = 0;
-	alias int GLint;
 
 	public void* glbindGetProcAddress (const(char)* name) {
 		void* res = wglGetProcAddress(name);
