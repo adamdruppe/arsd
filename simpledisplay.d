@@ -4709,9 +4709,6 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 		// from https://stackoverflow.com/questions/10492275/how-to-upload-32-bit-image-to-server-side-pixmap
 
 			int gc_depth(int depth, Display *dpy, Window root, GC *gc) {
-				int dbg = false;
-
-				Window win;
 				Visual *visual;
 				XVisualInfo vis_info;
 				XSetWindowAttributes win_attr;
@@ -4730,21 +4727,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 				win_mask = CWBackPixel | CWColormap | CWBorderPixel;
 
-				win = XCreateWindow(
-						dpy, root,
-						0, 0,
-						100, 100,        /* dummy size */
-						0, depth,
-						InputOutput, visual,
-						win_mask, &win_attr);
-				/* To flush out any errors */
-				if (dbg) XSync(dpy, true);
-
-				*gc = XCreateGC(dpy, win, 0, null);
-				if (dbg) XSync(dpy, true);
-
-				XDestroyWindow(dpy, win);
-				if (dbg) XSync(dpy, true);
+				*gc = XCreateGC(dpy, nativeHandle, 0, null);
 
 				return 0;
 			}
@@ -4781,12 +4764,17 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 					dx = (width - img.width) / 2;
 				if(height > img.height)
 					dy = (height - img.height) / 2;
+				// writeln(img.width, " ", img.height, " vs ", width, " ", height);
 				XSetClipOrigin(display, gc, dx, dy);
 
+				int max(int a, int b) {
+					if(a > b) return a; else return b;
+				}
+
 				if (img.usingXshm)
-					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height, false);
+					XShmPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, max(img.width, width), max(img.height, height), false);
 				else
-					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, img.width, img.height);
+					XPutImage(display, cast(Drawable)nativeHandle, gc, img.handle, 0, 0, dx, dy, max(img.width, width), max(img.height, height));
 			}
 			XSetClipMask(display, gc, None);
 			flushGui();
@@ -4859,6 +4847,13 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 			Visual* v = cast(Visual*) CopyFromParent;
 
+			// GNOME's default is 22x22 and KDE assumes all icons are going to match that then bitmap scales
+			// from there. It is ugly and stupid but this gives the fewest artifacts. Good environments will send
+			// a resize event later.
+			width = 22;
+			height = 22;
+
+			// if they system gave us a 32 bit visual we need to switch to it too
 			int depth = 24;
 
 			auto visualProp = getX11PropertyData(trayOwner, GetAtom!("_NET_SYSTEM_TRAY_VISUAL", true)(display));
@@ -4886,7 +4881,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			XSetWindowAttributes attr;
 			attr.background_pixel = 0;
 			attr.border_pixel = 0;
-			attr.override_redirect = 1;
+			attr.override_redirect = 0;
 			if(v !is cast(Visual*) CopyFromParent) {
 				attr.colormap = XCreateColormap(display, RootWindow(display, DefaultScreen(display)), v, AllocNone);
 				CWFlags |= CWColormap;
@@ -4962,8 +4957,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 				// FIXME maybe nicer resizing
 				sh.min_width = 16;
 				sh.min_height = 16;
-				sh.max_width = 16;
-				sh.max_height = 16;
+				sh.max_width = 22;
+				sh.max_height = 22;
 				XSetWMNormalHints(display, nativeWindow, &sh);
 
 
