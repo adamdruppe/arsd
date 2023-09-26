@@ -720,6 +720,8 @@ void premultiplyBgra(ubyte[] bgra) pure @nogc @safe nothrow in { assert(bgra.len
 
 void unPremultiplyRgba(ubyte[] rgba) pure @nogc @safe nothrow in { assert(rgba.length == 4); } do {
 	auto a = rgba[3];
+	if(a == 0)
+		return;
 
 	rgba[0] = cast(ubyte)(rgba[0] * 255 / a);
 	rgba[1] = cast(ubyte)(rgba[1] * 255 / a);
