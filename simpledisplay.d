@@ -5232,7 +5232,7 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			this.originalMemoryImage = i;
 			if (!active) return;
 			if (i !is null) {
-				this.img = Image.fromMemoryImage(i, useAlpha);
+				this.img = Image.fromMemoryImage(i, useAlpha, false);
 				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
 				// writeln("using pixmap ", clippixmap);
 				updateNetWmIcon();
@@ -8066,9 +8066,11 @@ final class Image {
 	}
 
 	///
-	static Image fromMemoryImage(MemoryImage i, bool enableAlpha = false) {
+	static Image fromMemoryImage(MemoryImage i, bool enableAlpha = false, bool premultiply = true) {
 		auto tci = i.getAsTrueColorImage();
 		auto img = new Image(tci.width, tci.height, false, enableAlpha);
+		static if(UsingSimpledisplayX11)
+			img.premultiply = premultiply;
 		img.setRgbaBytes(tci.imageData.bytes);
 		return img;
 	}
@@ -14234,6 +14236,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		ubyte* rawData;
 
 		XShmSegmentInfo shminfo;
+		bool premultiply = true;
 
 		__gshared bool xshmQueryCompleted;
 		__gshared bool _xshmAvailable;
@@ -14388,13 +14391,13 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			c.b = rawData[offset + 0];
 			c.g = rawData[offset + 1];
 			c.r = rawData[offset + 2];
-			if(enableAlpha)
+			if(enableAlpha && premultiply)
 				c.unPremultiply;
 			return c;
 		}
 
 		void setPixel(int x, int y, Color c) {
-			if(enableAlpha)
+			if(enableAlpha && premultiply)
 				c.premultiply();
 			auto offset = (y * width + x) * 4;
 			rawData[offset + 0] = c.b;
@@ -14415,7 +14418,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				where[idx + 2] = rawData[idx + 0]; // b
 				where[idx + 3] = enableAlpha ? rawData[idx + 3] : 255; // a
 
-				if(enableAlpha)
+				if(enableAlpha && premultiply)
 					unPremultiplyRgba(where[idx .. idx + 4]);
 			}
 		}
@@ -14431,7 +14434,8 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				rawData[idx + 0] = where[idx + 2]; // b
 				if(enableAlpha) {
 					rawData[idx + 3] = where[idx + 3]; // a
-					premultiplyBgra(rawData[idx .. idx + 4]);
+					if(premultiply)
+						premultiplyBgra(rawData[idx .. idx + 4]);
 				}
 			}
 		}
