@@ -8495,8 +8495,8 @@ version(TerminalDirectToEmulator) {
 			//pthread_cancel(widget.term.threadId);
 			//widget.term = null;
 		} else version(Windows) {
-			import core.sys.windows.winbase : OpenProcess, TerminateProcess, GetCurrentProcessId;
-			import core.sys.windows.winnt :SYNCHRONIZE, PROCESS_TERMINATE, TRUE;
+			import core.sys.windows.winbase;
+			import core.sys.windows.winnt;
 			
 			auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
 			TerminateProcess(hnd, -1);
@@ -9497,8 +9497,8 @@ void main() {
 
 private version(Windows) {
 	pragma(lib, "user32");
-	import core.sys.windows.winbase : CreateNamedPipeA;
-	import core.sys.windows.winnt: HANDLE, DWORD, LPSECURITY_ATTRIBUTES;
+	import core.sys.windows.winbase;
+	import core.sys.windows.winnt;
 
 	extern(Windows)
 	HANDLE CreateNamedPipeA(
