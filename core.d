@@ -1592,7 +1592,7 @@ struct SystemErrorCode {
 		Constructs a string containing both the code and the explanation string.
 	+/
 	string toString() const {
-		return codeAsString ~ " " ~ errorString;
+		return "[" ~ codeAsString ~ "] " ~ errorString;
 	}
 
 	/++
@@ -1607,7 +1607,7 @@ struct SystemErrorCode {
 				return intToString(code, buffer[]).idup;
 			case Type.win32:
 				buffer[0 .. 2] = "0x";
-				return buffer[0 .. 2 + intToString(code, buffer[2 .. $], IntToStringArgs().withRadix(16).withPadding(8)).length].idup;
+				return buffer[0 .. 2 + intToString(cast(uint) code, buffer[2 .. $], IntToStringArgs().withRadix(16).withPadding(8)).length].idup;
 		}
 	}
 

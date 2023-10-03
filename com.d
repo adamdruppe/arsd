@@ -51,6 +51,8 @@
 +/
 module arsd.com;
 
+import arsd.core;
+
 // for arrays to/from IDispatch use SAFEARRAY
 // see https://stackoverflow.com/questions/295067/passing-an-array-using-com
 
@@ -169,11 +171,11 @@ bool ComCheck(HRESULT hr, string desc) {
 }
 
 ///
-class ComException : Exception {
+class ComException : WindowsApiException {
 	this(HRESULT hr, string desc, string file = __FILE__, size_t line = __LINE__) {
 		this.hr = hr;
 		import std.format;
-		super(desc ~ format(" %08x", hr), file, line);
+		super(desc ~ format(" %08x", hr), cast(DWORD) hr, null, file, line);
 	}
 
 	HRESULT hr;
@@ -190,6 +192,219 @@ template Dify(T) {
 
 import std.traits;
 
+struct ComResult {
+	VARIANT result;
+
+	ComIntermediary opDispatch(string memberName)() {
+		auto newComObject = (result.vt == 9) ? result.pdispVal : null;
+
+		DISPID dispid;
+
+		if(newComObject !is null) {
+			import std.conv;
+			wchar*[1] names = [(to!wstring(memberName) ~ "\0"w).dup.ptr];
+			ComCheck(newComObject.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name " ~ memberName);
+		} else throw new Exception("cannot get member of non-object");
+
+		return ComIntermediary(newComObject, dispid, memberName);
+	}
+
+}
+
+struct ComIntermediary {
+	IDispatch innerComObject_;
+	DISPID dispid;
+
+	this(IDispatch a, DISPID c, string name) {
+		this.innerComObject_ = a;
+		this.dispid = c;
+
+		import std.stdio; writeln("Object ", cast(void*) a, " method ", c, " = ", name);
+	}
+
+	ComResult _fetchProperty() {
+		DISPPARAMS disp_params;
+
+		VARIANT result;
+		EXCEPINFO einfo;
+		uint argError;
+
+		auto hr =innerComObject_.Invoke(
+			dispid,
+			&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
+			DISPATCH_PROPERTYGET,
+			&disp_params,
+			&result,
+			&einfo, // exception info
+			&argError // arg error
+		);//, "Invoke");
+
+		import std.conv;
+		if(FAILED(hr)) {
+			if(hr == DISP_E_EXCEPTION) {
+				auto code = einfo.scode ? einfo.scode : einfo.wCode;
+				string source;
+				string description;
+				if(einfo.bstrSource) {
+					// this is really a wchar[] but it needs to be freed so....
+					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+					SysFreeString(einfo.bstrSource);
+				}
+				if(einfo.bstrDescription) {
+					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+					SysFreeString(einfo.bstrDescription);
+				}
+				if(einfo.bstrHelpFile) {
+					// FIXME: we could prolly use this too
+					SysFreeString(einfo.bstrHelpFile);
+					// and dwHelpContext
+				}
+
+				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+			} else {
+				throw new ComException(hr, "Property get failed " ~ to!string(argError));
+			}
+		}
+
+		return ComResult(result);
+	}
+
+	ComIntermediary opDispatch(string memberName)() {
+		return _fetchProperty().opDispatch!memberName;
+	}
+
+	T opAssign(T)(T rhs) {
+		DISPPARAMS disp_params;
+
+		VARIANT[1] vargs;
+		vargs[0] = toComVariant(rhs);
+		disp_params.rgvarg = vargs.ptr;
+		disp_params.cNamedArgs = 1;
+		disp_params.cArgs = 1;
+		DISPID dispidNamed = DISPID_PROPERTYPUT;
+		disp_params.rgdispidNamedArgs = &dispidNamed;
+
+		VARIANT result;
+		EXCEPINFO einfo;
+		uint argError;
+
+		auto hr =innerComObject_.Invoke(
+			dispid,
+			&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
+			DISPATCH_PROPERTYPUT,
+			&disp_params,
+			&result,
+			&einfo, // exception info
+			&argError // arg error
+		);//, "Invoke");
+
+		import std.conv;
+		if(FAILED(hr)) {
+			if(hr == DISP_E_EXCEPTION) {
+				auto code = einfo.scode ? einfo.scode : einfo.wCode;
+				string source;
+				string description;
+				if(einfo.bstrSource) {
+					// this is really a wchar[] but it needs to be freed so....
+					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+					SysFreeString(einfo.bstrSource);
+				}
+				if(einfo.bstrDescription) {
+					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+					SysFreeString(einfo.bstrDescription);
+				}
+				if(einfo.bstrHelpFile) {
+					// FIXME: we could prolly use this too
+					SysFreeString(einfo.bstrHelpFile);
+					// and dwHelpContext
+				}
+
+				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+			} else {
+				throw new ComException(hr, "Property put failed " ~ to!string(argError));
+			}
+		}
+
+		return rhs;
+	}
+
+	ComResult opCall(Args...)(Args args) {
+		DISPPARAMS disp_params;
+
+		static if(args.length) {
+			VARIANT[args.length] vargs;
+			foreach(idx, arg; args) {
+				// lol it is put in backwards way to explain MSFT
+				vargs[$ - 1 - idx] = toComVariant(arg);
+			}
+
+			disp_params.rgvarg = vargs.ptr;
+			disp_params.cArgs = cast(int) args.length;
+		}
+
+		VARIANT result;
+		EXCEPINFO einfo;
+		uint argError;
+
+		//ComCheck(innerComObject_.Invoke(
+		auto hr =innerComObject_.Invoke(
+			dispid,
+			&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
+			DISPATCH_METHOD,// PROPERTYPUT, //DISPATCH_METHOD,
+			&disp_params,
+			&result,
+			&einfo, // exception info
+			&argError // arg error
+		);//, "Invoke");
+
+		if(hr == 0x80020003) { // method not found
+			// FIXME idk how to tell the difference between a method and a property from the outside..
+			hr =innerComObject_.Invoke(
+				dispid,
+				&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
+				DISPATCH_PROPERTYGET,// PROPERTYPUT, //DISPATCH_METHOD,
+				&disp_params,
+				&result,
+				&einfo, // exception info
+				&argError // arg error
+			);//, "Invoke");
+		}
+
+		import std.conv;
+		if(FAILED(hr)) {
+			if(hr == DISP_E_EXCEPTION) {
+				auto code = einfo.scode ? einfo.scode : einfo.wCode;
+				string source;
+				string description;
+				if(einfo.bstrSource) {
+					// this is really a wchar[] but it needs to be freed so....
+					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+					SysFreeString(einfo.bstrSource);
+				}
+				if(einfo.bstrDescription) {
+					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+					SysFreeString(einfo.bstrDescription);
+				}
+				if(einfo.bstrHelpFile) {
+					// FIXME: we could prolly use this too
+					SysFreeString(einfo.bstrHelpFile);
+					// and dwHelpContext
+				}
+
+				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+			} else {
+				import std.conv;
+				throw new ComException(hr, "Call failed " ~ to!string(cast(void*) innerComObject_) ~ " " ~ to!string(dispid) ~ " " ~ to!string(argError));
+			}
+		}
+
+		return ComResult(result);
+	}
+}
+
 ///
 struct ComClient(DVersion, ComVersion = IDispatch) {
 	ComVersion innerComObject_;
@@ -197,16 +412,31 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 		this.innerComObject_ = t;
 	}
 	this(this) {
-		innerComObject_.AddRef();
+		if(innerComObject_)
+			innerComObject_.AddRef();
 	}
 	~this() {
-		innerComObject_.Release();
+		if(innerComObject_)
+			innerComObject_.Release();
 	}
 
 	// note that COM doesn't really support overloading so this
 	// don't even attempt it. C# will export as name_N where N
 	// is the index of the overload (except for 1) but...
 
+	static if(is(DVersion == Dynamic))
+	ComIntermediary opDispatch(string memberName)() {
+		// FIXME: this can be cached and reused, even done ahead of time
+		DISPID dispid;
+
+		import std.conv;
+		wchar*[1] names = [(to!wstring(memberName) ~ "\0"w).dup.ptr];
+		ComCheck(innerComObject_.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name");
+
+		return ComIntermediary(this.innerComObject_, dispid, memberName);
+	}
+
+	/+
 	static if(is(DVersion == Dynamic))
 	template opDispatch(string name) {
 		template opDispatch(Ret = void) {
@@ -249,7 +479,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 				auto hr =innerComObject_.Invoke(
 					dispid,
 					&GUID_NULL, LOCALE_SYSTEM_DEFAULT, // whatever
-					DISPATCH_METHOD,
+					DISPATCH_METHOD,// PROPERTYPUT, //DISPATCH_METHOD,
 					&disp_params,
 					&result,
 					&einfo, // exception info
@@ -280,7 +510,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 						throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
 
 					} else {
-						throw new ComException(hr, "Call failed");
+						throw new ComException(hr, "Call failed " ~ memberName ~ " " ~ to!string(argError));
 					}
 				}
 
@@ -303,11 +533,18 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 		});
 	}
 	}
+	+/
 }
 
 VARIANT toComVariant(T)(T arg) {
 	VARIANT ret;
-	static if(is(T : int)) {
+	static if(is(T : VARIANT)) {
+	} else static if(is(T : ComClient!(Dynamic, IDispatch))) {
+		ret.vt = 9;
+		ret.pdispVal = arg.innerComObject_;
+	} else static if(is(T : ComIntermediary)) {
+		ret = arg._fetchProperty();
+	} else static if(is(T : int)) {
 		ret.vt = 3;
 		ret.intVal = arg;
 	} else static if(is(T == string)) {
@@ -367,6 +604,7 @@ auto createComObject(T = Dynamic)(GUID classId) {
 	} else {
 		enum useIDispatch = true;
 		auto iid = IID_IDispatch;
+		pragma(msg, "here");
 	}
 
 	static if(useIDispatch) {
@@ -376,7 +614,7 @@ auto createComObject(T = Dynamic)(GUID classId) {
 		T obj;
 	}
 
-	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER, &iid, cast(void**) &obj), "Failed to create object");
+	ComCheck(CoCreateInstance(&classId, null, /*CLSCTX_INPROC_SERVER*/ CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
 
 	return ComClient!(Dify!T, typeof(obj))(obj);
 }
@@ -391,7 +629,9 @@ auto createComObject(T = Dynamic)(GUID classId) {
 T getFromVariant(T)(VARIANT arg) {
 	import std.traits;
 	import std.conv;
-	static if(is(T == int)) {
+	static if(is(T == void)) {
+		return;
+	} else static if(is(T == int)) {
 		if(arg.vt == 3)
 			return arg.intVal;
 	} else static if(is(T == bool)) {
