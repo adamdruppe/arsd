@@ -145,7 +145,7 @@ template getGuidAttribute(T) {
 /* COM CLIENT CODE */
 
 __gshared int coInitializeCalled;
-static ~this() {
+shared static ~this() {
 	CoFreeUnusedLibraries();
 	if(coInitializeCalled) {
 		CoUninitialize();
@@ -174,8 +174,7 @@ bool ComCheck(HRESULT hr, string desc) {
 class ComException : WindowsApiException {
 	this(HRESULT hr, string desc, string file = __FILE__, size_t line = __LINE__) {
 		this.hr = hr;
-		import std.format;
-		super(desc ~ format(" %08x", hr), cast(DWORD) hr, null, file, line);
+		super(desc, cast(DWORD) hr, null, file, line);
 	}
 
 	HRESULT hr;
@@ -190,12 +189,10 @@ template Dify(T) {
 	}
 }
 
-import std.traits;
-
 struct ComResult {
 	VARIANT result;
 
-	ComIntermediary opDispatch(string memberName)() {
+	ComProperty opDispatch(string memberName)() {
 		auto newComObject = (result.vt == 9) ? result.pdispVal : null;
 
 		DISPID dispid;
@@ -206,11 +203,10 @@ struct ComResult {
 			ComCheck(newComObject.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name " ~ memberName);
 		} else throw new Exception("cannot get member of non-object");
 
-		return ComIntermediary(newComObject, dispid, memberName);
+		return ComProperty(newComObject, dispid, memberName);
 	}
 
 	T getD(T)() {
-		import std.conv;
 		switch(result.vt) {
 			case 3: // int
 				static if(is(T : const long))
@@ -220,21 +216,22 @@ struct ComResult {
 				static if(is(T : const string))
 					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
 				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
-			default: throw new Exception("can't handle this type " ~ to!string(result.vt));
+			default: 
+				return getFromVariant!T(result);
+
+			//throw new Exception("can't handle this type " ~ to!string(result.vt));
 		}
 	}
 
 }
 
-struct ComIntermediary {
+struct ComProperty {
 	IDispatch innerComObject_;
 	DISPID dispid;
 
 	this(IDispatch a, DISPID c, string name) {
 		this.innerComObject_ = a;
 		this.dispid = c;
-
-		import std.stdio; writeln("Object ", cast(void*) a, " method ", c, " = ", name);
 	}
 
 	T getD(T)() {
@@ -290,7 +287,7 @@ struct ComIntermediary {
 		return ComResult(result);
 	}
 
-	ComIntermediary opDispatch(string memberName)() {
+	ComProperty opDispatch(string memberName)() {
 		return _fetchProperty().opDispatch!memberName;
 	}
 
@@ -445,7 +442,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 	// is the index of the overload (except for 1) but...
 
 	static if(is(DVersion == Dynamic))
-	ComIntermediary opDispatch(string memberName)() {
+	ComProperty opDispatch(string memberName)() {
 		// FIXME: this can be cached and reused, even done ahead of time
 		DISPID dispid;
 
@@ -453,7 +450,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 		wchar*[1] names = [(to!wstring(memberName) ~ "\0"w).dup.ptr];
 		ComCheck(innerComObject_.GetIDsOfNames(&GUID_NULL, names.ptr, 1, LOCALE_SYSTEM_DEFAULT, &dispid), "Look up name");
 
-		return ComIntermediary(this.innerComObject_, dispid, memberName);
+		return ComProperty(this.innerComObject_, dispid, memberName);
 	}
 
 	/+
@@ -562,7 +559,7 @@ VARIANT toComVariant(T)(T arg) {
 	} else static if(is(T : ComClient!(Dynamic, IDispatch))) {
 		ret.vt = 9;
 		ret.pdispVal = arg.innerComObject_;
-	} else static if(is(T : ComIntermediary)) {
+	} else static if(is(T : ComProperty)) {
 		ret = arg._fetchProperty();
 	} else static if(is(T : int)) {
 		ret.vt = 3;
@@ -624,7 +621,6 @@ auto createComObject(T = Dynamic)(GUID classId) {
 	} else {
 		enum useIDispatch = true;
 		auto iid = IID_IDispatch;
-		pragma(msg, "here");
 	}
 
 	static if(useIDispatch) {
@@ -634,11 +630,12 @@ auto createComObject(T = Dynamic)(GUID classId) {
 		T obj;
 	}
 
-	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
+	ComCheck(CoCreateInstance(&classId, null, CLSCTX_ALL, &iid, cast(void**) &obj), "Failed to create object");
 
 	return ComClient!(Dify!T, typeof(obj))(obj);
 }
 
+/// ditto
 auto getComObject(T = Dynamic)(wstring c, bool tryCreateIfGetFails = true) {
 	initializeClassicCom();
 
@@ -957,15 +954,6 @@ protected:
 
 // Type for an object-destroyed callback
 alias void function() PFNDESTROYED;
-
-extern (C)
-{
-	void rt_init();
-	void rt_term();
-	void gc_init();
-	void gc_term();
-}
-
 
 // This class factory object creates Hello objects.
 class ClassFactory(Class) : IClassFactory {
