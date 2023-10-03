@@ -614,7 +614,7 @@ auto createComObject(T = Dynamic)(GUID classId) {
 		T obj;
 	}
 
-	ComCheck(CoCreateInstance(&classId, null, /*CLSCTX_INPROC_SERVER*/ CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
+	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
 
 	return ComClient!(Dify!T, typeof(obj))(obj);
 }
