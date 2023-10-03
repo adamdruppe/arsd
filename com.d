@@ -209,6 +209,21 @@ struct ComResult {
 		return ComIntermediary(newComObject, dispid, memberName);
 	}
 
+	T getD(T)() {
+		import std.conv;
+		switch(result.vt) {
+			case 3: // int
+				static if(is(T : const long))
+					return result.intVal;
+				throw new Exception("cannot convert variant of type int to requested " ~ T.stringof);
+			case 8: // string
+				static if(is(T : const string))
+					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
+				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
+			default: throw new Exception("can't handle this type " ~ to!string(result.vt));
+		}
+	}
+
 }
 
 struct ComIntermediary {
@@ -220,6 +235,11 @@ struct ComIntermediary {
 		this.dispid = c;
 
 		import std.stdio; writeln("Object ", cast(void*) a, " method ", c, " = ", name);
+	}
+
+	T getD(T)() {
+		auto res = _fetchProperty();
+		return res.getD!T;
 	}
 
 	ComResult _fetchProperty() {
@@ -617,6 +637,35 @@ auto createComObject(T = Dynamic)(GUID classId) {
 	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
 
 	return ComClient!(Dify!T, typeof(obj))(obj);
+}
+
+auto getComObject(T = Dynamic)(wstring c, bool tryCreateIfGetFails = true) {
+	initializeClassicCom();
+
+	auto guid = guidForClassName(c);
+
+	auto get() {
+		auto iid = IID_IDispatch;
+		IUnknown obj;
+		ComCheck(GetActiveObject(&guid, null, &obj), "Get Object"); // code 0x800401e3 is operation unavailable if it isn't there i think
+		if(obj is null)
+			throw new Exception("null");
+
+		IDispatch disp;
+		ComCheck(obj.QueryInterface(&iid, cast(void**) &disp), "QueryInterface");
+
+		auto client = ComClient!(Dify!T, typeof(disp))(disp);
+		disp.AddRef();
+		return client;
+	}
+
+	if(tryCreateIfGetFails)
+		try
+			return get();
+		catch(Exception e)
+			return createComObject(guid);
+	else
+		return get();
 }
 
 
