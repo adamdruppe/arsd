@@ -281,6 +281,10 @@ void appendMiniguiModule(alias Module, string prefix = null)()
 							auto eventName = argName[3 .. $].unhyphen;
 							widget.addEventListener(eventName, (event) { xmlScriptEventHandler(eventName, member, event, argValue); });
 						}
+						else if (argName == "name")
+							member.name = argValue;
+						else if (argName == "statusTip")
+							member.statusTip = argValue;
 						else
 						{
 							argName = argName.unhyphen;
