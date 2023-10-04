@@ -437,14 +437,15 @@ private void populateFromDbRow(T)(ref T t, Row record) {
 	}
 }
 
-private void populateFromDbVal(V)(ref V val, string value) {
+private void populateFromDbVal(V)(ref V val, string /*DatabaseDatum*/ value) {
 	import std.conv;
 	static if(is(V == Constraint!constraintSql, string constraintSql)) {
 
 	} else static if(is(V == Nullable!P, P)) {
 		// FIXME
-		if(value.length && value != "null") {
+		if(value.length && value != "null" && value != "<null>") {
 			val.isNull = false;
+			import std.stdio; writeln(value);
 			val.value = to!P(value);
 		}
 	} else static if(is(V == bool)) {
@@ -471,7 +472,7 @@ unittest
 
 	auto rs = new PredefinedResultSet(
 		[ "a", "b" ],
-		[ Row([ "1", "2" ]) ]
+		[ Row([ DatabaseDatum("1"), DatabaseDatum("2") ]) ]
 	);
 
 	SomeStruct s;
