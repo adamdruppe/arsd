@@ -4,7 +4,47 @@
 	and to create COM servers with a natural D interface.
 
 	This code is not well tested, don't rely on it yet. But even
-	in its incomplete state it might help in some cases.
+	in its incomplete state it might help in some cases. Strings
+	and integers work pretty ok.
+
+	You can use it to interoperate with Word and Excel:
+
+	---
+	void wordmain() {
+		// gets the name of the open Word instance, if there is one
+		// getComObject gets the currently registered open one, and the
+		// "false" here means do not create a new one if none exists
+		// (try changing it to true to open a hidden Word)
+		auto wrd = getComObject("Word.Application", false);
+		writeln(wrd.ActiveDocument.Name.getD!string);
+	}
+
+	void excelmain() {
+		// create anew Excel instance and put some stuff in it
+		auto xlApp = createComObject("Excel.Application");
+		try {
+			xlApp.Visible() = 1;
+			xlApp.Workbooks.Add()();
+
+			xlApp.ActiveSheet.Cells()(1, 1).Value() = "D can do it";
+			xlApp.ActiveWorkbook.ActiveSheet.Cells()(1,2).Value() = "but come on";
+
+			writeln("success");
+			readln();
+
+			xlApp.ActiveWorkbook.Close()(0);
+		} catch(Exception e) {
+			writeln(e.toString);
+			writeln("waiting"); // let the user see before it closes
+			readln();
+		}
+		xlApp.Quit()();
+	}
+	---
+
+	The extra parenthesis there are to work around D's broken `@property` attribute, you need one at the end before a = or call operator.
+
+	Or you can work with your own custom code:
 
 	```c#
 	namespace Cool {
