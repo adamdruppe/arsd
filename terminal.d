@@ -1951,13 +1951,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		first to ask the terminal for its authoritative answer.
 	+/
 	@property int cursorX() {
+		if(cursorPositionDirty)
+			updateCursorPosition();
 		return _cursorX;
 	}
 
 	/// ditto
 	@property int cursorY() {
+		if(cursorPositionDirty)
+			updateCursorPosition();
 		return _cursorY;
 	}
+
+	private bool cursorPositionDirty = true;
 
 	private int _cursorX;
 	private int _cursorY;
@@ -2247,83 +2253,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 	+/
         void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
-                while(s.length > 0) {
-                        size_t index = 0;
-                        import std.utf;
-                        import std.uni;
-                        import std.range;
-                        bool written=false;
-                        loop:
-                        foreach(g; s.byDchar.byGrapheme) {
-                                index += g[].byChar.walkLength;
-                                if(uncertainIfAtEndOfLine) {
-                                        uncertainIfAtEndOfLine = false;
-                                        writePrintableString_(s[0..index],force);
-                                        written = true;
-                                        updateCursorPosition();
-                                        break;
-                                }
-                                if(willInsertFollowingLine) {
-                                        willInsertFollowingLine = false;
-                                        _cursorX = 0;
-                                        _cursorY++;
-                                        if(_cursorY >= height) { _cursorY--; }
-                                }
-                                switch(g[0]) {
-                                        case '\n':
-                                                _cursorX = 0;
-                                                _cursorY++;
-                                                break;
-                                        case '\r':
-                                                _cursorX = 0;
-                                                break;
-                                        case '\t':
-                                                // FIXME: get the actual tabstop, if possible
-                                                int diff = 8 - (_cursorX % 8);
-                                                if(diff == 0)
-                                                        diff = 8;
-                                                _cursorX += diff;
-                                                break;
-                                        default:
-                                                if(auto ptr = g in graphemeWidth) {
-                                                        _cursorX += *ptr;
-
-                                                        if(_wrapAround) {
-                                                                if(_cursorX == width) {
-                                                                        _cursorX--;
-                                                                        willInsertFollowingLine = true;
-                                                                }
-                                                                else if(cursorX > width) {
-                                                                        _cursorX = *ptr;
-                                                                        _cursorY++;
-                                                                        if(_cursorY == height)
-                                                                                _cursorY--;
-                                                                }
-                                                        }
-
-                                                }
-                                                else {
-                                                        int x = _cursorX;
-                                                        int y = _cursorY;
-                                                        writePrintableString_(s[0..index],force);
-                                                        written = true;
-                                                        updateCursorPosition();
-                                                        //FIXME: At some point it might be worthwhile to check if the next wrtie will wrap on those terminals that support it
-                                                        //Note that: tmux (and screen?) seem to signal that the next write will wrap by reporting cursorX==width
-                                                        if (_cursorX+1< width || _cursorX == width)  {
-                                                                graphemeWidth[g] = _cursorY > y
-                                                                        ? _cursorX
-                                                                        : _cursorX - x;
-                                                                if(_cursorX == width) { willInsertFollowingLine = true; }
-                                                        }
-                                                        else { uncertainIfAtEndOfLine = true; }
-                                                        break loop;
-                                                }
-                                }
-                        }
-                        if(!written) { writePrintableString_(s[0..index],force); }
-                        s = s[index..$];
-                }
+		writePrintableString_(s, force);
+		cursorPositionDirty = true;
         }
 
 	void writePrintableString_(const(char)[] s, ForceOption force = ForceOption.automatic) {
@@ -2544,6 +2475,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		auto terminal = &this;
 
 		terminal.flush();
+		cursorPositionDirty = false;
 
 		// then get the current cursor position to start fresh
 		version(TerminalDirectToEmulator) {
