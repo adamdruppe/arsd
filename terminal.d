@@ -227,6 +227,8 @@ unittest {
 +/
 __gshared void delegate() nothrow @nogc sigIntExtension;
 
+static import arsd.core;
+
 import core.stdc.stdio;
 
 version(TerminalDirectToEmulator) {
@@ -2858,16 +2860,20 @@ struct RealTimeConsoleInput {
 			n.c_lflag &= ~f;
 			tcsetattr(fdIn, TCSANOW, &n);
 
-			// ensure these are still blocking after the resumption
+			// ensure these are still appropriately blocking after the resumption
 			import core.sys.posix.fcntl;
 			if(fdIn != -1) {
 				auto ctl = fcntl(fdIn, F_GETFL);
 				ctl &= ~O_NONBLOCK;
+				if(arsd.core.inSchedulableTask)
+					ctl |= O_NONBLOCK;
 				fcntl(fdIn, F_SETFL, ctl);
 			}
 			if(fdOut != -1) {
 				auto ctl = fcntl(fdOut, F_GETFL);
 				ctl &= ~O_NONBLOCK;
+				if(arsd.core.inSchedulableTask)
+					ctl |= O_NONBLOCK;
 				fcntl(fdOut, F_SETFL, ctl);
 			}
 		}
@@ -3044,11 +3050,15 @@ struct RealTimeConsoleInput {
 		{
 			auto ctl = fcntl(fdIn, F_GETFL);
 			ctl &= ~O_NONBLOCK;
+			if(arsd.core.inSchedulableTask)
+				ctl |= O_NONBLOCK;
 			fcntl(fdIn, F_SETFL, ctl);
 		}
 		{
 			auto ctl = fcntl(fdOut, F_GETFL);
 			ctl &= ~O_NONBLOCK;
+			if(arsd.core.inSchedulableTask)
+				ctl |= O_NONBLOCK;
 			fcntl(fdOut, F_SETFL, ctl);
 		}
 
@@ -3377,11 +3387,17 @@ struct RealTimeConsoleInput {
 					else
 						goto try_again;
 				} else if(errno == EAGAIN || errno == EWOULDBLOCK) {
-					// I turn off O_NONBLOCK explicitly in setup, but
+					// I turn off O_NONBLOCK explicitly in setup unless in a schedulable task, but
 					// still just in case, let's keep this working too
-					import core.thread;
-					Thread.sleep(1.msecs);
-					goto try_again;
+
+					if(auto controls = arsd.core.inSchedulableTask) {
+						controls.yieldUntilReadable(fdIn);
+						goto try_again;
+					} else {
+						import core.thread;
+						Thread.sleep(1.msecs);
+						goto try_again;
+					}
 				} else {
 					import std.conv;
 					throw new Exception("read failed " ~ to!string(errno));
@@ -3593,10 +3609,21 @@ struct RealTimeConsoleInput {
 
 		INPUT_RECORD[32] buffer;
 		DWORD actuallyRead;
-		auto success = ReadConsoleInputW(inputHandle, buffer.ptr, buffer.length, &actuallyRead);
+
+		if(auto controls = arsd.core.inSchedulableTask) {
+			if(PeekConsoleInputW(inputHandle, buffer.ptr, 1, &actuallyRead) == 0)
+				throw new Exception("PeekConsoleInputW");
+
+			if(actuallyRead == 0) {
+				// the next call would block, we need to wait on the handle
+				controls.yieldUntilSignaled(inputHandle);
+			}
+		}
+
+		if(ReadConsoleInputW(inputHandle, buffer.ptr, buffer.length, &actuallyRead) == 0) {
 		//import std.stdio; writeln(buffer[0 .. actuallyRead][0].KeyEvent, cast(int) buffer[0].KeyEvent.UnicodeChar);
-		if(success == 0)
 			throw new Exception("ReadConsoleInput");
+		}
 
 		InputEvent[] newEvents;
 		input_loop: foreach(record; buffer[0 .. actuallyRead]) {
@@ -8497,7 +8524,7 @@ version(TerminalDirectToEmulator) {
 		} else version(Windows) {
 			import core.sys.windows.winbase;
 			import core.sys.windows.winnt;
-			
+
 			auto hnd = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, TRUE, GetCurrentProcessId());
 			TerminateProcess(hnd, -1);
 			assert(0);
