@@ -462,6 +462,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 			}
 		}
 	}
+	+/
 
 	static if(is(ComVersion == IDispatch))
 	template dispatchMethodImpl(string memberName, Ret = void) {
@@ -542,6 +543,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 	// so note that if I were to just make this a class, it'd inherit
 	// attributes from the D interface... but I want the RAII struct...
 	// could do a class with a wrapper and alias this though. but meh.
+	import std.traits;
 	static foreach(memberName; __traits(allMembers, DVersion)) {
 	static foreach(idx, overload; __traits(getOverloads, DVersion, memberName)) {
 		mixin(q{ReturnType!overload }~memberName~q{(Parameters!overload args) {
@@ -550,7 +552,6 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 		});
 	}
 	}
-	+/
 }
 
 VARIANT toComVariant(T)(T arg) {
