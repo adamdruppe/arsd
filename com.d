@@ -216,7 +216,7 @@ struct ComResult {
 				static if(is(T : const string))
 					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
 				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
-			default: 
+			default:
 				return getFromVariant!T(result);
 
 			//throw new Exception("can't handle this type " ~ to!string(result.vt));
@@ -556,6 +556,7 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 VARIANT toComVariant(T)(T arg) {
 	VARIANT ret;
 	static if(is(T : VARIANT)) {
+		ret = arg;
 	} else static if(is(T : ComClient!(Dynamic, IDispatch))) {
 		ret.vt = 9;
 		ret.pdispVal = arg.innerComObject_;
@@ -564,7 +565,13 @@ VARIANT toComVariant(T)(T arg) {
 	} else static if(is(T : int)) {
 		ret.vt = 3;
 		ret.intVal = arg;
-	} else static if(is(T == string)) {
+	} else static if(is(T : long)) {
+		ret.vt = 20;
+		ret.hVal = arg;
+	} else static if(is(T : double)) {
+		ret.vt = 5;
+		ret.dblVal = arg;
+	} else static if(is(T : const(char)[])) {
 		ret.vt = 8;
 		import std.utf;
 		ret.bstrVal = SysAllocString(toUTFz!(wchar*)(arg));
@@ -630,7 +637,8 @@ auto createComObject(T = Dynamic)(GUID classId) {
 		T obj;
 	}
 
-	ComCheck(CoCreateInstance(&classId, null, CLSCTX_ALL, &iid, cast(void**) &obj), "Failed to create object");
+	ComCheck(CoCreateInstance(&classId, null, CLSCTX_INPROC_SERVER/*|CLSCTX_INPROC_HANDLER*/|CLSCTX_LOCAL_SERVER, &iid, cast(void**) &obj), "Failed to create object");
+	// FIXME: if this fails we might retry with inproc_handler.
 
 	return ComClient!(Dify!T, typeof(obj))(obj);
 }
