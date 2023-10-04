@@ -52,6 +52,7 @@ import arsd.dom;
 
 public import arsd.jsvar : var;
 
+// FIXME: want to show additional info from the exception, neatly integrated, whenever possible.
 class TemplateException : Exception {
 	string templateName;
 	var context;
