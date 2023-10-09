@@ -29,6 +29,8 @@
 module arsd.minigui_addons.webview;
 // FIXME: i think i can download the cef automatically if needed.
 
+import arsd.core;
+
 version(linux)
 	version=cef;
 version(Windows)
@@ -56,7 +58,7 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 
 	protected this(Widget parent) {
 		containerWindow = new SimpleWindow(640, 480, null, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.nestedChild, WindowFlags.normal, getParentWindow(parent));
-						import std.stdio; writefln("container window %d created", containerWindow.window);
+		// import std.stdio; writefln("container window %d created", containerWindow.window);
 
 		super(containerWindow, parent);
 	}

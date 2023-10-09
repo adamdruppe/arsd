@@ -1125,6 +1125,8 @@ import arsd.core;
 // FIXME: space invaders demo
 // FIXME: asteroids demo
 
+version(OSX) version(DigitalMars) version=OSXCocoa;
+
 
 version(OSXCocoa) {
 	version=without_opengl;
@@ -1323,6 +1325,8 @@ void featureNotImplemented()() {
 version(Windows)
 	version = with_timer;
 version(linux)
+	version = with_timer;
+version(OSXCocoa)
 	version = with_timer;
 
 version(with_timer)
@@ -1655,7 +1659,7 @@ float getXftDpi() {
 		Documented public on September 23, 2021 with full support for null params (dub 10.3)
 
 +/
-TrueColorImage trueColorImageFromNativeHandle(NativeWindowHandle handle, int width = 0, int height = 0, int x = 0, int y = 0) {
+TrueColorImage trueColorImageFromNativeHandle(PaintingHandle handle, int width = 0, int height = 0, int x = 0, int y = 0) {
 	TrueColorImage got;
 	version(X11) {
 		auto display = XDisplayConnection.get;
@@ -2152,13 +2156,13 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			if(nativeWindow)
 				display = XDisplayConnection.get(); // get initial display to not segfault
 		} else version(OSXCocoa) {
-			if(nativeWindow !is NativeWindowHandle.init) throw new NotYetImplementedException();
+			if(nativeWindow !is NullWindow) throw new NotYetImplementedException();
 		} else featureNotImplemented();
 		// FIXME: set the size correctly
 		_width = 1;
 		_height = 1;
 		if(nativeWindow)
-			nativeMapping[nativeWindow] = this;
+			nativeMapping[cast(void*) nativeWindow] = this;
 
 		beingOpenKeepsAppOpen = false;
 
@@ -2253,7 +2257,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				ClipCursor(&rcClip);
 			}
 		} else version(OSXCocoa) {
-			throw new NotYetImplementedException();
+			// throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2371,7 +2375,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			ReleaseCapture();
 			ClipCursor(null);
 		} else version(OSXCocoa) {
-			throw new NotYetImplementedException();
+			// throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2687,7 +2691,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			else
 				XMapWindow(impl.display, impl.window);
 		} else version(OSXCocoa) {
-			throw new NotYetImplementedException();
+			// throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -2845,13 +2849,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(OSXCocoa) {
 			// FIXME
 			if (handlePulse !is null && pulseTimeout != 0) {
-				timer = scheduledTimer(pulseTimeout*1e-3,
-					view, sel_registerName("simpledisplay_pulse"),
+				timer = NSTimer.schedule(pulseTimeout*1e-3,
+					cast(NSid) view, sel_registerName("simpledisplay_pulse:"),
 					null, true);
 			}
 
-            		setNeedsDisplay(view, true);
-            		run(NSApp);
+			view.setNeedsDisplay(true);
+
+			NSApp.run();
             		return 0;
         	} else {
 			EventLoop el = EventLoop(pulseTimeout, handlePulse);
@@ -2903,6 +2908,10 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 	// maps native window handles to SimpleWindow instances, if there are any
 	// you shouldn't need this, but it is public in case you do in a native event handler or something
+	// mac uses void* cuz NSObject opHash won't pick up in typeinfo
+	version(OSXCocoa)
+	public __gshared SimpleWindow[void*] nativeMapping;
+	else
 	public __gshared SimpleWindow[NativeWindowHandle] nativeMapping;
 
 	// the size the user requested in the constructor, in automatic scale modes it always pretends to be this size
@@ -3272,7 +3281,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	@property void cursor(MouseCursor cursor) {
 		version(OSXCocoa)
-			featureNotImplemented();
+			{} // featureNotImplemented();
 		else
 		if(this.impl.curHidden <= 0) {
 			static if(UsingSimpledisplayX11) {
@@ -3618,6 +3627,10 @@ private:
 		} else version(Windows) {
 			if (customEventH !is null) SetEvent(customEventH);
 			return true;
+		} else version(OSXCocoa) {
+			if(globalAppDelegate)
+				globalAppDelegate.performSelectorOnMainThread(sel_registerName("sdpyCustomEventWakeup:"), null, false);
+			return true;
 		} else {
 			// not implemented for other OSes
 			return false;
@@ -3825,6 +3838,11 @@ private:
 	}
 }
 
+version(OSXCocoa)
+	enum NSWindow NullWindow = null;
+else
+	enum NullWindow = NativeWindowHandle.init;
+
 /++
 	Magic pseudo-window for just posting events to a global queue.
 
@@ -3832,7 +3850,7 @@ private:
 
 	Added Nov 5, 2021.
 +/
-__gshared SimpleWindow justCommunication = new SimpleWindow(NativeWindowHandle.init);
+__gshared SimpleWindow justCommunication = new SimpleWindow(NullWindow);
 
 /* Drag and drop support { */
 version(X11) {
@@ -3968,7 +3986,10 @@ static struct GenericCursor {
 					case GenericCursorType.SizeWe: osId = 108 /* XC_sb_h_double_arrow */; break;
 				}
 
-			} else featureNotImplemented();
+			} else {
+				int osId;
+				// featureNotImplemented();
+			}
 
 			mc = new MouseCursor(osId);
 		}
@@ -5233,7 +5254,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 			if (!active) return;
 			if (i !is null) {
 				this.img = Image.fromMemoryImage(i, useAlpha, false);
-				this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
+				if(!useAlpha)
+					this.clippixmap = transparencyMaskFromMemoryImage(i, nativeHandle);
 				// writeln("using pixmap ", clippixmap);
 				updateNetWmIcon();
 				redraw();
@@ -5719,6 +5741,7 @@ class Timer {
 	} else version(linux) {
 		int fd = -1;
 		__gshared Timer[int] mapping;
+	} else version(OSXCocoa) {
 	} else static assert(0, "timer not supported");
 }
 }
@@ -8259,7 +8282,7 @@ class OperatingSystemFont : MeasurableFont {
 		int width_;
 		int height_;
 	} else version(OSXCocoa) {
-		// FIXME
+		NSFont font;
 	} else static assert(0);
 
 	/++
@@ -8577,6 +8600,16 @@ class OperatingSystemFont : MeasurableFont {
 		}
 	}
 
+	version(OSXCocoa)
+	private void prepareFontInfo() {
+		if(font !is null) {
+			isMonospace_ = font.isFixedPitch;
+			ascent_ = cast(int) font.ascender;
+			descent_ = cast(int) - font.descender;
+		}
+	}
+
+
 	/++
 		Loads a Windows font. You probably want to use [load] instead to be more generic.
 
@@ -8658,9 +8691,18 @@ class OperatingSystemFont : MeasurableFont {
 		} else version(Windows) {
 			return loadWin32(name, size, weight, italic);
 		} else version(OSXCocoa) {
-			// FIXME
-			return false;
+			return loadCocoa(name, size, weight, italic);
 		} else static assert(0);
+	}
+
+	version(OSXCocoa)
+	bool loadCocoa(string name, int size, FontWeight weight, bool italic) {
+		unload();
+
+		font = NSFont.fontWithName(MacString(name).borrow, size); // FIXME: weight and italic?
+		prepareFontInfo();
+
+		return !isNull();
 	}
 
 	private struct LoadedInfo {
@@ -8703,7 +8745,8 @@ class OperatingSystemFont : MeasurableFont {
 			DeleteObject(font);
 			font = null;
 		} else version(OSXCocoa) {
-			// FIXME
+			font.release();
+			font = null;
 		} else static assert(0);
 	}
 
@@ -8726,6 +8769,8 @@ class OperatingSystemFont : MeasurableFont {
 	+/
 	int averageWidth() {
 		version(X11) {
+			return stringWidth("x");
+		} version(OSXCocoa) {
 			return stringWidth("x");
 		} else version(Windows)
 			return width_;
@@ -8766,6 +8811,26 @@ class OperatingSystemFont : MeasurableFont {
 			WCharzBuffer buffer = WCharzBuffer(s);
 
 			return stringWidth(buffer.slice, window);
+		} else version(OSXCocoa) {
+			/+
+			int charCount = [string length];
+			CGGlyph glyphs[charCount];
+			CGRect rects[charCount];
+
+			CTFontGetGlyphsForCharacters(theCTFont, (const unichar*)[string cStringUsingEncoding:NSUnicodeStringEncoding], glyphs, charCount);
+			CTFontGetBoundingRectsForGlyphs(theCTFont, kCTFontDefaultOrientation, glyphs, rects, charCount);
+
+			int totalwidth = 0, maxheight = 0;
+			for (int i=0; i < charCount; i++)
+			{
+				totalwidth += rects[i].size.width;
+				maxheight = maxheight < rects[i].size.height ? rects[i].size.height : maxheight;
+			}
+
+			dim = CGSizeMake(totalwidth, maxheight);
+			+/
+
+			return 16; // FIXME
 		}
 		else assert(0);
 	}
@@ -8852,8 +8917,13 @@ class OperatingSystemFont : MeasurableFont {
 			if(font is null)
 				return 0;
 			return font.max_bounds.ascent + font.max_bounds.descent;
-		} else version(Windows)
+		} else version(Windows) {
 			return height_;
+		} else version(OSXCocoa) {
+			if(font is null)
+				return 0;
+			return cast(int) font.capHeight;
+		}
 		else assert(0);
 	}
 
@@ -8915,17 +8985,20 @@ class OperatingSystemFont : MeasurableFont {
 
 			prepareFontInfo();
 			return this;
+		} else version(OSXCocoa) {
+			this.font = NSFont.systemFontOfSize(12);
+
+			prepareFontInfo();
+			return this;
 		} else throw new NotYetImplementedException();
 	}
 
 	///
 	bool isNull() {
-		version(OSXCocoa) throw new NotYetImplementedException(); else {
-			version(with_xft)
-				if(isXft)
-					return xftFont is null;
-			return font is null;
-		}
+		version(with_xft)
+			if(isXft)
+				return xftFont is null;
+		return font is null;
 	}
 
 	/* Metrics */
@@ -8969,6 +9042,11 @@ private inout(char)[] sliceCString(inout(char)* s) {
 	return s[0 .. len];
 }
 
+version(OSXCocoa)
+	alias PaintingHandle = NSObject;
+else
+	alias PaintingHandle = NativeWindowHandle;
+
 /**
 	The 2D drawing proxy. You acquire one of these with [SimpleWindow.draw] rather
 	than constructing it directly. Then, it is reference counted so you can pass it
@@ -8982,7 +9060,7 @@ private inout(char)[] sliceCString(inout(char)* s) {
 */
 struct ScreenPainter {
 	CapableOfBeingDrawnUpon window;
-	this(CapableOfBeingDrawnUpon window, NativeWindowHandle handle, bool manualInvalidations) {
+	this(CapableOfBeingDrawnUpon window, PaintingHandle handle, bool manualInvalidations) {
 		this.window = window;
 		if(window.closed)
 			return; // null painter is now allowed so no need to throw anymore, this likely happens at the end of a program anyway
@@ -9239,7 +9317,6 @@ struct ScreenPainter {
 		History:
 			The `imageUpperLeft` and `sliceSize` parameters were added on March 11, 2021 (dub v9.3.0)
 	+/
-	version(OSXCocoa) {} else // NotYetImplementedException
 	void drawPixmap(Sprite s, Point upperLeft, Point imageUpperLeft = Point(0, 0), Size sliceSize = Size(0, 0)) {
 		if(impl is null) return;
 		if(isClipped(upperLeft, s.width, s.height)) return;
@@ -9517,7 +9594,6 @@ struct ScreenPainter {
 	Update: on April 23, 2021, I finally added alpha blending support. You must opt
 	in by setting the enableAlpha = true in the constructor.
 */
-version(OSXCocoa) {} else // NotYetImplementedException
 class Sprite : CapableOfBeingDrawnUpon {
 
 	///
@@ -9639,15 +9715,13 @@ class Sprite : CapableOfBeingDrawnUpon {
 			rawData[0..arrLength] = i.rawData[0..arrLength];
 		} else version(OSXCocoa) {
 			// FIXME: I have no idea if this is even any good
-			ubyte* rawData;
-
 			auto colorSpace = CGColorSpaceCreateDeviceRGB();
-			context = CGBitmapContextCreate(null, width, height, 8, 4*width,
+			handle = CGBitmapContextCreate(null, width, height, 8, 4*width,
 				colorSpace,
 				kCGImageAlphaPremultipliedLast
 				|kCGBitmapByteOrder32Big);
 			CGColorSpaceRelease(colorSpace);
-			rawData = CGBitmapContextGetData(context);
+			auto rawData = CGBitmapContextGetData(handle);
 
 			auto rdl = (width * height * 4);
 			rawData[0 .. rdl] = i.rawData[0 .. rdl];
@@ -9678,8 +9752,8 @@ class Sprite : CapableOfBeingDrawnUpon {
 			staticDispose(handle);
 			handle = null;
 		} else version(OSXCocoa) {
-			staticDispose(context);
-			context = null;
+			staticDispose(handle);
+			handle = null;
 		} else static assert(0);
 
 	}
@@ -9707,8 +9781,8 @@ class Sprite : CapableOfBeingDrawnUpon {
 			cleanupQueue.queue!staticDispose(xrenderPicture, handle);
 		} else version(Windows) { if(handle)
 			cleanupQueue.queue!staticDispose(handle);
-		} else version(OSXCocoa) { if(context)
-			cleanupQueue.queue!staticDispose(context);
+		} else version(OSXCocoa) { if(handle)
+			cleanupQueue.queue!staticDispose(handle);
 		} else static assert(0);
 	}
 
@@ -9737,7 +9811,7 @@ class Sprite : CapableOfBeingDrawnUpon {
 	else version(Windows)
 		HBITMAP handle;
 	else version(OSXCocoa)
-		CGContextRef context;
+		CGContextRef handle;
 	else static assert(0);
 }
 
@@ -10886,116 +10960,114 @@ version(X11) {
 	}
 
 } else version(OSXCocoa) {
-	// FIXME
 	enum Key {
-		Escape = 0x1b,
-		F1 = 0x70,
-		F2 = 0x71,
-		F3 = 0x72,
-		F4 = 0x73,
-		F5 = 0x74,
-		F6 = 0x75,
-		F7 = 0x76,
-		F8 = 0x77,
-		F9 = 0x78,
-		F10 = 0x79,
-		F11 = 0x7a,
-		F12 = 0x7b,
-		PrintScreen = 0x2c,
-		ScrollLock = -2, // FIXME
-		Pause = -3, // FIXME
-		Grave = 0xc0,
+		Escape = 53,
+		F1 = 122,
+		F2 = 120,
+		F3 = 99,
+		F4 = 118,
+		F5 = 96,
+		F6 = 97,
+		F7 = 98,
+		F8 = 100,
+		F9 = 101,
+		F10 = 109,
+		F11 = 103,
+		F12 = 111,
+		PrintScreen = 105,
+		ScrollLock = 107,
+		Pause = 113,
+		Grave = 50,
 		// number keys across the top of the keyboard
-		N1 = 0x31,
-		N2 = 0x32,
-		N3 = 0x33,
-		N4 = 0x34,
-		N5 = 0x35,
-		N6 = 0x36,
-		N7 = 0x37,
-		N8 = 0x38,
-		N9 = 0x39,
-		N0 = 0x30,
-		Dash = 0xbd,
-		Equals = 0xbb,
-		Backslash = 0xdc,
-		Backspace = 0x08,
-		Insert = 0x2d,
-		Home = 0x24,
-		PageUp = 0x21,
-		Delete = 0x2e,
-		End = 0x23,
-		PageDown = 0x22,
-		Up = 0x26,
-		Down = 0x28,
-		Left = 0x25,
-		Right = 0x27,
+		N1 = 18,
+		N2 = 19,
+		N3 = 20,
+		N4 = 21,
+		N5 = 23,
+		N6 = 22,
+		N7 = 26,
+		N8 = 28,
+		N9 = 25,
+		N0 = 29,
+		Dash = 27,
+		Equals = 24,
+		Backslash = 42,
+		Backspace = 51,
+		Insert = 114,
+		Home = 115,
+		PageUp = 116,
+		Delete = 117,
+		End = 119,
+		PageDown = 121,
+		Up = 126,
+		Down = 125,
+		Left = 123,
+		Right = 124,
 
-		Tab = 0x09,
-		Q = 0x51,
-		W = 0x57,
-		E = 0x45,
-		R = 0x52,
-		T = 0x54,
-		Y = 0x59,
-		U = 0x55,
-		I = 0x49,
-		O = 0x4f,
-		P = 0x50,
-		LeftBracket = 0xdb,
-		RightBracket = 0xdd,
-		CapsLock = 0x14,
-		A = 0x41,
-		S = 0x53,
-		D = 0x44,
-		F = 0x46,
-		G = 0x47,
-		H = 0x48,
-		J = 0x4a,
-		K = 0x4b,
-		L = 0x4c,
-		Semicolon = 0xba,
-		Apostrophe = 0xde,
-		Enter = 0x0d,
-		Shift = 0x10,
-		Z = 0x5a,
-		X = 0x58,
-		C = 0x43,
-		V = 0x56,
-		B = 0x42,
-		N = 0x4e,
-		M = 0x4d,
-		Comma = 0xbc,
-		Period = 0xbe,
-		Slash = 0xbf,
+		Tab = 48,
+		Q = 12,
+		W = 13,
+		E = 14,
+		R = 15,
+		T = 17,
+		Y = 16,
+		U = 32,
+		I = 34,
+		O = 31,
+		P = 35,
+		LeftBracket = 33,
+		RightBracket = 30,
+		CapsLock = 57,
+		A = 0,
+		S = 1,
+		D = 2,
+		F = 3,
+		G = 5,
+		H = 4,
+		J = 38,
+		K = 40,
+		L = 37,
+		Semicolon = 41,
+		Apostrophe = 39,
+		Enter = 36,
+		Shift = 56,
+		Z = 6,
+		X = 7,
+		C = 8,
+		V = 9,
+		B = 11,
+		N = 45,
+		M = 46,
+		Comma = 43,
+		Period = 47,
+		Slash = 44,
 		Shift_r = -4, // FIXME Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it
-		Ctrl = 0x11,
-		Windows = 0x5b,
-		Alt = -5, // FIXME
-		Space = 0x20,
-		Alt_r = 0xffea, // ditto of shift_r
-		Windows_r = -6, // FIXME
-		Menu = 0x5d,
-		Ctrl_r = -7, // FIXME
+		Ctrl = 59,
+		Windows = 55,
+		Alt = 58,
+		Space = 49,
+		Alt_r = -3, // ditto of shift_r
+		Windows_r = -2,
+		Menu = 110,
+		Ctrl_r = -1,
 
-		NumLock = 0x90,
-		Divide = 0x6f,
-		Multiply = 0x6a,
-		Minus = 0x6d,
-		Plus = 0x6b,
-		PadEnter = -8, // FIXME
-		// FIXME for the rest of these:
-		Pad1 = 0xff9c,
-		Pad2 = 0xff99,
-		Pad3 = 0xff9b,
-		Pad4 = 0xff96,
-		Pad5 = 0xff9d,
-		Pad6 = 0xff98,
-		Pad7 = 0xff95,
-		Pad8 = 0xff97,
-		Pad9 = 0xff9a,
-		Pad0 = 0xff9e,
-		PadDot = 0xff9f,
+		NumLock = 1,
+		Divide = 75,
+		Multiply = 67,
+		Minus = 78,
+		Plus = 69,
+		PadEnter = 76,
+		Pad1 = 83,
+		Pad2 = 84,
+		Pad3 = 85,
+		Pad4 = 86,
+		Pad5 = 87,
+		Pad6 = 88,
+		Pad7 = 89,
+		Pad8 = 91,
+		Pad9 = 92,
+		Pad0 = 82,
+		PadDot = 65,
 	}
 
 }
@@ -11202,7 +11274,7 @@ version(Windows) {
 		//HDC windowHdc;
 		HBITMAP oldBmp;
 
-		void create(NativeWindowHandle window) {
+		void create(PaintingHandle window) {
 			hwnd = window;
 
 			if(auto sw = cast(SimpleWindow) this.window) {
@@ -12529,7 +12601,7 @@ version(X11) {
 		XFontStruct* font;
 		XFontSet fontset;
 
-		void create(NativeWindowHandle window) {
+		void create(PaintingHandle window) {
 			this.display = XDisplayConnection.get();
 
 			Drawable buffer = None;
@@ -17654,44 +17726,257 @@ struct Visual
 
 }
 } else version (OSXCocoa) {
+
+/+
+	DON'T FORGET TO MARK THE CLASSES `extern`!! can cause "unrecognized selector sent to class" errors if you do.
++/
+
+	private __gshared AppDelegate globalAppDelegate;
+
+	extern(Objective-C)
+	class AppDelegate : NSObject, NSApplicationDelegate {
+		override static AppDelegate alloc() @selector("alloc");
+
+
+		void sdpyCustomEventWakeup(NSid arg) @selector("sdpyCustomEventWakeup:") {
+			SimpleWindow.processAllCustomEvents();
+		}
+
+		override void applicationWillFinishLaunching(NSNotification notification) @selector("applicationWillFinishLaunching:") {
+			immutable style = NSWindowStyleMask.resizable |
+				NSWindowStyleMask.closable |
+				NSWindowStyleMask.miniaturizable |
+				NSWindowStyleMask.titled;
+
+			NSMenu mainMenu = NSMenu.alloc.init(MacString("Main").borrow);
+
+			{
+				auto item = mainMenu.addItem(MacString("Test").borrow, null, MacString("").borrow);
+				auto menu = NSMenu.alloc.init(MacString("Test2").borrow);
+				mainMenu.setSubmenu(menu, item);
+
+				auto newItem = menu.addItem(MacString("Quit").borrow, sel_registerName("terminate:"), MacString("q").borrow);
+				newItem.target = NSApp;
+				auto newItem2 = menu.addItem(MacString("Disabled").borrow, sel_registerName("doesnotexist:"), MacString("x").borrow);
+				newItem2.target = NSApp;
+			}
+
+			{
+				auto item = mainMenu.addItem(MacString("Test3").borrow, null, MacString("").borrow);
+				auto menu = NSMenu.alloc.init(MacString("Test4").borrow); // this is the title actually used
+				mainMenu.setSubmenu(menu, item);
+
+				auto newItem = menu.addItem(MacString("Quit2").borrow, sel_registerName("stop:"), MacString("s").borrow);
+				menu.addItem(MacString("Pulse").borrow, sel_registerName("simpledisplay_pulse:"), MacString("p").borrow);
+			}
+
+
+			NSApp.menu = mainMenu;
+
+
+			// auto controller = ViewController.alloc.init;
+
+			// auto timer = NSTimer.schedule(1.0, cast(NSid) view, sel_registerName("simpledisplay_pulse:"), null, true);
+
+			/+
+			this.window = window;
+			this.controller = controller;
+			+/
+		}
+
+		override void applicationDidFinishLaunching(NSNotification notification) @selector("applicationDidFinishLaunching:") {
+			NSApplication.shared_.activateIgnoringOtherApps(true);
+		}
+		override bool applicationShouldTerminateAfterLastWindowClosed(NSNotification notification) @selector("applicationShouldTerminateAfterLastWindowClosed:") {
+			return true;
+		}
+	}
+
+	extern(Objective-C)
+	class SDWindowDelegate : NSObject, NSWindowDelegate {
+		override static SDWindowDelegate alloc() @selector("alloc");
+		override SDWindowDelegate init() @selector("init");
+
+		SimpleWindow simpleWindow;
+
+		override NSSize windowWillResize(NSWindow sender, NSSize frameSize) @selector("windowWillResize:toSize:") {
+			if(simpleWindow.windowResized) {
+				// FIXME: automaticallyScaleIfPossible behaviors
+
+				simpleWindow._width = cast(int) frameSize.width;
+				simpleWindow._height = cast(int) frameSize.height;
+
+				simpleWindow.view.setFrameSize(frameSize);
+
+				/+
+				auto size = simpleWindow.view.frame.size;
+				writeln(cast(int) size.width, "x", cast(int) size.height);
+				+/
+
+				simpleWindow.createNewDrawingContext(simpleWindow._width, simpleWindow._height);
+
+				simpleWindow.windowResized(simpleWindow._width, simpleWindow._height);
+
+				// simpleWindow.view.setNeedsDisplay(true);
+			}
+
+			return frameSize;
+		}
+
+		/+
+		override void windowDidResize(NSNotification notification) @selector("windowDidResize:") {
+			if(simpleWindow.windowResized) {
+				auto window = simpleWindow.window;
+				auto rect = window.contentRectForFrameRect(window.frame);
+				import std.stdio; writeln(window.frame.size);
+				simpleWindow.windowResized(cast(int) rect.size.width, cast(int) rect.size.height);
+			}
+		}
+		+/
+	}
+
+	extern(Objective-C)
+	class SDGraphicsView : NSView {
+		SimpleWindow simpleWindow;
+
+		override static SDGraphicsView alloc() @selector("alloc");
+		override SDGraphicsView init() @selector("init") {
+			super.init();
+			return this;
+		}
+
+		override void drawRect(NSRect rect) @selector("drawRect:") {
+			auto curCtx = NSGraphicsContext.currentContext.graphicsPort;
+			auto cgImage = CGBitmapContextCreateImage(simpleWindow.drawingContext);
+			auto size = CGSize(CGBitmapContextGetWidth(simpleWindow.drawingContext), CGBitmapContextGetHeight(simpleWindow.drawingContext));
+			CGContextDrawImage(curCtx, CGRect(CGPoint(0, 0), size), cgImage);
+			CGImageRelease(cgImage);
+		}
+
+		private void mouseHelper(NSEvent event, MouseEventType type, MouseButton button) {
+			MouseEvent me;
+			me.type = type;
+
+			auto pos = event.locationInWindow;
+
+			me.x = cast(int) pos.x;
+			me.y = cast(int) (simpleWindow.height - pos.y);
+
+			me.dx = 0; // FIXME
+			me.dy = 0; // FIXME
+
+			me.button = button;
+			me.modifierState = cast(uint) event.modifierFlags;
+			me.window = simpleWindow;
+
+			me.doubleClick = false;
+
+			if(simpleWindow && simpleWindow.handleMouseEvent)
+				simpleWindow.handleMouseEvent(me);
+		}
+
+		override void mouseDown(NSEvent event) @selector("mouseDown:") {
+			// writeln(event.pressedMouseButtons);
+
+			mouseHelper(event, MouseEventType.buttonPressed, MouseButton.left);
+		}
+		override void mouseDragged(NSEvent event) @selector("mouseDragged:") {
+			mouseHelper(event, MouseEventType.motion, MouseButton.left);
+		}
+		override void mouseUp(NSEvent event) @selector("mouseUp:") {
+			mouseHelper(event, MouseEventType.buttonReleased, MouseButton.left);
+		}
+		override void mouseMoved(NSEvent event) @selector("mouseMoved:") {
+			mouseHelper(event, MouseEventType.motion, MouseButton.left); // button wrong prolly
+		}
+		/+
+			// FIXME
+		override void mouseEntered(NSEvent event) @selector("mouseEntered:") {
+			mouseHelper(event, MouseEventType.buttonPressed, MouseButton.left);
+		}
+		override void mouseExited(NSEvent event) @selector("mouseExited:") {
+			mouseHelper(event, MouseEventType.buttonPressed, MouseButton.left);
+		}
+		+/
+
+		override void rightMouseDown(NSEvent event) @selector("rightMouseDown:") {
+			mouseHelper(event, MouseEventType.buttonPressed, MouseButton.right);
+		}
+		override void rightMouseDragged(NSEvent event) @selector("rightMouseDragged:") {
+			mouseHelper(event, MouseEventType.motion, MouseButton.right);
+		}
+		override void rightMouseUp(NSEvent event) @selector("rightMouseUp:") {
+			mouseHelper(event, MouseEventType.buttonReleased, MouseButton.right);
+		}
+
+		override void otherMouseDown(NSEvent event) @selector("otherMouseDown:") {
+			mouseHelper(event, MouseEventType.buttonPressed, MouseButton.middle);
+		}
+		override void otherMouseDragged(NSEvent event) @selector("otherMouseDragged:") {
+			mouseHelper(event, MouseEventType.motion, MouseButton.middle);
+		}
+		override void otherMouseUp(NSEvent event) @selector("otherMouseUp:") {
+			mouseHelper(event, MouseEventType.buttonReleased, MouseButton.middle);
+		}
+
+		override void scrollWheel(NSEvent event) @selector("scrollWheel:") {
+			import std.stdio;
+			writeln(event.deltaY);
+		}
+
+		override void keyDown(NSEvent event) @selector("keyDown:") {
+			// the event may have multiple characters, and we send them all at once.
+			if (simpleWindow.handleCharEvent) {
+				auto chars = DeifiedNSString(event.characters);
+				foreach (dchar dc; chars.str)
+					simpleWindow.handleCharEvent(dc);
+			}
+
+			keyHelper(event, true);
+		}
+
+		override void keyUp(NSEvent event) @selector("keyUp:") {
+			keyHelper(event, false);
+		}
+
+		private void keyHelper(NSEvent event, bool pressed) {
+			if(simpleWindow.handleKeyEvent) {
+				KeyEvent ev;
+				ev.key = cast(Key) event.keyCode;//  (event.specialKey ? event.specialKey : event.keyCode);
+				ev.pressed = pressed;
+				ev.hardwareCode = cast(ubyte) event.keyCode;
+				ev.modifierState = cast(uint) event.modifierFlags;
+				ev.window = simpleWindow;
+
+				simpleWindow.handleKeyEvent(ev);
+			}
+		}
+
+		override bool isFlipped() @selector("isFlipped") {
+			return true;
+		}
+		override bool acceptsFirstResponder() @selector("acceptsFirstResponder") {
+			return true;
+		}
+
+		void simpledisplay_pulse(NSTimer timer) @selector("simpledisplay_pulse:") {
+			if(simpleWindow && simpleWindow.handlePulse)
+				simpleWindow.handlePulse();
+			/+
+			setNeedsDisplay = true;
+			+/
+		}
+	}
+
 private:
-	alias void* id;
-	alias void* Class;
-	alias void* SEL;
-	alias void* IMP;
-	alias void* Ivar;
-	alias byte BOOL;
 	alias const(void)* CFStringRef;
 	alias const(void)* CFAllocatorRef;
 	alias const(void)* CFTypeRef;
-	alias const(void)* CGContextRef;
 	alias const(void)* CGColorSpaceRef;
 	alias const(void)* CGImageRef;
 	alias ulong CGBitmapInfo;
+	alias NSGraphicsContext CGContextRef;
 
-	struct objc_super {
-		id self;
-		Class superclass;
-	}
-
-	struct CFRange {
-		long location, length;
-	}
-
-	struct NSPoint {
-		double x, y;
-
-		static fromTuple(T)(T tupl) {
-			return NSPoint(tupl.tupleof);
-		}
-	}
-	struct NSSize {
-		double width, height;
-	}
-	struct NSRect {
-		NSPoint origin;
-		NSSize size;
-	}
 	alias NSPoint CGPoint;
 	alias NSSize CGSize;
 	alias NSRect CGRect;
@@ -17748,42 +18033,7 @@ private:
 	}
 
 	extern(C) {
-		id objc_msgSend(id receiver, SEL selector, ...);
-		id objc_msgSendSuper(objc_super* superStruct, SEL selector, ...);
-		id objc_getClass(const(char)* name);
-		SEL sel_registerName(const(char)* str);
-		Class objc_allocateClassPair(Class superclass, const(char)* name,
-									 size_t extra_bytes);
-		void objc_registerClassPair(Class cls);
-		BOOL class_addMethod(Class cls, SEL name, IMP imp, const(char)* types);
-		id objc_getAssociatedObject(id object, void* key);
-		void objc_setAssociatedObject(id object, void* key, id value,
-									  objc_AssociationPolicy policy);
-		Ivar class_getInstanceVariable(Class cls, const(char)* name);
-		id object_getIvar(id object, Ivar ivar);
-		void object_setIvar(id object, Ivar ivar, id value);
-		BOOL class_addIvar(Class cls, const(char)* name,
-						   size_t size, ubyte alignment, const(char)* types);
-
-		extern __gshared id NSApp;
-
-		void CFRelease(CFTypeRef obj);
-
-		CFStringRef CFStringCreateWithBytes(CFAllocatorRef allocator,
-											const(char)* bytes, long numBytes,
-											long encoding,
-											BOOL isExternalRepresentation);
-		long CFStringGetBytes(CFStringRef theString, CFRange range, long encoding,
-							 char lossByte, bool isExternalRepresentation,
-							 char* buffer, long maxBufLen, long* usedBufLen);
-		long CFStringGetLength(CFStringRef theString);
-
-		CGContextRef CGBitmapContextCreate(void* data,
-										   size_t width, size_t height,
-										   size_t bitsPerComponent,
-										   size_t bytesPerRow,
-										   CGColorSpaceRef colorspace,
-										   CGBitmapInfo bitmapInfo);
+		CGContextRef CGBitmapContextCreate(void* data, size_t width, size_t height, size_t bitsPerComponent, size_t bytesPerRow, CGColorSpaceRef colorspace, CGBitmapInfo bitmapInfo);
 		void CGContextRelease(CGContextRef c);
 		ubyte* CGBitmapContextGetData(CGContextRef c);
 		CGImageRef CGBitmapContextCreateImage(CGContextRef c);
@@ -17793,93 +18043,26 @@ private:
 		CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
 		void CGColorSpaceRelease(CGColorSpaceRef cs);
 
-		void CGContextSetRGBStrokeColor(CGContextRef c,
-										double red, double green, double blue,
-										double alpha);
-		void CGContextSetRGBFillColor(CGContextRef c,
-									  double red, double green, double blue,
-									  double alpha);
+		void CGContextSetRGBStrokeColor(CGContextRef c, double red, double green, double blue, double alpha);
+		void CGContextSetRGBFillColor(CGContextRef c, double red, double green, double blue, double alpha);
 		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
-		void CGContextShowTextAtPoint(CGContextRef c, double x, double y,
-									  const(char)* str, size_t length);
-		void CGContextStrokeLineSegments(CGContextRef c,
-										 const(CGPoint)* points, size_t count);
+		void CGContextShowTextAtPoint(CGContextRef c, double x, double y, const(char)* str, size_t length);
+		void CGContextStrokeLineSegments(CGContextRef c, const(CGPoint)* points, size_t count);
 
 		void CGContextBeginPath(CGContextRef c);
 		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
 		void CGContextAddEllipseInRect(CGContextRef c, CGRect rect);
-		void CGContextAddArc(CGContextRef c, double x, double y, double radius,
-							 double startAngle, double endAngle, long clockwise);
+		void CGContextAddArc(CGContextRef c, double x, double y, double radius, double startAngle, double endAngle, long clockwise);
 		void CGContextAddRect(CGContextRef c, CGRect rect);
-		void CGContextAddLines(CGContextRef c,
-							   const(CGPoint)* points, size_t count);
+		void CGContextAddLines(CGContextRef c, const(CGPoint)* points, size_t count);
 		void CGContextSaveGState(CGContextRef c);
 		void CGContextRestoreGState(CGContextRef c);
-		void CGContextSelectFont(CGContextRef c, const(char)* name, double size,
-								 ulong textEncoding);
+		void CGContextSelectFont(CGContextRef c, const(char)* name, double size, ulong textEncoding);
 		CGAffineTransform CGContextGetTextMatrix(CGContextRef c);
 		void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
 
 		void CGImageRelease(CGImageRef image);
 	}
-
-private:
-    // A convenient method to create a CFString (=NSString) from a D string.
-    CFStringRef createCFString(string str) {
-        return CFStringCreateWithBytes(null, str.ptr, cast(long) str.length,
-                                             kCFStringEncodingUTF8, false);
-    }
-
-    // Objective-C calls.
-    RetType objc_msgSend_specialized(string selector, RetType, T...)(id self, T args) {
-        auto _cmd = sel_registerName(selector.ptr);
-        alias extern(C) RetType function(id, SEL, T) ExpectedType;
-        return (cast(ExpectedType)&objc_msgSend)(self, _cmd, args);
-    }
-    RetType objc_msgSend_classMethod(string selector, RetType, T...)(const(char)* className, T args) {
-        auto _cmd = sel_registerName(selector.ptr);
-        auto cls = objc_getClass(className);
-        alias extern(C) RetType function(id, SEL, T) ExpectedType;
-        return (cast(ExpectedType)&objc_msgSend)(cls, _cmd, args);
-    }
-    RetType objc_msgSend_classMethod(string className, string selector, RetType, T...)(T args) {
-        return objc_msgSend_classMethod!(selector, RetType, T)(className.ptr, args);
-    }
-
-    alias objc_msgSend_specialized!("setNeedsDisplay:", void, BOOL) setNeedsDisplay;
-    alias objc_msgSend_classMethod!("alloc", id) alloc;
-    alias objc_msgSend_specialized!("initWithContentRect:styleMask:backing:defer:",
-                                    id, NSRect, size_t, size_t, BOOL) initWithContentRect;
-    alias objc_msgSend_specialized!("setTitle:", void, CFStringRef) setTitle;
-    alias objc_msgSend_specialized!("center", void) center;
-    alias objc_msgSend_specialized!("initWithFrame:", id, NSRect) initWithFrame;
-    alias objc_msgSend_specialized!("setContentView:", void, id) setContentView;
-    alias objc_msgSend_specialized!("release", void) release;
-    alias objc_msgSend_classMethod!("NSColor", "whiteColor", id) whiteNSColor;
-    alias objc_msgSend_specialized!("setBackgroundColor:", void, id) setBackgroundColor;
-    alias objc_msgSend_specialized!("makeKeyAndOrderFront:", void, id) makeKeyAndOrderFront;
-    alias objc_msgSend_specialized!("invalidate", void) invalidate;
-    alias objc_msgSend_specialized!("close", void) close;
-    alias objc_msgSend_classMethod!("NSTimer", "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:",
-                                    id, double, id, SEL, id, BOOL) scheduledTimer;
-    alias objc_msgSend_specialized!("run", void) run;
-    alias objc_msgSend_classMethod!("NSGraphicsContext", "currentContext",
-                                    id) currentNSGraphicsContext;
-    alias objc_msgSend_specialized!("graphicsPort", CGContextRef) graphicsPort;
-    alias objc_msgSend_specialized!("characters", CFStringRef) characters;
-    alias objc_msgSend_specialized!("superclass", Class) superclass;
-    alias objc_msgSend_specialized!("init", id) init;
-    alias objc_msgSend_specialized!("addItem:", void, id) addItem;
-    alias objc_msgSend_specialized!("setMainMenu:", void, id) setMainMenu;
-    alias objc_msgSend_specialized!("initWithTitle:action:keyEquivalent:",
-                                    id, CFStringRef, SEL, CFStringRef) initWithTitle;
-    alias objc_msgSend_specialized!("setSubmenu:", void, id) setSubmenu;
-    alias objc_msgSend_specialized!("setDelegate:", void, id) setDelegate;
-    alias objc_msgSend_specialized!("activateIgnoringOtherApps:",
-                                    void, BOOL) activateIgnoringOtherApps;
-    alias objc_msgSend_classMethod!("NSApplication", "sharedApplication",
-                                    id) sharedNSApplication;
-    alias objc_msgSend_specialized!("setActivationPolicy:", void, ptrdiff_t) setActivationPolicy;
 } else static assert(0, "Unsupported operating system");
 
 
@@ -17892,420 +18075,336 @@ version(OSXCocoa) {
 	// and it is about time I merged it in here. It is available with -version=OSXCocoa until someone tests it for me!
 	// Probably won't even fully compile right now
 
-    import std.math : PI; // OSX Only
-    import std.algorithm : map; // OSX Only
-    import std.array : array; // OSX Only
+	private enum double PI = 3.14159265358979323;
 
-    alias SimpleWindow NativeWindowHandle;
-    alias void delegate(id) NativeEventHandler;
+	alias NSWindow NativeWindowHandle;
+	alias void delegate(NSid) NativeEventHandler;
 
-    __gshared Ivar simpleWindowIvar;
+	enum KEY_ESCAPE = 27;
 
-    enum KEY_ESCAPE = 27;
+	mixin template NativeImageImplementation() {
+		CGContextRef context;
+		ubyte* rawData;
 
-    mixin template NativeImageImplementation() {
-        CGContextRef context;
-        ubyte* rawData;
-    final:
+		final:
 
-	void convertToRgbaBytes(ubyte[] where) {
-		assert(where.length == this.width * this.height * 4);
+		void convertToRgbaBytes(ubyte[] where) {
+			assert(where.length == this.width * this.height * 4);
 
-		// if rawData had a length....
-		//assert(rawData.length == where.length);
-		for(long idx = 0; idx < where.length; idx += 4) {
-			auto alpha = rawData[idx + 3];
-			if(alpha == 255) {
-				where[idx + 0] = rawData[idx + 0]; // r
-				where[idx + 1] = rawData[idx + 1]; // g
-				where[idx + 2] = rawData[idx + 2]; // b
-				where[idx + 3] = rawData[idx + 3]; // a
+			// if rawData had a length....
+			//assert(rawData.length == where.length);
+			for(long idx = 0; idx < where.length; idx += 4) {
+				auto alpha = rawData[idx + 3];
+				if(alpha == 255) {
+					where[idx + 0] = rawData[idx + 0]; // r
+					where[idx + 1] = rawData[idx + 1]; // g
+					where[idx + 2] = rawData[idx + 2]; // b
+					where[idx + 3] = rawData[idx + 3]; // a
+				} else {
+					where[idx + 0] = cast(ubyte)(rawData[idx + 0] * 255 / alpha); // r
+					where[idx + 1] = cast(ubyte)(rawData[idx + 1] * 255 / alpha); // g
+					where[idx + 2] = cast(ubyte)(rawData[idx + 2] * 255 / alpha); // b
+					where[idx + 3] = rawData[idx + 3]; // a
+
+				}
+			}
+		}
+
+		void setFromRgbaBytes(in ubyte[] where) {
+			// FIXME: this is probably wrong
+			assert(where.length == this.width * this.height * 4);
+
+			// if rawData had a length....
+			//assert(rawData.length == where.length);
+			for(long idx = 0; idx < where.length; idx += 4) {
+				auto alpha = where[idx + 3];
+				if(alpha == 255) {
+					rawData[idx + 0] = where[idx + 0]; // r
+					rawData[idx + 1] = where[idx + 1]; // g
+					rawData[idx + 2] = where[idx + 2]; // b
+					rawData[idx + 3] = where[idx + 3]; // a
+				} else if(alpha == 0) {
+					rawData[idx + 0] = 0;
+					rawData[idx + 1] = 0;
+					rawData[idx + 2] = 0;
+					rawData[idx + 3] = 0;
+				} else {
+					rawData[idx + 0] = cast(ubyte)(where[idx + 0] * 255 / alpha); // r
+					rawData[idx + 1] = cast(ubyte)(where[idx + 1] * 255 / alpha); // g
+					rawData[idx + 2] = cast(ubyte)(where[idx + 2] * 255 / alpha); // b
+					rawData[idx + 3] = where[idx + 3]; // a
+				}
+			}
+		}
+
+
+		void createImage(int width, int height, bool forcexshm=false, bool ignored = false) {
+			auto colorSpace = CGColorSpaceCreateDeviceRGB();
+			context = CGBitmapContextCreate(null, width, height, 8, 4*width, colorSpace, kCGImageAlphaPremultipliedLast |kCGBitmapByteOrder32Big);
+			CGColorSpaceRelease(colorSpace);
+			rawData = CGBitmapContextGetData(context);
+		}
+		void dispose() {
+			CGContextRelease(context);
+		}
+
+		void setPixel(int x, int y, Color c) {
+			auto offset = (y * width + x) * 4;
+			if (c.a == 255) {
+				rawData[offset + 0] = c.r;
+				rawData[offset + 1] = c.g;
+				rawData[offset + 2] = c.b;
+				rawData[offset + 3] = c.a;
 			} else {
-				where[idx + 0] = cast(ubyte)(rawData[idx + 0] * 255 / alpha); // r
-				where[idx + 1] = cast(ubyte)(rawData[idx + 1] * 255 / alpha); // g
-				where[idx + 2] = cast(ubyte)(rawData[idx + 2] * 255 / alpha); // b
-				where[idx + 3] = rawData[idx + 3]; // a
-
+				rawData[offset + 0] = cast(ubyte)(c.r*c.a/255);
+				rawData[offset + 1] = cast(ubyte)(c.g*c.a/255);
+				rawData[offset + 2] = cast(ubyte)(c.b*c.a/255);
+				rawData[offset + 3] = c.a;
 			}
 		}
 	}
 
-	void setFromRgbaBytes(in ubyte[] where) {
-		// FIXME: this is probably wrong
-		assert(where.length == this.width * this.height * 4);
+	mixin template NativeScreenPainterImplementation() {
+		CGContextRef context;
+		ubyte[4] _outlineComponents;
+		NSView view;
 
-		// if rawData had a length....
-		//assert(rawData.length == where.length);
-		for(long idx = 0; idx < where.length; idx += 4) {
-			auto alpha = rawData[idx + 3];
-			if(alpha == 255) {
-				rawData[idx + 0] = where[idx + 0]; // r
-				rawData[idx + 1] = where[idx + 1]; // g
-				rawData[idx + 2] = where[idx + 2]; // b
-				rawData[idx + 3] = where[idx + 3]; // a
+		void create(PaintingHandle window) {
+			// this.destiny = window;
+			if(auto sw = cast(SimpleWindow) this.window) {
+				context = sw.drawingContext;
+				view = sw.view;
 			} else {
-				rawData[idx + 0] = cast(ubyte)(where[idx + 0] * 255 / alpha); // r
-				rawData[idx + 1] = cast(ubyte)(where[idx + 1] * 255 / alpha); // g
-				rawData[idx + 2] = cast(ubyte)(where[idx + 2] * 255 / alpha); // b
-				rawData[idx + 3] = where[idx + 3]; // a
-
+				throw new NotYetImplementedException();
 			}
 		}
-	}
 
+		void dispose() {
+			view.setNeedsDisplay(true);
+		}
 
-        void createImage(int width, int height, bool forcexshm=false, bool ignored = false) {
-            auto colorSpace = CGColorSpaceCreateDeviceRGB();
-            context = CGBitmapContextCreate(null, width, height, 8, 4*width,
-                                            colorSpace,
-                                            kCGImageAlphaPremultipliedLast
-                                                   |kCGBitmapByteOrder32Big);
-            CGColorSpaceRelease(colorSpace);
-            rawData = CGBitmapContextGetData(context);
-        }
-        void dispose() {
-            CGContextRelease(context);
-        }
+		bool manualInvalidations;
+		void invalidateRect(Rectangle invalidRect) { }
 
-        void setPixel(int x, int y, Color c) {
-            auto offset = (y * width + x) * 4;
-            if (c.a == 255) {
-                rawData[offset + 0] = c.r;
-                rawData[offset + 1] = c.g;
-                rawData[offset + 2] = c.b;
-                rawData[offset + 3] = c.a;
-            } else {
-                rawData[offset + 0] = cast(ubyte)(c.r*c.a/255);
-                rawData[offset + 1] = cast(ubyte)(c.g*c.a/255);
-                rawData[offset + 2] = cast(ubyte)(c.b*c.a/255);
-                rawData[offset + 3] = c.a;
-            }
-        }
-    }
+		// NotYetImplementedException
+		Size textSize(in char[] txt) { return Size(32, 16); /*throw new NotYetImplementedException();*/ }
+		void rasterOp(RasterOp op) {}
+		Pen _activePen;
+		Color _fillColor;
+		Rectangle _clipRectangle;
+		void setClipRectangle(int, int, int, int) {}
+		void setFont(OperatingSystemFont) {}
+		int fontHeight() { return 14; }
 
-    mixin template NativeScreenPainterImplementation() {
-        CGContextRef context;
-        ubyte[4] _outlineComponents;
-	id view;
+		// end
 
-        void create(NativeWindowHandle window) {
-            context = window.drawingContext;
-	    view = window.view;
-        }
+		void pen(Pen pen) {
+			_activePen = pen;
+			auto color = pen.color; // FIXME
+			double alphaComponent = color.a/255.0f;
+			CGContextSetRGBStrokeColor(context,
+									   color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
 
-        void dispose() {
-            	setNeedsDisplay(view, true);
-        }
+			if (color.a != 255) {
+				_outlineComponents[0] = cast(ubyte)(color.r*color.a/255);
+				_outlineComponents[1] = cast(ubyte)(color.g*color.a/255);
+				_outlineComponents[2] = cast(ubyte)(color.b*color.a/255);
+				_outlineComponents[3] = color.a;
+			} else {
+				_outlineComponents[0] = color.r;
+				_outlineComponents[1] = color.g;
+				_outlineComponents[2] = color.b;
+				_outlineComponents[3] = color.a;
+			}
+		}
 
-	bool manualInvalidations;
-	void invalidateRect(Rectangle invalidRect) { }
+		@property void fillColor(Color color) {
+			CGContextSetRGBFillColor(context,
+									 color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
+		}
 
-	// NotYetImplementedException
-	Size textSize(in char[] txt) { return Size(32, 16); /*throw new NotYetImplementedException();*/ }
-	void rasterOp(RasterOp op) {}
-	Pen _activePen;
-	Color _fillColor;
-	Rectangle _clipRectangle;
-	void setClipRectangle(int, int, int, int) {}
-	void setFont(OperatingSystemFont) {}
-	int fontHeight() { return 14; }
-
-	// end
-
-        void pen(Pen pen) {
-	    _activePen = pen;
-	    auto color = pen.color; // FIXME
-            double alphaComponent = color.a/255.0f;
-            CGContextSetRGBStrokeColor(context,
-                                       color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
-
-            if (color.a != 255) {
-                _outlineComponents[0] = cast(ubyte)(color.r*color.a/255);
-                _outlineComponents[1] = cast(ubyte)(color.g*color.a/255);
-                _outlineComponents[2] = cast(ubyte)(color.b*color.a/255);
-                _outlineComponents[3] = color.a;
-            } else {
-                _outlineComponents[0] = color.r;
-                _outlineComponents[1] = color.g;
-                _outlineComponents[2] = color.b;
-                _outlineComponents[3] = color.a;
-            }
-        }
-
-        @property void fillColor(Color color) {
-            CGContextSetRGBFillColor(context,
-                                     color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
-        }
-
-        void drawImage(int x, int y, Image image, int ulx, int upy, int width, int height) {
+		void drawImage(int x, int y, Image image, int ulx, int upy, int width, int height) {
 		// NotYetImplementedException for upper left/width/height
-            auto cgImage = CGBitmapContextCreateImage(image.context);
-            auto size = CGSize(CGBitmapContextGetWidth(image.context),
-                               CGBitmapContextGetHeight(image.context));
-            CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
-            CGImageRelease(cgImage);
-        }
+			auto cgImage = CGBitmapContextCreateImage(image.context);
+			auto size = CGSize(CGBitmapContextGetWidth(image.context), CGBitmapContextGetHeight(image.context));
+			CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
+			CGImageRelease(cgImage);
+		}
 
-	version(OSXCocoa) {} else // NotYetImplementedException
-        void drawPixmap(Sprite image, int x, int y) {
+		void drawPixmap(Sprite s, int x, int y, int ix, int iy, int w, int h) {
 		// FIXME: is this efficient?
-            auto cgImage = CGBitmapContextCreateImage(image.context);
-            auto size = CGSize(CGBitmapContextGetWidth(image.context),
-                               CGBitmapContextGetHeight(image.context));
-            CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
-            CGImageRelease(cgImage);
-        }
+			auto cgImage = CGBitmapContextCreateImage(s.handle);
+			auto size = CGSize(CGBitmapContextGetWidth(s.handle), CGBitmapContextGetHeight(s.handle));
+			CGContextDrawImage(context, CGRect(CGPoint(x, y), size), cgImage);
+			CGImageRelease(cgImage);
+		}
 
 
-        void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
+		void drawText(int x, int y, int x2, int y2, in char[] text, uint alignment) {
 		// FIXME: alignment
-            if (_outlineComponents[3] != 0) {
-                CGContextSaveGState(context);
-                auto invAlpha = 1.0f/_outlineComponents[3];
-                CGContextSetRGBFillColor(context, _outlineComponents[0]*invAlpha,
-                                                  _outlineComponents[1]*invAlpha,
-                                                  _outlineComponents[2]*invAlpha,
-                                                  _outlineComponents[3]/255.0f);
-                CGContextShowTextAtPoint(context, x, y + 12 /* this is cuz this picks baseline but i want bounding box */, text.ptr, text.length);
-// auto cfstr = cast(id)createCFString(text);
+			if (_outlineComponents[3] != 0) {
+				CGContextSaveGState(context);
+				auto invAlpha = 1.0f/_outlineComponents[3];
+				CGContextSetRGBFillColor(context, _outlineComponents[0]*invAlpha,
+												  _outlineComponents[1]*invAlpha,
+												  _outlineComponents[2]*invAlpha,
+												  _outlineComponents[3]/255.0f);
+				CGContextShowTextAtPoint(context, x, y + 12 /* this is cuz this picks baseline but i want bounding box */, text.ptr, text.length);
+// auto cfstr = cast(NSid)createCFString(text);
 // objc_msgSend(cfstr, sel_registerName("drawAtPoint:withAttributes:"),
 // NSPoint(x, y), null);
 // CFRelease(cfstr);
-                CGContextRestoreGState(context);
-            }
-        }
+				CGContextRestoreGState(context);
+			}
+		}
 
-        void drawPixel(int x, int y) {
-            auto rawData = CGBitmapContextGetData(context);
-            auto width = CGBitmapContextGetWidth(context);
-            auto height = CGBitmapContextGetHeight(context);
-            auto offset = ((height - y - 1) * width + x) * 4;
-            rawData[offset .. offset+4] = _outlineComponents;
-        }
+		void drawPixel(int x, int y) {
+			auto rawData = CGBitmapContextGetData(context);
+			auto width = CGBitmapContextGetWidth(context);
+			auto height = CGBitmapContextGetHeight(context);
+			auto offset = ((height - y - 1) * width + x) * 4;
+			rawData[offset .. offset+4] = _outlineComponents;
+		}
 
-        void drawLine(int x1, int y1, int x2, int y2) {
-            CGPoint[2] linePoints;
-            linePoints[0] = CGPoint(x1, y1);
-            linePoints[1] = CGPoint(x2, y2);
-            CGContextStrokeLineSegments(context, linePoints.ptr, linePoints.length);
-        }
+		void drawLine(int x1, int y1, int x2, int y2) {
+			CGPoint[2] linePoints;
+			linePoints[0] = CGPoint(x1, y1);
+			linePoints[1] = CGPoint(x2, y2);
+			CGContextStrokeLineSegments(context, linePoints.ptr, linePoints.length);
+		}
 
-        void drawRectangle(int x, int y, int width, int height) {
-            CGContextBeginPath(context);
-            auto rect = CGRect(CGPoint(x, y), CGSize(width, height));
-            CGContextAddRect(context, rect);
-            CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
-        }
+		void drawRectangle(int x, int y, int width, int height) {
+			CGContextBeginPath(context);
+			auto rect = CGRect(CGPoint(x, y), CGSize(width, height));
+			CGContextAddRect(context, rect);
+			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
+		}
 
-        void drawEllipse(int x1, int y1, int x2, int y2) {
-            CGContextBeginPath(context);
-            auto rect = CGRect(CGPoint(x1, y1), CGSize(x2-x1, y2-y1));
-            CGContextAddEllipseInRect(context, rect);
-            CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
-        }
+		void drawEllipse(int x1, int y1, int x2, int y2) {
+			CGContextBeginPath(context);
+			auto rect = CGRect(CGPoint(x1, y1), CGSize(x2-x1, y2-y1));
+			CGContextAddEllipseInRect(context, rect);
+			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
+		}
 
-        void drawArc(int x1, int y1, int width, int height, int start, int finish) {
-            // @@@BUG@@@ Does not support elliptic arc (width != height).
-            CGContextBeginPath(context);
-            CGContextAddArc(context, x1+width*0.5f, y1+height*0.5f, width,
-                            start*PI/(180*64), finish*PI/(180*64), 0);
-            CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
-        }
+		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
+			// @@@BUG@@@ Does not support elliptic arc (width != height).
+			CGContextBeginPath(context);
+			CGContextAddArc(context, x1+width*0.5f, y1+height*0.5f, width,
+							start*PI/(180*64), finish*PI/(180*64), 0);
+			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
+		}
 
-        void drawPolygon(Point[] intPoints) {
-            CGContextBeginPath(context);
-            auto points = array(map!(CGPoint.fromTuple)(intPoints));
-            CGContextAddLines(context, points.ptr, points.length);
-            CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
-        }
-    }
+		void drawPolygon(Point[] intPoints) {
+			CGContextBeginPath(context);
+			CGPoint[16] pointsBuffer;
+			CGPoint[] points;
+			if(intPoints.length <= pointsBuffer.length)
+				points = pointsBuffer[0 .. intPoints.length];
+			else
+				points = new CGPoint[](intPoints.length);
 
-    mixin template NativeSimpleWindowImplementation() {
-        void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
-            synchronized {
-                if (NSApp == null) initializeApp();
-            }
+			foreach(idx, pt; intPoints)
+				points[idx] = CGPoint(pt.x, pt.y);
 
-            auto contentRect = NSRect(NSPoint(0, 0), NSSize(width, height));
-
-            // create the window.
-            window = initWithContentRect(alloc("NSWindow"),
-                                         contentRect,
-                                         NSTitledWindowMask
-                                            |NSClosableWindowMask
-                                            |NSMiniaturizableWindowMask
-                                            |NSResizableWindowMask,
-                                         NSBackingStoreBuffered,
-                                         true);
-
-            // set the title & move the window to center.
-            auto windowTitle = createCFString(title);
-            setTitle(window, windowTitle);
-            CFRelease(windowTitle);
-            center(window);
-
-            // create area to draw on.
-            auto colorSpace = CGColorSpaceCreateDeviceRGB();
-            drawingContext = CGBitmapContextCreate(null, width, height,
-                                                   8, 4*width, colorSpace,
-                                                   kCGImageAlphaPremultipliedLast
-                                                      |kCGBitmapByteOrder32Big);
-            CGColorSpaceRelease(colorSpace);
-            CGContextSelectFont(drawingContext, "Lucida Grande", 12.0f, 1);
-            auto matrix = CGContextGetTextMatrix(drawingContext);
-            matrix.c = -matrix.c;
-            matrix.d = -matrix.d;
-            CGContextSetTextMatrix(drawingContext, matrix);
-
-            // create the subview that things will be drawn on.
-            view = initWithFrame(alloc("SDGraphicsView"), contentRect);
-            setContentView(window, view);
-            object_setIvar(view, simpleWindowIvar, cast(id)this);
-            release(view);
-
-            setBackgroundColor(window, whiteNSColor);
-            makeKeyAndOrderFront(window, null);
-        }
-        void dispose() {
-            closeWindow();
-            release(window);
-        }
-        void closeWindow() {
-            invalidate(timer);
-            .close(window);
-        }
-
-        ScreenPainter getPainter(bool manualInvalidations) {
-		return ScreenPainter(this, this, manualInvalidations);
+			CGContextAddLines(context, points.ptr, points.length);
+			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
+		}
 	}
 
-        id window;
-        id timer;
-        id view;
-        CGContextRef drawingContext;
-    }
+	private bool appInitialized = false;
+	void initializeApp() {
+		if(appInitialized)
+			return;
+		synchronized {
+			if(appInitialized)
+				return;
 
-    extern(C) {
-    private:
-        BOOL returnTrue3(id self, SEL _cmd, id app) {
-            return true;
-        }
-        BOOL returnTrue2(id self, SEL _cmd) {
-            return true;
-        }
+			auto app = NSApp(); // ensure the is initialized
 
-        void pulse(id self, SEL _cmd) {
-            auto simpleWindow = cast(SimpleWindow)object_getIvar(self, simpleWindowIvar);
-            simpleWindow.handlePulse();
-            setNeedsDisplay(self, true);
-        }
-        void drawRect(id self, SEL _cmd, NSRect rect) {
-            auto simpleWindow = cast(SimpleWindow)object_getIvar(self, simpleWindowIvar);
-            auto curCtx = graphicsPort(currentNSGraphicsContext);
-            auto cgImage = CGBitmapContextCreateImage(simpleWindow.drawingContext);
-            auto size = CGSize(CGBitmapContextGetWidth(simpleWindow.drawingContext),
-                               CGBitmapContextGetHeight(simpleWindow.drawingContext));
-            CGContextDrawImage(curCtx, CGRect(CGPoint(0, 0), size), cgImage);
-            CGImageRelease(cgImage);
-        }
-        void keyDown(id self, SEL _cmd, id event) {
-            auto simpleWindow = cast(SimpleWindow)object_getIvar(self, simpleWindowIvar);
+			auto dg = AppDelegate.alloc;
+			globalAppDelegate = dg;
+			NSApp.delegate_ = dg;
 
-            // the event may have multiple characters, and we send them all at
-            // once.
-            if (simpleWindow.handleCharEvent || simpleWindow.handleKeyEvent) {
-                auto chars = characters(event);
-                auto range = CFRange(0, CFStringGetLength(chars));
-                auto buffer = new char[range.length*3];
-                long actualLength;
-                CFStringGetBytes(chars, range, kCFStringEncodingUTF8, 0, false,
-                                 buffer.ptr, cast(int) buffer.length, &actualLength);
-                foreach (dchar dc; buffer[0..actualLength]) {
-                    if (simpleWindow.handleCharEvent)
-                        simpleWindow.handleCharEvent(dc);
-		    // NotYetImplementedException
-                    //if (simpleWindow.handleKeyEvent)
-                        //simpleWindow.handleKeyEvent(KeyEvent(dc)); // FIXME: what about keyUp?
-                }
-            }
+			NSApp.setActivationPolicy(NSApplicationActivationPolicy.regular);
 
-            // the event's 'keyCode' is hardware-dependent. I don't think people
-            // will like it. Let's leave it to the native handler.
+			appInitialized = true;
+		}
+	}
 
-            // perform the default action.
+	mixin template NativeSimpleWindowImplementation() {
+		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
+			initializeApp();
 
-	    // so the default action is to make a bomp sound and i dont want that
-	    // sooooooooo yeah not gonna do that.
+			auto contentRect = NSRect(NSPoint(0, 0), NSSize(width, height));
 
-            //auto superData = objc_super(self, superclass(self));
-            //alias extern(C) void function(objc_super*, SEL, id) T;
-            //(cast(T)&objc_msgSendSuper)(&superData, _cmd, event);
-        }
-    }
+			auto window = NSWindow.alloc.initWithContentRect(
+				contentRect,
+				NSWindowStyleMask.resizable | NSWindowStyleMask.closable | NSWindowStyleMask.miniaturizable | NSWindowStyleMask.titled,
+				NSBackingStoreType.buffered,
+				true
+			);
 
-    // initialize the app so that it can be interacted with the user.
-    // based on http://cocoawithlove.com/2010/09/minimalist-cocoa-programming.html
-    private void initializeApp() {
-        // push an autorelease pool to avoid leaking.
-        init(alloc("NSAutoreleasePool"));
+			SimpleWindow.nativeMapping[cast(void*) window] = this;
 
-        // create a new NSApp instance
-        sharedNSApplication;
-        setActivationPolicy(NSApp, NSApplicationActivationPolicyRegular);
+			window.title = MacString(title).borrow;
 
-        // create the "Quit" menu.
-        auto menuBar = init(alloc("NSMenu"));
-        auto appMenuItem = init(alloc("NSMenuItem"));
-        addItem(menuBar, appMenuItem);
-        setMainMenu(NSApp, menuBar);
-        release(appMenuItem);
-        release(menuBar);
+			auto dg = SDWindowDelegate.alloc.init;
+			dg.simpleWindow = this;
+			window.delegate_ = dg;
 
-        auto appMenu = init(alloc("NSMenu"));
-        auto quitTitle = createCFString("Quit");
-        auto q = createCFString("q");
-        auto quitItem = initWithTitle(alloc("NSMenuItem"),
-                                      quitTitle, sel_registerName("terminate:"), q);
-        addItem(appMenu, quitItem);
-        setSubmenu(appMenuItem, appMenu);
-        release(quitItem);
-        release(appMenu);
-        CFRelease(q);
-        CFRelease(quitTitle);
+			auto view = SDGraphicsView.alloc.init;
+			assert(view !is null);
+			window.contentView = view;
+			this.view = view;
+			view.simpleWindow = this;
 
-        // assign a delegate for the application, allow it to quit when the last
-        // window is closed.
-        auto delegateClass = objc_allocateClassPair(objc_getClass("NSObject"),
-                                                    "SDWindowCloseDelegate", 0);
-        class_addMethod(delegateClass,
-                        sel_registerName("applicationShouldTerminateAfterLastWindowClosed:"),
-                        &returnTrue3, "c@:@");
-        objc_registerClassPair(delegateClass);
+			window.center();
 
-        auto appDelegate = init(alloc("SDWindowCloseDelegate"));
-        setDelegate(NSApp, appDelegate);
-        activateIgnoringOtherApps(NSApp, true);
+			window.makeKeyAndOrderFront(null);
 
-        // create a new view that draws the graphics and respond to keyDown
-        // events.
-        auto viewClass = objc_allocateClassPair(objc_getClass("NSView"),
-                                                "SDGraphicsView", (void*).sizeof);
-        class_addIvar(viewClass, "simpledisplay_simpleWindow",
-                      (void*).sizeof, (void*).alignof, "^v");
-        class_addMethod(viewClass, sel_registerName("simpledisplay_pulse"),
-                        &pulse, "v@:");
-        class_addMethod(viewClass, sel_registerName("drawRect:"),
-                        &drawRect, "v@:{NSRect={NSPoint=ff}{NSSize=ff}}");
-        class_addMethod(viewClass, sel_registerName("isFlipped"),
-                        &returnTrue2, "c@:");
-        class_addMethod(viewClass, sel_registerName("acceptsFirstResponder"),
-                        &returnTrue2, "c@:");
-        class_addMethod(viewClass, sel_registerName("keyDown:"),
-                        &keyDown, "v@:@");
-        objc_registerClassPair(viewClass);
-        simpleWindowIvar = class_getInstanceVariable(viewClass,
-                                                     "simpledisplay_simpleWindow");
-    }
+			// no need to make a bitmap on mac since everything is double buffered already
+
+			// create area to draw on.
+			createNewDrawingContext(width, height);
+
+			window.setBackgroundColor(NSColor.whiteColor);
+		}
+
+		void createNewDrawingContext(int width, int height) {
+			// FIXME need to preserve info from the old context too i think... maybe. or at least setNeedsDisplay
+			if(this.drawingContext)
+				CGContextRelease(this.drawingContext);
+			auto colorSpace = CGColorSpaceCreateDeviceRGB();
+			this.drawingContext = CGBitmapContextCreate(null, width, height, 8, 4*width, colorSpace, kCGImageAlphaPremultipliedLast |kCGBitmapByteOrder32Big);
+			CGColorSpaceRelease(colorSpace);
+			CGContextSelectFont(drawingContext, "Lucida Grande", 12.0f, 1);
+			auto matrix = CGContextGetTextMatrix(drawingContext);
+			matrix.c = -matrix.c;
+			matrix.d = -matrix.d;
+			CGContextSetTextMatrix(drawingContext, matrix);
+
+		}
+
+		void dispose() {
+			closeWindow();
+			// window.release(); // closing the window does this automatically i think
+		}
+		void closeWindow() {
+			if(timer)
+				timer.invalidate();
+			window.close();
+		}
+
+		ScreenPainter getPainter(bool manualInvalidations) {
+			return ScreenPainter(this, this.window, manualInvalidations);
+		}
+
+		NSWindow window;
+		NSTimer timer;
+		NSView view;
+		CGContextRef drawingContext;
+	}
 }
 
 version(without_opengl) {} else

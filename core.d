@@ -87,7 +87,16 @@ version(Windows) {
 	version=Arsd_core_kqueue;
 
 	import core.sys.darwin.sys.event;
+
+	version(DigitalMars) {
+		version=OSXCocoa;
+	}
 }
+
+version(OSXCocoa)
+	enum CocoaAvailable = true;
+else
+	enum CocoaAvailable = false;
 
 version(Posix) {
 	import core.sys.posix.signal;
@@ -6666,4 +6675,531 @@ package(arsd) version(Windows) extern(Windows) {
 
 	int WSARecv(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
 	int WSARecvFrom(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, sockaddr*, LPINT, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
+}
+
+package(arsd) version(OSXCocoa) {
+
+/+
+To let Cocoa know that you intend to use multiple threads, all you have to do is spawn a single thread using the NSThread class and let that thread immediately exit. Your thread entry point need not do anything. Just the act of spawning a thread using NSThread is enough to ensure that the locks needed by the Cocoa frameworks are put in place.
+
+If you are not sure if Cocoa thinks your application is multithreaded or not, you can use the isMultiThreaded method of NSThread to check.
++/
+
+
+	struct DeifiedNSString {
+		char[16] sso;
+		const(char)[] str;
+
+		this(NSString s) {
+			auto len = s.length;
+			if(len <= sso.length / 4)
+				str = sso[];
+			else
+				str = new char[](len * 4);
+
+			NSUInteger count;
+			NSRange leftover;
+			auto ret = s.getBytes(cast(char*) str.ptr, str.length, &count, NSStringEncoding.NSUTF8StringEncoding, NSStringEncodingConversionOptions.none, NSRange(0, len), &leftover);
+			if(ret)
+				str = str[0 .. count];
+			else
+				throw new Exception("uh oh");
+		}
+	}
+
+	extern (Objective-C) {
+		import core.attribute; // : selector, optional;
+
+		alias NSUInteger = size_t;
+		alias NSInteger = ptrdiff_t;
+		alias unichar = wchar;
+		struct SEL_;
+		alias SEL_* SEL;
+		// this is called plain `id` in objective C but i fear mistakes with that in D. like sure it is a type instead of a variable like most things called id but i still think it is weird. i might change my mind later.
+		alias void* NSid; // FIXME? the docs say this is a pointer to an instance of a class, but that is not necessary a child of NSObject
+
+		extern class NSObject {
+			static NSObject alloc() @selector("alloc");
+			NSObject init() @selector("init");
+
+			void retain() @selector("retain");
+			void release() @selector("release");
+			void autorelease() @selector("autorelease");
+
+			void performSelectorOnMainThread(SEL aSelector, NSid arg, bool waitUntilDone) @selector("performSelectorOnMainThread:withObject:waitUntilDone:");
+		}
+
+		// this is some kind of generic in objc...
+		extern class NSArray : NSObject {
+			static NSArray arrayWithObjects(NSid* objects, NSUInteger count) @selector("arrayWithObjects:count:");
+		}
+
+		extern class NSString : NSObject {
+			override static NSString alloc() @selector("alloc");
+			override NSString init() @selector("init");
+
+			NSString initWithUTF8String(const scope char* str) @selector("initWithUTF8String:");
+
+			NSString initWithBytes(
+				const(ubyte)* bytes,
+				NSUInteger length,
+				NSStringEncoding encoding
+			) @selector("initWithBytes:length:encoding:");
+
+			unichar characterAtIndex(NSUInteger index) @selector("characterAtIndex:");
+			NSUInteger length() @selector("length");
+			const char* UTF8String() @selector("UTF8String");
+
+			void getCharacters(wchar* buffer, NSRange range) @selector("getCharacters:range:");
+
+			bool getBytes(void* buffer, NSUInteger maxBufferCount, NSUInteger* usedBufferCount, NSStringEncoding encoding, NSStringEncodingConversionOptions options, NSRange range, NSRange* leftover) @selector("getBytes:maxLength:usedLength:encoding:options:range:remainingRange:");
+		}
+
+		struct NSRange {
+			NSUInteger loc;
+			NSUInteger len;
+		}
+
+		enum NSStringEncodingConversionOptions : NSInteger {
+			none = 0,
+			NSAllowLossyEncodingConversion = 1,
+			NSExternalRepresentationEncodingConversion = 2
+		}
+
+		enum NSEventType {
+			idk
+
+		}
+
+		enum NSEventModifierFlags : NSUInteger {
+			NSEventModifierFlagCapsLock = 1 << 16,
+			NSEventModifierFlagShift = 1 << 17,
+			NSEventModifierFlagControl = 1 << 18,
+			NSEventModifierFlagOption = 1 << 19, // aka Alt
+			NSEventModifierFlagCommand = 1 << 20, // aka super
+			NSEventModifierFlagNumericPad = 1 << 21,
+			NSEventModifierFlagHelp = 1 << 22,
+			NSEventModifierFlagFunction = 1 << 23,
+			NSEventModifierFlagDeviceIndependentFlagsMask = 0xffff0000UL
+		}
+
+		extern class NSEvent : NSObject {
+			NSEventType type() @selector("type");
+
+			NSPoint locationInWindow() @selector("locationInWindow");
+			NSTimeInterval timestamp() @selector("timestamp");
+			NSWindow window() @selector("window"); // note: nullable
+			NSEventModifierFlags modifierFlags() @selector("modifierFlags");
+
+			NSString characters() @selector("characters");
+			NSString charactersIgnoringModifiers() @selector("charactersIgnoringModifiers");
+			ushort keyCode() @selector("keyCode");
+			ushort specialKey() @selector("specialKey");
+
+			static NSUInteger pressedMouseButtons() @selector("pressedMouseButtons");
+			NSPoint locationInWindow() @selector("locationInWindow"); // in screen coordinates
+			static NSPoint mouseLocation() @selector("mouseLocation"); // in screen coordinates
+			NSInteger buttonNumber() @selector("buttonNumber");
+
+			CGFloat deltaX() @selector("deltaX");
+			CGFloat deltaY() @selector("deltaY");
+			CGFloat deltaZ() @selector("deltaZ");
+
+			bool hasPreciseScrollingDeltas() @selector("hasPreciseScrollingDeltas");
+
+			CGFloat scrollingDeltaX() @selector("scrollingDeltaX");
+			CGFloat scrollingDeltaY() @selector("scrollingDeltaY");
+
+			// @property(getter=isDirectionInvertedFromDevice, readonly) BOOL directionInvertedFromDevice;
+		}
+
+		extern /* final */ class NSTimer : NSObject { // the docs say don't subclass this, but making it final breaks the bridge
+			override static NSTimer alloc() @selector("alloc");
+			override NSTimer init() @selector("init");
+
+			static NSTimer schedule(NSTimeInterval timeIntervalInSeconds, NSid target, SEL selector, NSid userInfo, bool repeats) @selector("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:");
+
+			void fire() @selector("fire");
+			void invalidate() @selector("invalidate");
+
+			bool valid() @selector("isValid");
+			// @property(copy) NSDate *fireDate;
+			NSTimeInterval timeInterval() @selector("timeInterval");
+			NSid userInfo() @selector("userInfo");
+
+			NSTimeInterval tolerance() @selector("tolerance");
+			NSTimeInterval tolerance(NSTimeInterval) @selector("setTolerance:");
+		}
+
+		alias NSTimeInterval = double;
+
+		extern class NSResponder : NSObject {
+			NSMenu menu() @selector("menu");
+			void menu(NSMenu menu) @selector("setMenu:");
+
+			void keyDown(NSEvent event) @selector("keyDown:");
+			void keyUp(NSEvent event) @selector("keyUp:");
+
+			// - (void)interpretKeyEvents:(NSArray<NSEvent *> *)eventArray;
+
+			void mouseDown(NSEvent event) @selector("mouseDown:");
+			void mouseDragged(NSEvent event) @selector("mouseDragged:");
+			void mouseUp(NSEvent event) @selector("mouseUp:");
+			void mouseMoved(NSEvent event) @selector("mouseMoved:");
+			void mouseEntered(NSEvent event) @selector("mouseEntered:");
+			void mouseExited(NSEvent event) @selector("mouseExited:");
+
+			void rightMouseDown(NSEvent event) @selector("rightMouseDown:");
+			void rightMouseDragged(NSEvent event) @selector("rightMouseDragged:");
+			void rightMouseUp(NSEvent event) @selector("rightMouseUp:");
+
+			void otherMouseDown(NSEvent event) @selector("otherMouseDown:");
+			void otherMouseDragged(NSEvent event) @selector("otherMouseDragged:");
+			void otherMouseUp(NSEvent event) @selector("otherMouseUp:");
+
+			void scrollWheel(NSEvent event) @selector("scrollWheel:");
+
+			// touch events should also be here btw among others
+		}
+
+		extern class NSApplication : NSResponder {
+			static NSApplication shared_() @selector("sharedApplication");
+
+			NSApplicationDelegate delegate_() @selector("delegate");
+			void delegate_(NSApplicationDelegate) @selector("setDelegate:");
+
+			bool setActivationPolicy(NSApplicationActivationPolicy activationPolicy) @selector("setActivationPolicy:");
+
+			void activateIgnoringOtherApps(bool flag) @selector("activateIgnoringOtherApps:");
+
+			@property NSMenu mainMenu() @selector("mainMenu");
+			@property NSMenu mainMenu(NSMenu) @selector("setMainMenu:");
+
+			void run() @selector("run");
+
+			void terminate(void*) @selector("terminate:");
+		}
+
+		extern interface NSApplicationDelegate {
+			void applicationWillFinishLaunching(NSNotification notification) @selector("applicationWillFinishLaunching:");
+			void applicationDidFinishLaunching(NSNotification notification) @selector("applicationDidFinishLaunching:");
+			bool applicationShouldTerminateAfterLastWindowClosed(NSNotification notification) @selector("applicationShouldTerminateAfterLastWindowClosed:");
+		}
+
+		extern class NSNotification : NSObject {
+
+		}
+
+		enum NSApplicationActivationPolicy : ptrdiff_t {
+			/* The application is an ordinary app that appears in the Dock and may have a user interface.  This is the default for bundled apps, unless overridden in the Info.plist. */
+			regular,
+
+			/* The application does not appear in the Dock and does not have a menu bar, but it may be activated programmatically or by clicking on one of its windows.  This corresponds to LSUIElement=1 in the Info.plist. */
+			accessory,
+
+			/* The application does not appear in the Dock and may not create windows or be activated.  This corresponds to LSBackgroundOnly=1 in the Info.plist.  This is also the default for unbundled executables that do not have Info.plists. */
+			prohibited
+		}
+
+		extern class NSGraphicsContext : NSObject {
+			static NSGraphicsContext currentContext() @selector("currentContext");
+			NSGraphicsContext graphicsPort() @selector("graphicsPort");
+		}
+
+		extern class NSMenu : NSObject {
+			override static NSMenu alloc() @selector("alloc");
+
+			override NSMenu init() @selector("init");
+			NSMenu init(NSString title) @selector("initWithTitle:");
+
+			void setSubmenu(NSMenu menu, NSMenuItem item) @selector("setSubmenu:forItem:");
+			void addItem(NSMenuItem newItem) @selector("addItem:");
+
+			NSMenuItem addItem(
+				NSString title,
+				SEL selector,
+				NSString charCode
+			) @selector("addItemWithTitle:action:keyEquivalent:");
+		}
+
+		extern class NSMenuItem : NSObject {
+			override static NSMenuItem alloc() @selector("alloc");
+			override NSMenuItem init() @selector("init");
+
+			NSMenuItem init(
+				NSString title,
+				SEL selector,
+				NSString charCode
+			) @selector("initWithTitle:action:keyEquivalent:");
+
+			void enabled(bool) @selector("setEnabled:");
+
+			NSResponder target(NSResponder) @selector("setTarget:");
+		}
+
+		enum NSWindowStyleMask : size_t {
+			borderless = 0,
+			titled = 1 << 0,
+			closable = 1 << 1,
+			miniaturizable = 1 << 2,
+			resizable	= 1 << 3,
+
+			/* Specifies a window with textured background. Textured windows generally don't draw a top border line under the titlebar/toolbar. To get that line, use the NSUnifiedTitleAndToolbarWindowMask mask.
+			 */
+			texturedBackground = 1 << 8,
+
+			/* Specifies a window whose titlebar and toolbar have a unified look - that is, a continuous background. Under the titlebar and toolbar a horizontal separator line will appear.
+			 */
+			unifiedTitleAndToolbar = 1 << 12,
+
+			/* When set, the window will appear full screen. This mask is automatically toggled when toggleFullScreen: is called.
+			 */
+			fullScreen = 1 << 14,
+
+			/* If set, the contentView will consume the full size of the window; it can be combined with other window style masks, but is only respected for windows with a titlebar.
+			 Utilizing this mask opts-in to layer-backing. Utilize the contentLayoutRect or auto-layout contentLayoutGuide to layout views underneath the titlebar/toolbar area.
+			 */
+			fullSizeContentView = 1 << 15,
+
+			/* The following are only applicable for NSPanel (or a subclass thereof)
+			 */
+			utilityWindow			= 1 << 4,
+			docModalWindow		 = 1 << 6,
+			nonactivatingPanel		= 1 << 7, // Specifies that a panel that does not activate the owning application
+			hUDWindow = 1 << 13 // Specifies a heads up display panel
+		}
+
+		extern class NSWindow : NSObject {
+			override static NSWindow alloc() @selector("alloc");
+
+			override NSWindow init() @selector("init");
+
+			NSWindow initWithContentRect(
+				NSRect contentRect,
+				NSWindowStyleMask style,
+				NSBackingStoreType bufferingType,
+				bool flag
+			) @selector("initWithContentRect:styleMask:backing:defer:");
+
+			void makeKeyAndOrderFront(NSid sender) @selector("makeKeyAndOrderFront:");
+			NSView contentView() @selector("contentView");
+			void contentView(NSView view) @selector("setContentView:");
+			void orderFrontRegardless() @selector("orderFrontRegardless");
+			void center() @selector("center");
+
+			NSRect frame() @selector("frame");
+
+			NSRect contentRectForFrameRect(NSRect frameRect) @selector("contentRectForFrameRect:");
+
+			NSString title() @selector("title");
+			void title(NSString value) @selector("setTitle:");
+
+			void close() @selector("close");
+
+			NSWindowDelegate delegate_() @selector("delegate");
+			void delegate_(NSWindowDelegate) @selector("setDelegate:");
+
+			void setBackgroundColor(NSColor color) @selector("setBackgroundColor:");
+		}
+
+		extern interface NSWindowDelegate {
+			@optional:
+			void windowDidResize(NSNotification notification) @selector("windowDidResize:");
+
+			NSSize windowWillResize(NSWindow sender, NSSize frameSize) @selector("windowWillResize:toSize:");
+		}
+
+		extern class NSView : NSResponder {
+			override NSView init() @selector("init");
+			NSView initWithFrame(NSRect frameRect) @selector("initWithFrame:");
+
+			void addSubview(NSView view) @selector("addSubview:");
+
+			bool wantsLayer() @selector("wantsLayer");
+			void wantsLayer(bool value) @selector("setWantsLayer:");
+
+			CALayer layer() @selector("layer");
+			void uiDelegate(NSObject) @selector("setUIDelegate:");
+
+			void drawRect(NSRect rect) @selector("drawRect:");
+			bool isFlipped() @selector("isFlipped");
+			bool acceptsFirstResponder() @selector("acceptsFirstResponder");
+			bool setNeedsDisplay(bool) @selector("setNeedsDisplay:");
+
+			// DO NOT USE: https://issues.dlang.org/show_bug.cgi?id=19017
+			// an asm { pop RAX; } after getting the struct can kinda hack around this but still
+			@property NSRect frame() @selector("frame");
+			@property NSRect frame(NSRect rect) @selector("setFrame:");
+
+			void setFrameSize(NSSize newSize) @selector("setFrameSize:");
+		}
+
+		extern class NSFont : NSObject {
+			void set() @selector("set"); // sets it into the current graphics context
+			void setInContext(NSGraphicsContext context) @selector("setInContext:");
+
+			static NSFont fontWithName(NSString fontName, CGFloat fontSize) @selector("fontWithName:size:");
+			// fontWithDescriptor too
+			// fontWithName and matrix too
+			static NSFont systemFontOfSize(CGFloat fontSize) @selector("systemFontOfSize:");
+			// among others
+
+			@property CGFloat pointSize() @selector("pointSize");
+			@property bool isFixedPitch() @selector("isFixedPitch");
+			// fontDescriptor
+			@property NSString displayName() @selector("displayName");
+
+			@property CGFloat ascender() @selector("ascender");
+			@property CGFloat descender() @selector("descender"); // note it is negative
+			@property CGFloat capHeight() @selector("capHeight");
+			@property CGFloat leading() @selector("leading");
+			@property CGFloat xHeight() @selector("xHeight");
+			// among many more
+		}
+
+		extern class NSColor : NSObject {
+			override static NSColor alloc() @selector("alloc");
+			static NSColor redColor() @selector("redColor");
+			static NSColor whiteColor() @selector("whiteColor");
+
+			CGColorRef CGColor() @selector("CGColor");
+		}
+
+		extern class CALayer : NSObject {
+			CGFloat borderWidth() @selector("borderWidth");
+			void borderWidth(CGFloat value) @selector("setBorderWidth:");
+
+			CGColorRef borderColor() @selector("borderColor");
+			void borderColor(CGColorRef) @selector("setBorderColor:");
+		}
+
+
+		extern class NSViewController : NSObject {
+			NSView view() @selector("view");
+			void view(NSView view) @selector("setView:");
+		}
+
+		enum NSBackingStoreType : size_t {
+			retained = 0,
+			nonretained = 1,
+			buffered = 2
+		}
+
+		enum NSStringEncoding : NSUInteger {
+			NSASCIIStringEncoding = 1,		/* 0..127 only */
+			NSUTF8StringEncoding = 4,
+			NSUnicodeStringEncoding = 10,
+
+			NSUTF16StringEncoding = NSUnicodeStringEncoding,
+			NSUTF16BigEndianStringEncoding = 0x90000100,
+			NSUTF16LittleEndianStringEncoding = 0x94000100,
+			NSUTF32StringEncoding = 0x8c000100,
+			NSUTF32BigEndianStringEncoding = 0x98000100,
+			NSUTF32LittleEndianStringEncoding = 0x9c000100
+		}
+
+
+		struct CGColor;
+		alias CGColorRef = CGColor*;
+
+		// note on the watch os it is float, not double
+		alias CGFloat = double;
+
+		struct NSPoint {
+			CGFloat x;
+			CGFloat y;
+		}
+
+		struct NSSize {
+			CGFloat width;
+			CGFloat height;
+		}
+
+		struct NSRect {
+			NSPoint origin;
+			NSSize size;
+		}
+
+		alias NSPoint CGPoint;
+		alias NSSize CGSize;
+		alias NSRect CGRect;
+
+		pragma(inline, true) NSPoint NSMakePoint(CGFloat x, CGFloat y) {
+			NSPoint p;
+			p.x = x;
+			p.y = y;
+			return p;
+		}
+
+		pragma(inline, true) NSSize NSMakeSize(CGFloat w, CGFloat h) {
+			NSSize s;
+			s.width = w;
+			s.height = h;
+			return s;
+		}
+
+		pragma(inline, true) NSRect NSMakeRect(CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
+			NSRect r;
+			r.origin.x = x;
+			r.origin.y = y;
+			r.size.width = w;
+			r.size.height = h;
+			return r;
+		}
+
+
+	}
+
+	// helper raii refcount object
+	struct MacString {
+		union {
+			// must be wrapped cuz of bug in dmd
+			// referencing an init symbol when it should
+			// just be null. but the union makes it work
+			NSString s;
+		}
+
+		// FIXME: if a string literal it would be kinda nice to use
+		// the other function. but meh
+
+		this(scope const char[] str) {
+			this.s = NSString.alloc.initWithBytes(
+				cast(const(ubyte)*) str.ptr,
+				str.length,
+				NSStringEncoding.NSUTF8StringEncoding
+			);
+		}
+
+		NSString borrow() {
+			return s;
+		}
+
+		this(this) {
+			if(s !is null)
+				s.retain();
+		}
+
+		~this() {
+			if(s !is null) {
+				s.release();
+				s = null;
+			}
+		}
+	}
+
+	extern(C) void NSLog(NSString, ...);
+	extern(C) SEL sel_registerName(const(char)* str);
+
+	extern (Objective-C) __gshared NSApplication NSApp_;
+
+	NSApplication NSApp() {
+		if(NSApp_ is null)
+			NSApp_ = NSApplication.shared_;
+		return NSApp_;
+	}
+
+	// hacks to work around compiler bug
+	extern(C) __gshared void* _D4arsd4core17NSGraphicsContext7__ClassZ = null;
+	extern(C) __gshared void* _D4arsd4core6NSView7__ClassZ = null;
+	extern(C) __gshared void* _D4arsd4core8NSWindow7__ClassZ = null;
 }

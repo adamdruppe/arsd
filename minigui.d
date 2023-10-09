@@ -1466,13 +1466,15 @@ class Widget : ReflectableProperties {
 			auto dpy = XDisplayConnection.get;
 			arsd.simpledisplay.Window dummyw;
 			XTranslateCoordinates(dpy, this.parentWindow.win.impl.window, RootWindow(dpy, DefaultScreen(dpy)), x, y, &x, &y, &dummyw);
-		} else {
+		} else version(Windows) {
 			POINT pt;
 			pt.x = x;
 			pt.y = y;
 			MapWindowPoints(this.parentWindow.win.impl.hwnd, null, &pt, 1);
 			x = pt.x;
 			y = pt.y;
+		} else {
+			featureNotImplemented();
 		}
 
 		return Point(x, y);
@@ -10765,14 +10767,14 @@ class Fieldset : Widget {
 		auto tx = painter.textSize(legend);
 		painter.outlineColor = Color.transparent;
 
-		static if(UsingSimpledisplayX11) {
-			painter.fillColor = getComputedStyle().windowBackgroundColor;
-			painter.drawRectangle(Point(8, 0), tx.width, tx.height);
-		} else version(Windows) {
+		version(Windows) {
 			auto b = SelectObject(painter.impl.hdc, GetSysColorBrush(COLOR_3DFACE));
 			painter.drawRectangle(Point(8, -tx.height/2), tx.width, tx.height);
 			SelectObject(painter.impl.hdc, b);
-		} else static assert(0);
+		} else static if(UsingSimpledisplayX11) {
+			painter.fillColor = getComputedStyle().windowBackgroundColor;
+			painter.drawRectangle(Point(8, 0), tx.width, tx.height);
+		}
 		painter.outlineColor = cs.foregroundColor;
 		painter.drawText(Point(8, 0), legend);
 	}
