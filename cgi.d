@@ -842,6 +842,35 @@ class Cgi {
 
 
 	/+
+
+	ubyte[] perRequestMemoryPool;
+	void[] perRequestMemoryPoolWithPointers;
+	// might want to just slice the buffer itself too when we happened to have gotten a full request inside it and don't need to decode
+	// then the buffer also can be recycled if it is set.
+
+	// we might also be able to set memory recyclable true by default, but then the property getters set it to false. but not all the things are property getters. but realistically anything except benchmarks are gonna get something lol so meh.
+
+	/+
+	struct VariableCollection {
+		string[] opIndex(string name) {
+
+		}
+	}
+
+	/++
+		Call this to indicate that you've not retained any reference to the request-local memory (including all strings returned from the Cgi object) outside the request (you can .idup anything you need to store) and it is thus free to be freed or reused by another request.
+
+		Most handlers should be able to call this; retaining memory is the exception in any cgi program, but since I can't prove it from inside the library, it plays it safe and lets the GC manage it unless you opt into this behavior. All cgi.d functions will duplicate strings if needed (e.g. session ids from cookies) so unless you're doing something yourself, this should be ok.
+
+		History:
+			Added
+	+/
+	public void recycleMemory() {
+
+	}
+	+/
+
+
 	/++
 		Cgi provides a per-request memory pool
 
