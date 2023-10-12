@@ -8787,7 +8787,6 @@ version(TerminalDirectToEmulator) {
 
 						_dup2(_fileno(stdout), _fileno(stderr));
 						setvbuf(stderr, null, _IOLBF, 128); // if I don't unbuffer this it can really confuse things
-						assert(0);
 					}
 
 					WindowsRead(0, 0, this.overlapped);
