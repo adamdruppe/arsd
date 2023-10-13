@@ -852,11 +852,11 @@ struct Terminal {
 			// almost always
 			if(t.indexOf("xterm") != -1)
 				t = "xterm";
-			if(t.indexOf("putty") != -1)
+			else if(t.indexOf("putty") != -1)
 				t = "xterm";
-			if(t.indexOf("tmux") != -1)
+			else if(t.indexOf("tmux") != -1)
 				t = "tmux";
-			if(t.indexOf("screen") != -1)
+			else if(t.indexOf("screen") != -1)
 				t = "screen";
 
 			termcapData = getTermcapDatabase(t);
@@ -4157,25 +4157,8 @@ struct RealTimeConsoleInput {
 			}
 			// escape sequence
 			c = nextRaw();
-			if(c == '[') { // CSI, ends on anything >= 'A'
+			if(c == '[' || c == 'O') { // CSI, ends on anything >= 'A'
 				return doEscapeSequence(readEscapeSequence(sequenceBuffer));
-			} else if(c == 'O') {
-				// could be xterm function key
-				auto n = nextRaw();
-
-				char[3] thing;
-				thing[0] = '\033';
-				thing[1] = 'O';
-				thing[2] = cast(char) n;
-
-				auto cap = terminal.findSequenceInTermcap(thing);
-				if(cap is null) {
-					return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~
-						charPressAndRelease('O') ~
-						charPressAndRelease(thing[2]);
-				} else {
-					return translateTermcapName(cap);
-				}
 			} else if(c == '\033') {
 				// could be escape followed by an escape sequence!
 				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
