@@ -2217,28 +2217,31 @@ class Cgi {
 		return assumeUnique(forTheLoveOfGod);
 	}
 
-	/// Very simple method to require a basic auth username and password.
-	/// If the http request doesn't include the required credentials, it throws a
-	/// HTTP 401 error, and an exception.
-	///
-	/// Note: basic auth does not provide great security, especially over unencrypted HTTP;
-	/// the user's credentials are sent in plain text on every request.
-	///
-	/// If you are using Apache, the HTTP_AUTHORIZATION variable may not be sent to the
-	/// application. Either use Apache's built in methods for basic authentication, or add
-	/// something along these lines to your server configuration:
-	///
-	///      RewriteEngine On
-	///      RewriteCond %{HTTP:Authorization} ^(.*)
-	///      RewriteRule ^(.*) - [E=HTTP_AUTHORIZATION:%1]
-	///
-	/// To ensure the necessary data is available to cgi.d.
-	void requireBasicAuth(string user, string pass, string message = null) {
+	/++
+		Very simple method to require a basic auth username and password.
+		If the http request doesn't include the required credentials, it throws a
+		HTTP 401 error, and an exception to cancel your handler. Do NOT catch the
+		`AuthorizationRequiredException` exception thrown by this if you want the
+		http basic auth prompt to work for the user!
+
+		Note: basic auth does not provide great security, especially over unencrypted HTTP;
+		the user's credentials are sent in plain text on every request.
+
+		If you are using Apache, the HTTP_AUTHORIZATION variable may not be sent to the
+		application. Either use Apache's built in methods for basic authentication, or add
+		something along these lines to your server configuration:
+
+		     ```
+		     RewriteEngine On
+		     RewriteCond %{HTTP:Authorization} ^(.*)
+		     RewriteRule ^(.*) - [E=HTTP_AUTHORIZATION:%1]
+		     ```
+
+		To ensure the necessary data is available to cgi.d.
+	+/
+	void requireBasicAuth(string user, string pass, string message = null, string file = __FILE__, size_t line = __LINE__) {
 		if(authorization != "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (user ~ ":" ~ pass))) {
-			setResponseStatus("401 Authorization Required");
-			header ("WWW-Authenticate: Basic realm=\""~message~"\"");
-			close();
-			throw new Exception("Not authorized; got " ~ authorization);
+			throw new AuthorizationRequiredException("Basic", message, file, line);
 		}
 	}
 
@@ -2860,6 +2863,9 @@ class Cgi {
 	immutable(string[string]) get; 	/// The data from your query string in the url, only showing the last string of each name. If you want to handle multiple values with the same name, use getArray. This only works right if the query string is x-www-form-urlencoded; the default you see on the web with name=value pairs separated by the & character.
 	immutable(string[string]) post; /// The data from the request's body, on POST requests. It parses application/x-www-form-urlencoded data (used by most web requests, including typical forms), and multipart/form-data requests (used by file uploads on web forms) into the same container, so you can always access them the same way. It makes no attempt to parse other content types. If you want to accept an XML Post body (for a web api perhaps), you'll need to handle the raw data yourself.
 	immutable(string[string]) cookies; /// Separates out the cookie header into individual name/value pairs (which is how you set them!)
+
+	/// added later
+	alias query = get;
 
 	/**
 		Represents user uploaded files.
@@ -3776,8 +3782,14 @@ bool trySimulatedRequest(alias fun, CustomCgi = Cgi)(string[] args) if(is(Custom
 	if(args.length >= 3 && isCgiRequestMethod(args[1])) {
 		Cgi cgi = new CustomCgi(args);
 		scope(exit) cgi.dispose();
-		fun(cgi);
-		cgi.close();
+		try {
+			fun(cgi);
+			cgi.close();
+		} catch(AuthorizationRequiredException are) {
+			cgi.setResponseStatus("401 Authorization Required");
+			cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
+			cgi.close();
+		}
 		return true;
 	}
 	return false;
@@ -4185,6 +4197,17 @@ struct RequestServer {
 	}
 }
 
+class AuthorizationRequiredException : Exception {
+	string type;
+	string realm;
+	this(string type, string realm, string file, size_t line) {
+		this.type = type;
+		this.realm = realm;
+
+		super("Authorization Required", file, line);
+	}
+}
+
 private alias AliasSeq(T...) = T;
 
 version(with_breaking_cgi_features)
@@ -4346,6 +4369,11 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 							cgi.close();
 							if(cgi.websocketMode)
 								closeConnection = true;
+
+						} catch(AuthorizationRequiredException are) {
+							cgi.setResponseStatus("401 Authorization Required");
+							cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
+							cgi.close();
 						} catch(ConnectionException ce) {
 							closeConnection = true;
 						} catch(Throwable t) {
@@ -4508,6 +4536,10 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 		try {
 			fun(cgi);
 			cgi.close();
+		} catch(AuthorizationRequiredException are) {
+			cgi.setResponseStatus("401 Authorization Required");
+			cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
+			cgi.close();
 		} catch(Throwable t) {
 			// log it to the error stream
 			FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
@@ -4659,6 +4691,10 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 
 	try {
 		fun(cgi);
+		cgi.close();
+	} catch(AuthorizationRequiredException are) {
+		cgi.setResponseStatus("401 Authorization Required");
+		cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
 		cgi.close();
 	} catch (Throwable t) {
 		version(CRuntime_Musl) {
@@ -5101,6 +5137,10 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 			cgi.close();
 			if(cgi.websocketMode)
 				closeConnection = true;
+		} catch(AuthorizationRequiredException are) {
+			cgi.setResponseStatus("401 Authorization Required");
+			cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
+			cgi.close();
 		} catch(ConnectionException ce) {
 			// broken pipe or something, just abort the connection
 			closeConnection = true;
@@ -5237,6 +5277,11 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 		fun(cgi);
 		cgi.close();
 		connection.close();
+
+	} catch(AuthorizationRequiredException are) {
+		cgi.setResponseStatus("401 Authorization Required");
+		cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
+		cgi.close();
 	} catch(Throwable t) {
 		// no std err
 		if(!handleException(cgi, t)) {
