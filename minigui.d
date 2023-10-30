@@ -11132,7 +11132,7 @@ else version(custom_widgets)
 /// ditto
 class MouseActivatedWidget : Widget {
 	@property bool isChecked() { return isChecked_; }
-	@property bool isChecked(bool b) { return isChecked_ = b; }
+	@property bool isChecked(bool b) { isChecked_ = b; this.redraw(); return isChecked_;}
 
 	private bool isChecked_;
 
