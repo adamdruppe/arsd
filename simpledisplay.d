@@ -4627,9 +4627,12 @@ struct EventLoopImpl {
 	it will silently succeed and simply attempt to create one when an area becomes available.
 
 
-	NotificationAreaIcon on Windows assumes you are on Windows Vista or later.
-	If this is wrong, pass -version=WindowsXP to dmd when compiling and it will
-	use the older version.
+	NotificationAreaIcon on Windows assumes you are on Windows Vista or later. Support for
+	Windows XP was dropped on October 31, 2023. On the other hand, support for 32 bit transparency
+	with true color was added at that time. I was just too lazy to write the fallback.
+
+	If this is an issue, let me know, it'd take about an hour to get it back in there, but I suggest
+	you use arsd 10.x when targeting Windows XP.
 +/
 version(OSXCocoa) {} else // NotYetImplementedException
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
@@ -11087,8 +11090,8 @@ version(Windows) {
 
 	// helpers for making HICONs from MemoryImages
 	class WindowsIcon {
-		struct Win32Icon(int colorCount) {
-		align(1):
+		struct Win32Icon {
+			align(1):
 			uint biSize;
 			int biWidth;
 			int biHeight;
@@ -11100,94 +11103,70 @@ version(Windows) {
 			int biYPelsPerMeter;
 			uint biClrUsed;
 			uint biClrImportant;
-			RGBQUAD[colorCount] biColors;
+			// RGBQUAD[colorCount] biColors;
 			/* Pixels:
 			Uint8 pixels[]
 			*/
 			/* Mask:
 			Uint8 mask[]
 			*/
-
-			// FIXME: this sux, needs to be dynamic
-			ubyte[/*4096*/ 256*256*4 + 256*256/8] data;
-
-			void fromMemoryImage(MemoryImage mi, out int icon_len, out int width, out int height) {
-				width = mi.width;
-				height = mi.height;
-
-				auto indexedImage = cast(IndexedImage) mi;
-				if(indexedImage is null)
-					indexedImage = quantize(mi.getAsTrueColorImage());
-
-				assert(width <= 256, "image too wide");
-				assert(height <= 256, "image too tall");
-				assert(width %8 == 0, "image not multiple of 8 width"); // i don't want padding nor do i want the and mask to get fancy
-				assert(height %4 == 0, "image not multiple of 4 height");
-
-				int icon_plen = height*((width+3)&~3);
-				int icon_mlen = height*((((width+7)/8)+3)&~3);
-				icon_len = 40+icon_plen+icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
-
-				biSize = 40;
-				biWidth = width;
-				biHeight = height*2;
-				biPlanes = 1;
-				biBitCount = 8;
-				biSizeImage = icon_plen+icon_mlen;
-
-				int offset = 0;
-				int andOff = icon_plen * 8; // the and offset is in bits
-				for(int y = height - 1; y >= 0; y--) {
-					int off2 = y * width;
-					foreach(x; 0 .. width) {
-						const b = indexedImage.data[off2 + x];
-						data[offset] = b;
-						offset++;
-
-						const andBit = andOff % 8;
-						const andIdx = andOff / 8;
-						assert(b < indexedImage.palette.length);
-						// this is anded to the destination, since and 0 means erase,
-						// we want that to  be opaque, and 1 for transparent
-						auto transparent = (indexedImage.palette[b].a <= 127);
-						data[andIdx] |= (transparent ? (1 << (7-andBit)) : 0);
-
-						andOff++;
-					}
-
-					andOff += andOff % 32;
-				}
-
-				foreach(idx, entry; indexedImage.palette) {
-					if(entry.a > 127) {
-						biColors[idx].rgbBlue = entry.b;
-						biColors[idx].rgbGreen = entry.g;
-						biColors[idx].rgbRed = entry.r;
-					} else {
-						biColors[idx].rgbBlue = 255;
-						biColors[idx].rgbGreen = 255;
-						biColors[idx].rgbRed = 255;
-					}
-				}
-
-				/*
-				data[0..icon_plen] = getFlippedUnfilteredDatastream(png);
-				data[icon_plen..icon_plen+icon_mlen] = getANDMask(png);
-				//icon_win32.biColors[1] = Win32Icon.RGBQUAD(0,255,0,0);
-				auto pngMap = fetchPaletteWin32(png);
-				biColors[0..pngMap.length] = pngMap[];
-				*/
-			}
 		}
 
+		ubyte[] fromMemoryImage(MemoryImage mi, out int icon_len, out int width, out int height) {
 
-		Win32Icon!(256) icon_win32;
+			assert(mi.width <= 256, "image too wide");
+			assert(mi.height <= 256, "image too tall");
+			assert(mi.width % 8 == 0, "image not multiple of 8 width"); // i don't want padding nor do i want the and mask to get fancy
+			assert(mi.height % 4 == 0, "image not multiple of 4 height");
 
+			int icon_plen = mi.width * mi.height * 4;
+			int icon_mlen = mi.width * mi.height / 8;
+
+			int colorCount = 0;
+			icon_len = 40 + icon_plen + icon_mlen + cast(int) RGBQUAD.sizeof * colorCount;
+
+			ubyte[] memory = new ubyte[](Win32Icon.sizeof + icon_plen + icon_mlen);
+			Win32Icon* icon_win32 = cast(Win32Icon*) memory.ptr;
+
+			auto data = memory[Win32Icon.sizeof .. $];
+
+			width = mi.width;
+			height = mi.height;
+
+			auto trueColorImage = mi.getAsTrueColorImage();
+
+			icon_win32.biSize = 40;
+			icon_win32.biWidth = mi.width;
+			icon_win32.biHeight = mi.height*2;
+			icon_win32.biPlanes = 1;
+			icon_win32.biBitCount = 32;
+			icon_win32.biSizeImage = icon_plen + icon_mlen;
+
+			int offset = 0;
+			int andOff = icon_plen * 8; // the and offset is in bits
+
+			// leaving the and mask as the default 0 so the rgba alpha blend
+			// does its thing instead
+			for(int y = height - 1; y >= 0; y--) {
+				int off2 = y * width * 4;
+				foreach(x; 0 .. width) {
+					data[offset + 2] = trueColorImage.imageData.bytes[off2 + 0];
+					data[offset + 1] = trueColorImage.imageData.bytes[off2 + 1];
+					data[offset + 0] = trueColorImage.imageData.bytes[off2 + 2];
+					data[offset + 3] = trueColorImage.imageData.bytes[off2 + 3];
+
+					offset += 4;
+					off2 += 4;
+				}
+			}
+
+			return memory;
+		}
 
 		this(MemoryImage mi) {
 			int icon_len, width, height;
 
-			icon_win32.fromMemoryImage(mi, icon_len, width, height);
+			auto icon_win32 = fromMemoryImage(mi, icon_len, width, height);
 
 			/*
 			PNG* png = readPnpngData);
@@ -11205,7 +11184,7 @@ version(Windows) {
 			} else assert(0);
 			*/
 
-			hIcon = CreateIconFromResourceEx(cast(ubyte*) &icon_win32, icon_len, true, 0x00030000, width, height, 0);
+			hIcon = CreateIconFromResourceEx(icon_win32.ptr, icon_len, true, 0x00030000, width, height, 0);
 
 			if(hIcon is null) throw new WindowsApiException("CreateIconFromResourceEx", GetLastError());
 		}
@@ -17799,6 +17778,13 @@ struct Visual
 
 		SimpleWindow simpleWindow;
 
+		override void windowWillClose(NSNotification notification) @selector("windowWillClose:") {
+			auto window = cast(void*) notification.object;
+
+			// FIXME: do i need to release it?
+			SimpleWindow.nativeMapping.remove(window);
+		}
+
 		override NSSize windowWillResize(NSWindow sender, NSSize frameSize) @selector("windowWillResize:toSize:") {
 			if(simpleWindow.windowResized) {
 				// FIXME: automaticallyScaleIfPossible behaviors
@@ -18187,14 +18173,21 @@ version(OSXCocoa) {
 		void invalidateRect(Rectangle invalidRect) { }
 
 		// NotYetImplementedException
-		Size textSize(in char[] txt) { return Size(32, 16); /*throw new NotYetImplementedException();*/ }
-		void rasterOp(RasterOp op) {}
+		Size textSize(in char[] txt) {
+			return Size(32, 16); /*throw new NotYetImplementedException();*/
+		}
+		void rasterOp(RasterOp op) {
+		}
 		Pen _activePen;
 		Color _fillColor;
 		Rectangle _clipRectangle;
-		void setClipRectangle(int, int, int, int) {}
-		void setFont(OperatingSystemFont) {}
-		int fontHeight() { return 14; }
+		void setClipRectangle(int, int, int, int) {
+		}
+		void setFont(OperatingSystemFont) {
+		}
+		int fontHeight() {
+			return 14;
+		}
 
 		// end
 
@@ -18202,8 +18195,7 @@ version(OSXCocoa) {
 			_activePen = pen;
 			auto color = pen.color; // FIXME
 			double alphaComponent = color.a/255.0f;
-			CGContextSetRGBStrokeColor(context,
-									   color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
+			CGContextSetRGBStrokeColor(context, color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
 
 			if (color.a != 255) {
 				_outlineComponents[0] = cast(ubyte)(color.r*color.a/255);
@@ -18219,8 +18211,7 @@ version(OSXCocoa) {
 		}
 
 		@property void fillColor(Color color) {
-			CGContextSetRGBFillColor(context,
-									 color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
+			CGContextSetRGBFillColor(context, color.r/255.0f, color.g/255.0f, color.b/255.0f, color.a/255.0f);
 		}
 
 		void drawImage(int x, int y, Image image, int ulx, int upy, int width, int height) {
