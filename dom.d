@@ -8125,7 +8125,7 @@ class Utf8Stream {
 			if(hasMore())
 				this.data ~= getMore();
 
-			stdout.flush();
+			// stdout.flush();
 		}
 
 		@property final size_t length() {
