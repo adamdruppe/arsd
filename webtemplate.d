@@ -144,6 +144,7 @@ void addDefaultFunctions(var context) {
 		context.data = var.emptyObject;
 }
 
+///
 Document renderTemplate(string templateName, var context = var.emptyObject, var skeletonContext = var.emptyObject, string skeletonName = null) {
 	import std.file;
 	import arsd.cgi;
