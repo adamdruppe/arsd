@@ -226,7 +226,7 @@ private string getSQLError(short handletype, SQLHANDLE handle)
 			256,
 			&textlen);
 
-	return message.idup;
+	return message[0 .. textlen].idup;
 }
 
 /*
@@ -242,3 +242,59 @@ void main() {
 	}
 }
 */
+
+void omg() {
+
+enum EMPLOYEE_ID_LEN = 6  ;
+
+SQLHENV henv = null;
+SQLHDBC hdbc = null;
+SQLRETURN retcode;
+SQLHSTMT hstmt = null;
+SQLSMALLINT sCustID;
+
+SQLCHAR[EMPLOYEE_ID_LEN]szEmployeeID;
+SQL_DATE_STRUCT dsOrderDate;
+SQLINTEGER cbCustID = 0, cbOrderDate = 0, cbEmployeeID = SQL_NTS;
+
+   retcode = SQLAllocHandle(SQL_HANDLE_ENV, cast(void*) SQL_NULL_HANDLE, &henv);
+   retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, cast(SQLPOINTER*)SQL_OV_ODBC3, 0);
+
+   retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+   retcode = SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, cast(SQLPOINTER)5, 0);
+
+retcode = SQLDriverConnect(
+			hdbc, null, cast(ubyte*)"DSN=PostgreSQL30Postgres".ptr, SQL_NTS,
+			null, 0, null,
+			SQL_DRIVER_NOPROMPT );
+
+
+   import std.stdio; writeln(retcode);
+   retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+
+   szEmployeeID[0 .. 6] = cast(ubyte[]) "BERGS\0";
+
+   sCustID = 5;
+   dsOrderDate.year = 2006;
+   dsOrderDate.month = 3;
+   dsOrderDate.day = 17;
+
+
+   /*
+   retcode = SQLBindParameter(hstmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_CHAR, EMPLOYEE_ID_LEN, 0, szEmployeeID.ptr, 0, &cbEmployeeID);
+   import std.stdio; writeln(retcode); writeln(getSQLError(SQL_HANDLE_STMT, hstmt));
+   */
+   retcode = SQLBindParameter(hstmt, 1, SQL_PARAM_INPUT, SQL_C_SSHORT, SQL_INTEGER, 0, 0, &sCustID, 0, &cbCustID);
+   import std.stdio; writeln(retcode); writeln(getSQLError(SQL_HANDLE_STMT, hstmt));
+   /*
+   retcode = SQLBindParameter(hstmt, 3, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_TIMESTAMP, dsOrderDate.sizeof, 0, &dsOrderDate, 0, &cbOrderDate);
+   import std.stdio; writeln(retcode); writeln(getSQLError(SQL_HANDLE_STMT, hstmt));
+   */
+
+   retcode = SQLPrepare(hstmt, cast(SQLCHAR*)"INSERT INTO Orders(CustomerID, EmployeeID, OrderDate) VALUES ('omg', ?, 'now')", SQL_NTS);
+
+   import std.stdio; writeln("here ", retcode); writeln(getSQLError(SQL_HANDLE_STMT, hstmt));
+
+   retcode = SQLExecute(hstmt);
+   import std.stdio; writeln(retcode); writeln(getSQLError(SQL_HANDLE_STMT, hstmt));
+}
