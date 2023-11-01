@@ -6887,7 +6887,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		}
 
 		extern class NSNotification : NSObject {
-
+			@property NSid object() @selector("object");
 		}
 
 		enum NSApplicationActivationPolicy : ptrdiff_t {
@@ -7007,6 +7007,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void windowDidResize(NSNotification notification) @selector("windowDidResize:");
 
 			NSSize windowWillResize(NSWindow sender, NSSize frameSize) @selector("windowWillResize:toSize:");
+
+			void windowWillClose(NSNotification notification) @selector("windowWillClose:");
 		}
 
 		extern class NSView : NSResponder {
@@ -7032,6 +7034,10 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			@property NSRect frame(NSRect rect) @selector("setFrame:");
 
 			void setFrameSize(NSSize newSize) @selector("setFrameSize:");
+			void setFrameOrigin(NSPoint newOrigin) @selector("setFrameOrigin:");
+
+			void addSubview(NSView what) @selector("addSubview:");
+			void removeFromSuperview() @selector("removeFromSuperview:");
 		}
 
 		extern class NSFont : NSObject {

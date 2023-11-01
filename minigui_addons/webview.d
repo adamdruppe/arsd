@@ -120,7 +120,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 	private bool initialized;
 
 	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, BrowserSettings settings, Widget parent) {
-		// FIXME: openNewWindow
+		// FIXME: openNewWindow and openUrlInNewWindow
 		super(parent);
 		// that ctor sets containerWindow
 
@@ -474,6 +474,11 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		});
 	}
 
+	~this() {
+		import core.stdc.stdio;
+		printf("GC'd %p\n", cast(void*) this);
+	}
+
 	private MiniguiCefClient client;
 
 	override void registerMovementAdditionalWork() {
@@ -630,7 +635,7 @@ version(cef) {
 			if(auto wvp = wh in WebViewWidget.browserMapping) {
 				dg(*wvp);
 			} else {
-				//writeln("not found ", wh, WebViewWidget.browserMapping);
+				writeln("not found ", wh, WebViewWidget.browserMapping);
 			}
 		});
 	}
@@ -1030,6 +1035,118 @@ version(cef) {
 		}
 	}
 
+	class MiniguiContextMenuHandler : CEF!cef_context_menu_handler_t {
+		private MiniguiCefClient client;
+		this(MiniguiCefClient client) {
+			this.client = client;
+		}
+
+		override void on_before_context_menu(RC!(cef_browser_t) browser, RC!(cef_frame_t) frame, RC!(cef_context_menu_params_t) params, RC!(cef_menu_model_t) model) nothrow {
+			// FIXME: should i customize these? it is kinda specific to my browser
+			int itemNo;
+
+			void addItem(string label, int commandNo) {
+				auto lbl = cef_string_t(label);
+				model.insert_item_at(/* index */ itemNo, /* command id */ cef_menu_id_t.MENU_ID_USER_FIRST + commandNo, &lbl);
+				itemNo++;
+			}
+
+			void addSeparator() {
+				model.insert_separator_at(itemNo);
+				itemNo++;
+			}
+
+			auto flags = params.get_type_flags();
+
+			if(flags & cef_context_menu_type_flags_t.CM_TYPEFLAG_LINK) {
+				// cef_string_userfree_t linkUrl = params.get_unfiltered_link_url();
+				// toGCAndFree
+				addItem("Open link in new window", 1);
+				addItem("Copy link URL", 2);
+
+				// FIXME: open in other browsers
+				addSeparator();
+			}
+
+			if(flags & cef_context_menu_type_flags_t.CM_TYPEFLAG_MEDIA) {
+				// cef_string_userfree_t linkUrl = params.get_source_url();
+				// toGCAndFree
+				addItem("Open media in new window", 3);
+				addItem("Copy source URL", 4);
+				addItem("Download media", 5);
+				addSeparator();
+			}
+
+
+			// get_page_url
+			// get_title_text
+			// has_image_contents ???
+			// get_source_url
+			// get_xcoord and get_ycoord
+			// get_selection_text
+
+		}
+		override int run_context_menu(RC!(cef_browser_t), RC!(cef_frame_t), RC!(cef_context_menu_params_t), RC!(cef_menu_model_t), RC!(cef_run_context_menu_callback_t)) nothrow {
+			// could do a custom display here if i want but i think it is good enough as it is
+			return 0;
+		}
+		override int on_context_menu_command(RC!(cef_browser_t) browser, RC!(cef_frame_t) frame, RC!(cef_context_menu_params_t) params, int commandId, cef_event_flags_t flags) nothrow {
+			switch(commandId) {
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 1: // open link in new window
+					auto what = params.get_unfiltered_link_url().toGCAndFree();
+
+					browser.runOnWebView((widget) {
+						auto event = new NewWindowRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 2: // copy link url
+					auto what = params.get_link_url().toGCAndFree();
+
+					browser.runOnWebView((widget) {
+						auto event = new CopyRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 3: // open media in new window
+					auto what = params.get_source_url().toGCAndFree();
+
+					browser.runOnWebView((widget) {
+						auto event = new NewWindowRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 4: // copy source url
+					auto what = params.get_source_url().toGCAndFree();
+
+					browser.runOnWebView((widget) {
+						auto event = new CopyRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 5: // download media
+					auto str = cef_string_t(params.get_source_url().toGCAndFree());
+					browser.get_host().start_download(&str);
+					return 1;
+				default:
+					return 0;
+			}
+		}
+		override void on_context_menu_dismissed(RC!(cef_browser_t), RC!(cef_frame_t)) nothrow {
+			// to close the custom display
+		}
+
+		override int run_quick_menu(RC!(cef_browser_t), RC!(cef_frame_t), const(cef_point_t)*, const(cef_size_t)*, cef_quick_menu_edit_state_flags_t, RC!(cef_run_quick_menu_callback_t)) nothrow {
+			return 0;
+		}
+		override int on_quick_menu_command(RC!(cef_browser_t), RC!(cef_frame_t), int, cef_event_flags_t) nothrow {
+			return 0;
+		}
+		override void on_quick_menu_dismissed(RC!(cef_browser_t), RC!(cef_frame_t)) nothrow {
+
+		}
+	}
+
 	class MiniguiFocusHandler : CEF!cef_focus_handler_t {
 		override void on_take_focus(RC!(cef_browser_t) browser, int next) nothrow {
 			browser.runOnWebView(delegate(wv) {
@@ -1083,6 +1200,7 @@ version(cef) {
 		MiniguiKeyboardHandler keyboardHandler;
 		MiniguiFocusHandler focusHandler;
 		MiniguiRequestHandler requestHandler;
+		MiniguiContextMenuHandler contextMenuHandler;
 		this(void delegate(scope OpenNewWindowParams) openNewWindow) {
 			this.openNewWindow = openNewWindow;
 			lsh = new MiniguiCefLifeSpanHandler(this);
@@ -1093,13 +1211,14 @@ version(cef) {
 			keyboardHandler = new MiniguiKeyboardHandler();
 			focusHandler = new MiniguiFocusHandler();
 			requestHandler = new MiniguiRequestHandler();
+			contextMenuHandler = new MiniguiContextMenuHandler(this);
 		}
 
 		override cef_audio_handler_t* get_audio_handler() {
 			return null;
 		}
 		override cef_context_menu_handler_t* get_context_menu_handler() {
-			return null;
+			return contextMenuHandler.returnable;
 		}
 		override cef_dialog_handler_t* get_dialog_handler() {
 			return dialogHandler.returnable;
@@ -1170,6 +1289,26 @@ class BrowserClosedEvent : Event {
 	this(Widget target) { super(EventString, target); }
 	override bool cancelable() const { return false; }
 }
+
+class CopyRequestedEvent : Event {
+	enum EventString = "browsercopyrequested";
+
+	string what;
+
+	this(string what, Widget target) { this.what = what; super(EventString, target); }
+	override bool cancelable() const { return false; }
+}
+
+class NewWindowRequestedEvent : Event {
+	enum EventString = "browserwindowrequested";
+
+	string url;
+
+	this(string url, Widget target) { this.url = url; super(EventString, target); }
+	override bool cancelable() const { return false; }
+}
+
+
 
 /+
 pragma(mangle, "_ZN12CefWindowX115FocusEv")
