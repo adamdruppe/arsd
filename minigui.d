@@ -365,6 +365,10 @@ version(Windows) {
 		version = win32_widgets;
 		enum bool UsingCustomWidgets = false;
 		enum bool UsingWin32Widgets = true;
+
+		// give access to my text system for the rich text cross platform stuff
+		version = use_new_text_system;
+		import arsd.textlayouter;
 	}
 	// and native theming when needed
 	//version = win32_theming;
@@ -13134,7 +13138,6 @@ class PasswordEdit : EditableTextWidget {
 	}
 }
 
-
 ///
 class TextEdit : EditableTextWidget {
 	///
@@ -13156,6 +13159,7 @@ class TextEdit : EditableTextWidget {
 }
 
 
+/+
 /++
 
 +/
@@ -13163,6 +13167,51 @@ version(none)
 class RichTextDisplay : Widget {
 	@property void content(string c) {}
 	void appendContent(string c) {}
+}
++/
+
+/++
+	A read-only text display
+
+	History:
+		Added October 31, 2023 (dub v11.3)
++/
+class TextDisplay : EditableTextWidget {
+	this(string text, Widget parent) {
+		super(parent);
+		this.content = text;
+	}
+
+	override int maxHeight() { return int.max; }
+	override int minHeight() { return 50; }
+	override int heightStretchiness() { return 7; }
+
+	override int flexBasisWidth() { return 250; }
+	override int flexBasisHeight() { return 50; }
+
+	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
+		return new MyTextDisplayHelper(textLayout, smw);
+	}
+
+	override void registerMovement() {
+		super.registerMovement();
+		this.wordWrapEnabled = true; // FIXME: hack it should do this movement recalc internally
+	}
+
+	static class MyTextDisplayHelper : TextDisplayHelper {
+		this(TextLayouter textLayout, ScrollMessageWidget smw) {
+			smw.verticalScrollBar.hide();
+			smw.horizontalScrollBar.hide();
+			super(textLayout, smw);
+			this.readonly = true;
+		}
+
+		class Style : Widget.Style {
+			// just want the generic look for these
+		}
+
+		mixin OverrideStyle!Style;
+	}
 }
 
 ///
@@ -13178,7 +13227,7 @@ class MessageBox : Window {
 
 		this.message = message;
 
-		auto label = new TextLabel(message, TextAlignment.Center, this);
+		auto label = new TextDisplay(message, this);
 
 		auto hl = new HorizontalLayout(this);
 		auto spacer = new HorizontalSpacer(hl); // to right align
