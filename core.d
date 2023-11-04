@@ -513,7 +513,7 @@ struct OwnedClass(Class) {
 	}
 }
 
-
+// might move RecyclableMemory here
 
 version(Posix)
 package(arsd) void makeNonBlocking(int fd) {
@@ -7037,7 +7037,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void setFrameOrigin(NSPoint newOrigin) @selector("setFrameOrigin:");
 
 			void addSubview(NSView what) @selector("addSubview:");
-			void removeFromSuperview() @selector("removeFromSuperview:");
+			void removeFromSuperview() @selector("removeFromSuperview");
 		}
 
 		extern class NSFont : NSObject {
