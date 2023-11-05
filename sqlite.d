@@ -237,6 +237,9 @@ class SqliteResult :  ResultSet {
 		foreach(c; rows[position]) {
 			if(auto t = c.peek!(immutable(byte)[]))
 				r.row ~= DatabaseDatum(cast(string) *t);
+			else if (auto d = c.peek!double)
+				// 17 significant decimal digits are enough to not lose precision (IEEE 754 section 5.12.2)
+				r.row ~= DatabaseDatum(format!"%.17s"(*d));
 			else
 				r.row ~= DatabaseDatum(c.coerce!(string));
 		}
@@ -508,6 +511,7 @@ template extract(A, T, R...){
 		void bind (const char[] name, const char[] value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, int value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, float value){ bind(bindNameLookUp(name), value); }
+		void bind (const char[] name, double value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, const byte[] value){ bind(bindNameLookUp(name), value); }
 		void bind (const char[] name, const ubyte[] value){ bind(bindNameLookUp(name), value); }
 
@@ -521,6 +525,11 @@ template extract(A, T, R...){
 	}
 
 	void bind(int col, float value){
+		if(sqlite3_bind_double(s, col, value) != SQLITE_OK)
+			throw new DatabaseException("bind " ~ db.error());
+	}
+
+	void bind(int col, double value){
 		if(sqlite3_bind_double(s, col, value) != SQLITE_OK)
 			throw new DatabaseException("bind " ~ db.error());
 	}
@@ -572,6 +581,8 @@ template extract(A, T, R...){
 			bind(col, v.get!string);
 		else if(v.peek!float)
 			bind(col, v.get!float);
+		else if(v.peek!double)
+			bind(col, v.get!double);
 		else if(v.peek!(byte[]))
 			bind(col, v.get!(byte[]));
 		else if(v.peek!(ubyte[]))
