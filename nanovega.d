@@ -463,6 +463,7 @@ unittest {
 	  // internal OpenGL subsystem with valid OpenGL context.
 	  sdmain.visibleForTheFirstTime = delegate () {
 	    // yes, that's all
+            sdmain.setAsCurrentOpenGlContext();
 	    nvg = nvgCreateContext();
 	    if (nvg is null) assert(0, "cannot initialize NanoVega");
 	  };
@@ -576,11 +577,11 @@ version (bindbc) {
   version = nanovg_builtin_freetype_bindings;
   version = nanovg_builtin_opengl_bindings; // use `arsd.simpledisplay` to get basic bindings
 } else {
-  version (Have_bindbc_opengl)
+  version (neverHave_bindbc_opengl)
     version = nanovg_bindbc_opengl_bindings;
    else
     version = nanovg_builtin_opengl_bindings; // use `arsd.simpledisplay` to get basic bindings
-  version (Have_bindbc_freetype)
+  version (neverHave_bindbc_freetype)
     version = nanovg_bindbc_freetype_bindings;
    else
     version = nanovg_builtin_freetype_bindings;
@@ -12208,7 +12209,7 @@ version(nanovg_bindbc_opengl_bindings) {
   import arsd.simpledisplay;
 
 	/++
-		A SimpleWindow subclass that encapsulates some nanovega defaults. You just set a `redrawNVGScene` delegate and, optionally, your nromal event handlers for simpledisplay, and the rest is set up for you.
+		A SimpleWindow subclass that encapsulates some nanovega defaults. You just set a `redrawNVGScene` delegate and, optionally, your normal event handlers for simpledisplay, and the rest is set up for you.
 
 		History:
 			Added January 22, 2021 (version 9.2 release)
