@@ -240,9 +240,12 @@ make sure superclass ctors are called
 		varargs
 		lambdas - maybe without function keyword and the x => foo syntax from D.
 
-	Author: Adam D Ruppe
+	Author:
+		Adam D. Ruppe
 
 	History:
+		November 17, 2023: added support for hex, octal, and binary literals and added _ separators in numbers.
+
 		September 1, 2020: added overloading for functions and type matching in `catch` blocks among other bug fixes
 
 		April 28, 2020: added `#{}` as an alternative to the `json!q{}` syntax for object literals. Also fixed unary `!` operator.
@@ -531,7 +534,7 @@ class ScriptException : Exception {
 }
 
 struct ScriptToken {
-	enum Type { identifier, keyword, symbol, string, int_number, float_number }
+	enum Type { identifier, keyword, symbol, string, int_number, hex_number, binary_number, oct_number, float_number }
 	Type type;
 	string str;
 	string scriptFilename;
@@ -643,9 +646,28 @@ class TokenStream(TextStream) {
 				advance(1);
 				continue;
 			} else if(text[0] >= '0' && text[0] <= '9') {
+				int radix = 10;
+				if(text.length > 2 && text[0] == '0') {
+					if(text[1] == 'x' || text[1] == 'X')
+						radix = 16;
+					if(text[1] == 'b')
+						radix = 2;
+					if(text[1] == 'o')
+						radix = 8;
+
+					if(radix != 10)
+						text = text[2 .. $];
+				}
+
 				int pos;
 				bool sawDot;
-				while(pos < text.length && ((text[pos] >= '0' && text[pos] <= '9') || text[pos] == '.')) {
+				while(pos < text.length && (
+					(text[pos] >= '0' && text[pos] <= '9')
+					|| (text[pos] >= 'A' && text[pos] <= 'F')
+					|| (text[pos] >= 'a' && text[pos] <= 'f')
+					|| text[pos] == '_'
+					|| text[pos] == '.'
+				)) {
 					if(text[pos] == '.') {
 						if(sawDot)
 							break;
@@ -662,6 +684,9 @@ class TokenStream(TextStream) {
 				}
 
 				token.type = sawDot ? ScriptToken.Type.float_number : ScriptToken.Type.int_number;
+				if(radix == 2) token.type = ScriptToken.Type.binary_number;
+				if(radix == 8) token.type = ScriptToken.Type.oct_number;
+				if(radix == 16) token.type = ScriptToken.Type.hex_number;
 				token.str = text[0 .. pos];
 				advance(pos);
 			} else if((text[0] >= 'a' && text[0] <= 'z') || (text[0] == '_') || (text[0] >= 'A' && text[0] <= 'Z') || text[0] == '$') {
@@ -1100,8 +1125,8 @@ class BoolLiteralExpression : Expression {
 class IntLiteralExpression : Expression {
 	long literal;
 
-	this(string s) {
-		literal = to!long(s);
+	this(string s, int radix) {
+		literal = to!long(s.replace("_", ""), radix);
 	}
 
 	override string toString() { return to!string(literal); }
@@ -1112,7 +1137,7 @@ class IntLiteralExpression : Expression {
 }
 class FloatLiteralExpression : Expression {
 	this(string s) {
-		literal = to!real(s);
+		literal = to!real(s.replace("_", ""));
 	}
 	real literal;
 	override string toString() { return to!string(literal); }
@@ -2055,6 +2080,16 @@ unittest {
 	});
 }
 
+unittest {
+	interpret(q{
+		assert(0x10 == 16);
+		assert(0o10 == 8);
+		assert(0b10 == 2);
+		assert(10 == 10);
+		assert(10_10 == 1010);
+	});
+}
+
 class ForeachExpression : Expression {
 	VariableDeclaration decl;
 	Expression subject;
@@ -2622,7 +2657,13 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 			tokens.popFront();
 
 			if(token.type == ScriptToken.Type.int_number)
-				e = new IntLiteralExpression(token.str);
+				e = new IntLiteralExpression(token.str, 10);
+			else if(token.type == ScriptToken.Type.oct_number)
+				e = new IntLiteralExpression(token.str, 8);
+			else if(token.type == ScriptToken.Type.hex_number)
+				e = new IntLiteralExpression(token.str, 16);
+			else if(token.type == ScriptToken.Type.binary_number)
+				e = new IntLiteralExpression(token.str, 2);
 			else if(token.type == ScriptToken.Type.float_number)
 				e = new FloatLiteralExpression(token.str);
 			else if(token.type == ScriptToken.Type.string)
@@ -3532,6 +3573,9 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 		case ScriptToken.Type.string:
 		case ScriptToken.Type.int_number:
 		case ScriptToken.Type.float_number:
+		case ScriptToken.Type.binary_number:
+		case ScriptToken.Type.hex_number:
+		case ScriptToken.Type.oct_number:
 			return parseExpression(tokens);
 	}
 
