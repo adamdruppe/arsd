@@ -927,6 +927,7 @@ class Cgi {
 		--accept 'content' // FIXME: better example
 		--last-event-id 'something'
 		--host 'something.com'
+		--session name=value (these are added to a mock session, changes to the session are printed out as dummy response headers)
 
 	  Non-simulation arguments:
 	  	--port xxx listening port for non-cgi things (valid for the cgi interfaces)
@@ -994,6 +995,11 @@ class Cgi {
 						_cookie ~= "; ";
 					_cookie ~= std.uri.encodeComponent(info[0]) ~ "=" ~ std.uri.encodeComponent(info[1]);
 				}
+				if (nextArgIs == "session") {
+					auto info = breakUp(arg);
+					_commandLineSession[info[0]] = info[1];
+				}
+
 				else if (nextArgIs == "port") {
 					port = to!int(arg);
 				}
@@ -2761,6 +2767,8 @@ class Cgi {
 		return closed;
 	}
 
+	private SessionObject commandLineSessionObject;
+
 	/++
 		Gets a session object associated with the `cgi` request. You can use different type throughout your application.
 	+/
@@ -2776,6 +2784,20 @@ class Cgi {
 				return o;
 			}
 		} else {
+			// FIXME: the changes are not printed out at the end!
+			if(_commandLineSession !is null) {
+				if(commandLineSessionObject is null) {
+					commandLineSessionObject = new MockSession!Data();
+
+					foreach(memberName; __traits(allMembers, Data)) {
+						if(auto str = memberName in commandLineSessionObject)
+							__traits(getMember, commandLineSessionObject.store_, memberName) = to!(typeof(__traits(getMember, Data, memberName)))(*str);
+					}
+				}
+
+				return commandLineSessionObject;
+			}
+
 			// normal operation
 			return new BasicDataServerSession!Data(this);
 		}
@@ -2880,6 +2902,8 @@ class Cgi {
 	immutable(string[][string]) getArray; /// like get, but an array of values per name
 	immutable(string[][string]) postArray; /// ditto for post
 	immutable(string[][string]) cookiesArray; /// ditto for cookies
+
+	private string[string] _commandLineSession;
 
 	// convenience function for appending to a uri without extra ?
 	// matches the name and effect of javascript's location.search property
@@ -3790,6 +3814,9 @@ bool trySimulatedRequest(alias fun, CustomCgi = Cgi)(string[] args) if(is(Custom
 			cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
 			cgi.close();
 		}
+		writeln(); // just to put a blank line before the prompt cuz it annoys me
+		// FIXME: put in some footers to show what changes happened in the session
+		// could make the MockSession be some kind of ReflectableSessionObject or something
 		return true;
 	}
 	return false;
@@ -5061,6 +5088,124 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
 		doThreadHttpConnectionGuts!(CustomCgi, fun)(connection);
 	}
 }
+
+/+
+
+/+
+	The represents a recyclable per-task arena allocator. The default is to let the GC manage the whole block as a large array, meaning if a reference into it is escaped, it waste memory but is not dangerous. If you don't escape any references to it and don't do anything special, the GC collects it.
+
+	But, if you call `cgi.recyclable = true`, the memory is retained for the next request on the thread. If a reference is escaped, it is the user's problem; it can be modified (and break the `immutable` guarantees!) and thus be memory unsafe. They're taking responsibility for doing it right when they call `escape`. But if they do it right and opt into recycling, the memory is all reused to give a potential boost without requiring the GC's involvement.
+
+	What if one request used an abnormally large amount of memory though? Will recycling it keep that pinned forever? No, that's why it keeps track of some stats. If a working set was significantly above average and not fully utilized for a while, it will just let the GC have it again despite your suggestion to recycle it.
+
+	Be warned that growing the memory block may release the old, smaller block for garbage collection. If you retained references to it, it may not be collectable and lead to some unnecessary memory growth. It is probably best to try to keep the things sized in a continuous block that doesn't have to grow often.
+
+	Internally, it is broken up into a few blocks:
+		* the request block. This holds the incoming request and associated data (parsed headers, variables, etc).
+		* the scannable block. this holds pointers arrays, classes, etc. associated with this request, so named because the GC scans it.
+		* the response block. This holds the output buffer.
+
+	And I may add more later if I decide to open this up to outside user code.
+
+	The scannable block is separate to limit the amount of work the GC has to do; no point asking it to scan that which need not be scanned.
+
+	The request and response blocks are separated because they will have different typical sizes, with the request likely being less predictable. Being able to release one to the GC while recycling the other might help, and having them grow independently (if needed) may also prevent some pain.
+
+	All of this are internal implementation details subject to change at any time without notice. It is valid for my recycle method to do absolutely nothing; the GC also eventually recycles memory!
+
+	Each active task can have its own recyclable memory object. When you recycle it, it is added to a thread-local freelist. If the list is excessively large, entries maybe discarded at random and left for the GC to prevent a temporary burst of activity from leading to a permanent waste of memory.
++/
+struct RecyclableMemory {
+	private ubyte[] inputBuffer;
+	private ubyte[] processedRequestBlock;
+	private void[] scannableBlock;
+	private ubyte[] outputBuffer;
+
+	RecyclableMemory* next;
+}
+
+/++
+	This emulates the D associative array interface with a different internal implementation.
+
+	string s = cgi.get["foo"]; // just does cgi.getArray[x][$-1];
+	string[] arr = cgi.getArray["foo"];
+
+	"foo" in cgi.get
+
+	foreach(k, v; cgi.get)
+
+	cgi.get.toAA // for compatibility
+
+	// and this can urldecode lazily tbh... in-place even, since %xx is always longer than a single char thing it turns into...
+		... but how does it mark that it has already been processed in-place? it'd have to just add it to the index then.
+
+	deprecated alias toAA this;
++/
+struct VariableCollection {
+	private VariableArrayCollection* vac;
+
+	const(char[]) opIndex(scope const char[] key) {
+		return (*vac)[key][$-1];
+	}
+
+	const(char[]*) opBinaryRight(string op : "in")(scope const char[] key) {
+		return key in (*vac);
+	}
+
+	int opApply(int delegate(scope const(char)[] key, scope const(char)[] value) dg) {
+		foreach(k, v; *vac) {
+			if(auto res = dg(k, v[$-1]))
+				return res;
+		}
+		return 0;
+	}
+
+	immutable(string[string]) toAA() {
+		string[string] aa;
+		foreach(k, v; *vac)
+			aa[k.idup] = v[$-1].idup;
+		return aa;
+	}
+
+	deprecated alias toAA this;
+}
+
+struct VariableArrayCollection {
+	/+
+		This needs the actual implementation of looking it up. As it pulls data, it should
+		decode and index for later.
+
+		The index will go into a block attached to the cgi object and it should prolly be sorted
+		something like
+
+		[count of names]
+		[slice to name][count of values][slice to value, decoded in-place, ...]
+		...
+	+/
+	private Cgi cgi;
+
+	const(char[][]) opIndex(scope const char[] key) {
+		return null;
+	}
+
+	const(char[][]*) opBinaryRight(string op : "in")(scope const char[] key) {
+		return null;
+	}
+
+	// int opApply(int delegate(scope const(char)[] key, scope const(char)[][] value) dg)
+
+	immutable(string[string]) toAA() {
+		return null;
+	}
+
+	deprecated alias toAA this;
+
+}
+
+struct HeaderCollection {
+
+}
++/
 
 void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection) {
 	scope(failure) {
