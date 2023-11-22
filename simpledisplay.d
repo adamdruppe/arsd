@@ -475,9 +475,9 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	See a couple examples ported from GLFW to simpledisplay using the erupted vulkan bindings:
 
-	https://github.com/adamdruppe/VulkanSdpyDemo
+	https://github.com/adamdruppe/VulkanizeDSdpy
 
-	https://github.com/Cy-Tek/VulkanizeD/compare/main...adamdruppe:VulkanizeDSdpy:main
+	https://github.com/adamdruppe/VulkanSdpyDemo/tree/demo
 
 	$(H3 $(ID topic-images) Displaying images)
 		You can also load PNG images using [arsd.png].
@@ -6112,15 +6112,16 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 version(X11) {
 	// and the PRIMARY on X, be sure to put these in static if(UsingSimpledisplayX11)
 
-	private Atom*[] interredAtoms; // for discardAndRecreate
+	private __gshared Atom*[] interredAtoms; // for discardAndRecreate
 
 	// FIXME: do a GetAtomUpfront too that just queues all at CT and combines it all.
 	/// Platform-specific for X11.
 	/// History: On February 21, 2021, I changed the default value of `create` to be true.
 	@property Atom GetAtom(string name, bool create = true)(Display* display) {
-		static Atom a;
+		__gshared static Atom a;
 		if(!a) {
 			a = XInternAtom(display, name, !create);
+			// FIXME: might need to synchronize this and attach it to the actual object
 			interredAtoms ~= &a;
 		}
 		if(a == None)
