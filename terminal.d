@@ -2,6 +2,9 @@
 // for VT on Windows P s = 1 8 → Report the size of the text area in characters as CSI 8 ; height ; width t
 // could be used to have the TE volunteer the size
 
+// FIXME: have some flags or formal api to set color to vtsequences even on pipe etc on demand.
+
+
 // FIXME: the resume signal needs to be handled to set the terminal back in proper mode.
 
 /++
@@ -314,6 +317,8 @@ version(Posix) {
 
 version(TerminalDirectToEmulator) {
 	version=VtEscapeCodes;
+	version(Windows)
+		version=Win32Console;
 } else version(Windows) {
 	version(VtEscapeCodes) {} // cool
 	version=Win32Console;
@@ -328,11 +333,7 @@ version(Windows)
 }
 
 version(Win32Console) {
-	private {
-		enum RED_BIT = 4;
-		enum GREEN_BIT = 2;
-		enum BLUE_BIT = 1;
-	}
+	__gshared bool UseWin32Console = true;
 
 	pragma(lib, "user32");
 }
@@ -353,20 +354,7 @@ version(Posix) {
 
 version(VtEscapeCodes) {
 
-	enum UseVtSequences = true;
-
-	version(TerminalDirectToEmulator) {
-		private {
-			enum RED_BIT = 1;
-			enum GREEN_BIT = 2;
-			enum BLUE_BIT = 4;
-		}
-	} else version(Windows) {} else
-	private {
-		enum RED_BIT = 1;
-		enum GREEN_BIT = 2;
-		enum BLUE_BIT = 4;
-	}
+	__gshared bool UseVtSequences = true;
 
 	struct winsize {
 		ushort ws_row;
@@ -533,10 +521,10 @@ enum Bright = 0x08;
 /// See also: [Bright]
 enum Color : ushort {
 	black = 0, /// .
-	red = RED_BIT, /// .
-	green = GREEN_BIT, /// .
+	red = 1, /// .
+	green = 2, /// .
 	yellow = red | green, /// .
-	blue = BLUE_BIT, /// .
+	blue = 4, /// .
 	magenta = red | blue, /// .
 	cyan = blue | green, /// .
 	white = red | green | blue, /// .
@@ -621,20 +609,7 @@ struct Terminal {
 		} else {
 			if(what != currentCursor_ || force == ForceOption.alwaysSend) {
 				currentCursor_ = what;
-				version(Win32Console) {
-					final switch(what) {
-						case TerminalCursor.DEFAULT:
-							SetConsoleCursorInfo(hConsole, &originalCursorInfo);
-						break;
-						case TerminalCursor.insert:
-						case TerminalCursor.block:
-							CONSOLE_CURSOR_INFO info;
-							GetConsoleCursorInfo(hConsole, &info);
-							info.dwSize = what == TerminalCursor.insert ? 1 : 100;
-							SetConsoleCursorInfo(hConsole, &info);
-						break;
-					}
-				} else {
+				if(UseVtSequences) {
 					final switch(what) {
 						case TerminalCursor.DEFAULT:
 							if(terminalInFamily("linux"))
@@ -655,6 +630,19 @@ struct Terminal {
 								writeStringRaw("\033[?6c");
 							else
 								writeStringRaw("\033[2 q");
+						break;
+					}
+				} else version(Win32Console) if(UseWin32Console) {
+					final switch(what) {
+						case TerminalCursor.DEFAULT:
+							SetConsoleCursorInfo(hConsole, &originalCursorInfo);
+						break;
+						case TerminalCursor.insert:
+						case TerminalCursor.block:
+							CONSOLE_CURSOR_INFO info;
+							GetConsoleCursorInfo(hConsole, &info);
+							info.dwSize = what == TerminalCursor.insert ? 1 : 100;
+							SetConsoleCursorInfo(hConsole, &info);
 						break;
 					}
 				}
@@ -727,12 +715,20 @@ struct Terminal {
 	}
 
 	bool terminalInFamily(string[] terms...) {
+		version(Win32Console) if(UseWin32Console)
+			return false;
+
+		// we're not writing to a terminal at all!
+		if(!stdoutIsTerminal || !stdinIsTerminal)
+			return false;
+
 		import std.process;
 		import std.string;
 		version(TerminalDirectToEmulator)
 			auto term = "xterm";
 		else
 			auto term = environment.get("TERM");
+
 		foreach(t; terms)
 			if(indexOf(term, t) != -1)
 				return true;
@@ -745,12 +741,15 @@ struct Terminal {
 		// work the way they're advertised. I just have to best-guess hack and hope it
 		// doesn't break anything else. (If you know a better way, let me know!)
 		bool isMacTerminal() {
+		return false;
+		/+
 			// it gives 1,2 in getTerminalCapabilities...
 			// FIXME
 			import std.process;
 			import std.string;
 			auto term = environment.get("TERM");
 			return term == "xterm-256color";
+		+/
 		}
 	} else
 		bool isMacTerminal() { return false; }
@@ -904,6 +903,9 @@ struct Terminal {
 
 	// Looks up a termcap item and tries to execute it. Returns false on failure
 	bool doTermcap(T...)(string key, T t) {
+		if(!stdoutIsTerminal)
+			return false;
+
 		import std.conv;
 		auto fs = getTermcap(key);
 		if(fs is null)
@@ -1060,7 +1062,9 @@ struct Terminal {
 	+/
 	bool saveCursorPosition()
 	{
-		version (Win32Console)
+		if(UseVtSequences)
+			return doTermcap("sc");
+		else version (Win32Console) if(UseWin32Console)
 		{
 			flush();
 			CONSOLE_SCREEN_BUFFER_INFO info;
@@ -1074,14 +1078,16 @@ struct Terminal {
 				return false;
 			}
 		}
-		else
-			return doTermcap("sc");
+		assert(0);
 	}
 
 	/// ditto
 	bool restoreCursorPosition()
 	{
-		version (Win32Console)
+		if(UseVtSequences)
+			// FIXME: needs to update cursorX and cursorY
+			return doTermcap("rc");
+		else version (Win32Console) if(UseWin32Console)
 		{
 			if (cursorPositionStack.length > 0)
 			{
@@ -1093,11 +1099,7 @@ struct Terminal {
 			else
 				return false;
 		}
-		else
-		{
-			// FIXME: needs to update cursorX and cursorY
-			return doTermcap("rc");
-		}
+		assert(0);
 	}
 
 	// only supported on my custom terminal emulator. guarded behind if(inlineImagesSupported)
@@ -1288,18 +1290,29 @@ struct Terminal {
 			} catch(Exception e) {
 				if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal)
 					throw e;
-
 			}
-		} else {
-			this.usingDirectEmulator = true;
 		}
 
-		if(!usingDirectEmulator) {
+		if(integratedTerminalEmulatorConfiguration.preferDegradedTerminal)
+			this.usingDirectEmulator = false;
+
+		// FIXME is this really correct logic?
+		if(!stdinIsTerminal || !stdoutIsTerminal)
+			this.usingDirectEmulator = false;
+
+		if(usingDirectEmulator) {
+			version(Win32Console)
+				UseWin32Console = false;
+			UseVtSequences = true;
+		} else {
 			version(Posix) {
 				posixInitialize(type, 0, 1, null);
 				return;
-			} else {
-				throw new Exception("Total wtf - are you on a windows system without a gui?!?");
+			} else version(Win32Console) {
+				UseVtSequences = false;
+				UseWin32Console = true; // this might be set back to false by windowsInitialize but that's ok
+				windowsInitialize(type);
+				return;
 			}
 			assert(0);
 		}
@@ -1377,7 +1390,45 @@ struct Terminal {
 	this(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
 		_initialized = true;
 		posixInitialize(type, fdIn, fdOut, getSizeOverride);
+	} else version(Win32Console)
+	this(ConsoleOutputType type) {
+		windowsInitialize(type);
 	}
+
+	version(Win32Console)
+	void windowsInitialize(ConsoleOutputType type) {
+		_initialized = true;
+		if(UseVtSequences) {
+			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			initializeVt();
+		} else {
+			if(type == ConsoleOutputType.cellular) {
+				goCellular();
+			} else {
+				hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			}
+
+			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) != 0) {
+				defaultForegroundColor = win32ConsoleColorToArsdTerminalColor(originalSbi.wAttributes & 0x0f);
+				defaultBackgroundColor = win32ConsoleColorToArsdTerminalColor((originalSbi.wAttributes >> 4) & 0x0f);
+			} else {
+				// throw new Exception("not a user-interactive terminal");
+				UseWin32Console = false;
+			}
+
+			// this is unnecessary since I use the W versions of other functions
+			// and can cause weird font bugs, so I'm commenting unless some other
+			// need comes up.
+			/*
+			oldCp = GetConsoleOutputCP();
+			SetConsoleOutputCP(65001); // UTF-8
+
+			oldCpIn = GetConsoleCP();
+			SetConsoleCP(65001); // UTF-8
+			*/
+		}
+	}
+
 
 	version(Posix)
 	private void posixInitialize(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
@@ -1412,7 +1463,14 @@ struct Terminal {
 	}
 
 	private void goCellular() {
-		version(Win32Console) {
+		if(!Terminal.stdoutIsTerminal)
+			throw new Exception("Cannot go to cellular mode with redirected output");
+
+		if(UseVtSequences) {
+			doTermcap("ti");
+			clear();
+			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
+		} else version(Win32Console) if(UseWin32Console) {
 			hConsole = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, null, CONSOLE_TEXTMODE_BUFFER, null);
 			if(hConsole == INVALID_HANDLE_VALUE) {
 				import std.conv;
@@ -1440,23 +1498,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			GetConsoleCursorInfo(hConsole, &originalCursorInfo);
 
 			clear();
-		} else {
-			doTermcap("ti");
-			clear();
-			moveTo(0, 0, ForceOption.alwaysSend); // we need to know where the cursor is for some features to work, and moving it is easier than querying it
 		}
 	}
 
 	private void goLinear() {
-		version(Win32Console) {
+		if(UseVtSequences) {
+			doTermcap("te");
+		} else version(Win32Console) if(UseWin32Console) {
 			auto stdo = GetStdHandle(STD_OUTPUT_HANDLE);
 			SetConsoleActiveScreenBuffer(stdo);
 			if(hConsole !is stdo)
 				CloseHandle(hConsole);
 
 			hConsole = stdo;
-		} else {
-			doTermcap("te");
 		}
 	}
 
@@ -1492,44 +1546,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		CONSOLE_SCREEN_BUFFER_INFO originalSbi;
 	}
 
-	version(Win32Console)
-	/// ditto
-	this(ConsoleOutputType type) {
-		_initialized = true;
-		if(UseVtSequences) {
-			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-			initializeVt();
-		} else {
-			if(type == ConsoleOutputType.cellular) {
-				goCellular();
-			} else {
-				hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-			}
-
-			if(GetConsoleScreenBufferInfo(hConsole, &originalSbi) == 0)
-				throw new Exception("not a user-interactive terminal");
-
-			defaultForegroundColor = cast(Color) (originalSbi.wAttributes & 0x0f);
-			defaultBackgroundColor = cast(Color) ((originalSbi.wAttributes >> 4) & 0x0f);
-
-			// this is unnecessary since I use the W versions of other functions
-			// and can cause weird font bugs, so I'm commenting unless some other
-			// need comes up.
-			/*
-			oldCp = GetConsoleOutputCP();
-			SetConsoleOutputCP(65001); // UTF-8
-
-			oldCpIn = GetConsoleCP();
-			SetConsoleCP(65001); // UTF-8
-			*/
-		}
-	}
-
 	version(Win32Console) {
 		private Color defaultBackgroundColor = Color.black;
 		private Color defaultForegroundColor = Color.white;
-		UINT oldCp;
-		UINT oldCpIn;
+		// UINT oldCp;
+		// UINT oldCpIn;
 	}
 
 	// only use this if you are sure you know what you want, since the terminal is a shared resource you generally really want to reset it to normal when you leave...
@@ -1582,7 +1603,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			if(lineGetter !is null)
 				lineGetter.dispose();
-		} else version(Win32Console) {
+		} else version(Win32Console) if(UseWin32Console) {
 			flush(); // make sure user data is all flushed before resetting
 			reset();
 			showCursor();
@@ -1591,11 +1612,15 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				lineGetter.dispose();
 
 
+			/+
 			SetConsoleOutputCP(oldCp);
 			SetConsoleCP(oldCpIn);
+			+/
 
 			goLinear();
 		}
+
+		flush();
 
 		version(TerminalDirectToEmulator)
 		if(usingDirectEmulator && guiThread !is null) {
@@ -1647,15 +1672,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_currentForegroundRGB = foreground;
 		_currentBackgroundRGB = background;
 
-		version(Win32Console) {
-			flush();
-			ushort setTob = cast(ushort) approximate16Color(background);
-			ushort setTof = cast(ushort) approximate16Color(foreground);
-			SetConsoleTextAttribute(
-				hConsole,
-				cast(ushort)((setTob << 4) | setTof));
-			return false;
-		} else {
+		if(UseVtSequences) {
 			// FIXME: if the terminal reliably does support 24 bit color, use it
 			// instead of the round off. But idk how to detect that yet...
 
@@ -1694,13 +1711,55 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			+/
 
 			return true;
+		} version(Win32Console) if(UseWin32Console) {
+			flush();
+			ushort setTob = arsdTerminalColorToWin32ConsoleColor(approximate16Color(background));
+			ushort setTof = arsdTerminalColorToWin32ConsoleColor(approximate16Color(foreground));
+			SetConsoleTextAttribute(
+				hConsole,
+				cast(ushort)((setTob << 4) | setTof));
+			return false;
 		}
+		assert(0);
 	}
 
 	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
+		if(!stdoutIsTerminal)
+			return;
 		if(force != ForceOption.neverSend) {
-			version(Win32Console) {
+			if(UseVtSequences) {
+				import std.process;
+				// I started using this envvar for my text editor, but now use it elsewhere too
+				// if we aren't set to dark, assume light
+				/*
+				if(getenv("ELVISBG") == "dark") {
+					// LowContrast on dark bg menas
+				} else {
+					foreground ^= LowContrast;
+					background ^= LowContrast;
+				}
+				*/
+
+				ushort setTof = cast(ushort) foreground & ~Bright;
+				ushort setTob = cast(ushort) background & ~Bright;
+
+				if(foreground & Color.DEFAULT)
+					setTof = 9; // ansi sequence for reset
+				if(background == Color.DEFAULT)
+					setTob = 9;
+
+				import std.string;
+
+				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
+					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm\033[%dm",
+						(foreground != Color.DEFAULT && (foreground & Bright)) ? 1 : 0,
+						cast(int) setTof,
+						cast(int) setTob,
+						reverseVideo ? 7 : 27
+					));
+				}
+			} else version(Win32Console) if(UseWin32Console) {
 				// assuming a dark background on windows, so LowContrast == dark which means the bit is NOT set on hardware
 				/*
 				foreground ^= LowContrast;
@@ -1731,38 +1790,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					}
 					SetConsoleTextAttribute(
 						hConsole,
-						cast(ushort)((setTob << 4) | setTof));
-				}
-			} else {
-				import std.process;
-				// I started using this envvar for my text editor, but now use it elsewhere too
-				// if we aren't set to dark, assume light
-				/*
-				if(getenv("ELVISBG") == "dark") {
-					// LowContrast on dark bg menas
-				} else {
-					foreground ^= LowContrast;
-					background ^= LowContrast;
-				}
-				*/
-
-				ushort setTof = cast(ushort) foreground & ~Bright;
-				ushort setTob = cast(ushort) background & ~Bright;
-
-				if(foreground & Color.DEFAULT)
-					setTof = 9; // ansi sequence for reset
-				if(background == Color.DEFAULT)
-					setTob = 9;
-
-				import std.string;
-
-				if(force == ForceOption.alwaysSend || reverseVideo != this.reverseVideo || foreground != _currentForeground || background != _currentBackground) {
-					writeStringRaw(format("\033[%dm\033[3%dm\033[4%dm\033[%dm",
-						(foreground != Color.DEFAULT && (foreground & Bright)) ? 1 : 0,
-						cast(int) setTof,
-						cast(int) setTob,
-						reverseVideo ? 7 : 27
-					));
+						cast(ushort)((arsdTerminalColorToWin32ConsoleColor(cast(Color) setTob) << 4) | arsdTerminalColorToWin32ConsoleColor(cast(Color) setTof)));
 				}
 			}
 		}
@@ -1927,12 +1955,15 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		version(Win32Console)
-			SetConsoleTextAttribute(
-				hConsole,
-				originalSbi.wAttributes);
-		else
-			writeStringRaw("\033[0m");
+		if(stdoutIsTerminal) {
+			if(UseVtSequences)
+				writeStringRaw("\033[0m");
+			else version(Win32Console) if(UseWin32Console) {
+				SetConsoleTextAttribute(
+					hConsole,
+					originalSbi.wAttributes);
+			}
+		}
 
 		_underlined = false;
 		_italics = false;
@@ -1974,8 +2005,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			executeAutoHideCursor();
 			if(UseVtSequences) {
 				doTermcap("cm", y, x);
-			} else version(Win32Console) {
-
+			} else version(Win32Console) if(UseWin32Console) {
 				flush(); // if we don't do this now, the buffering can screw up the position
 				COORD coord = {cast(short) x, cast(short) y};
 				SetConsoleCursorPosition(hConsole, coord);
@@ -1990,7 +2020,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void showCursor() {
 		if(UseVtSequences)
 			doTermcap("ve");
-		else version(Win32Console) {
+		else version(Win32Console) if(UseWin32Console) {
 			CONSOLE_CURSOR_INFO info;
 			GetConsoleCursorInfo(hConsole, &info);
 			info.bVisible = true;
@@ -2002,7 +2032,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void hideCursor() {
 		if(UseVtSequences) {
 			doTermcap("vi");
-		} else version(Win32Console) {
+		} else version(Win32Console) if(UseWin32Console) {
 			CONSOLE_CURSOR_INFO info;
 			GetConsoleCursorInfo(hConsole, &info);
 			info.bVisible = false;
@@ -2022,12 +2052,11 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	private void executeAutoHideCursor() {
 		if(autoHidingCursor) {
-			version(Win32Console)
-				hideCursor();
-			else if(UseVtSequences) {
+			if(UseVtSequences) {
 				// prepend the hide cursor command so it is the first thing flushed
 				writeBuffer = "\033[?25l" ~ writeBuffer;
-			}
+			} else version(Win32Console) if(UseWin32Console)
+				hideCursor();
 
 			autoHiddenCursor = true;
 			autoHidingCursor = false; // already been done, don't insert the command again
@@ -2056,7 +2085,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Changes the terminal's title
 	void setTitle(string t) {
-		version(Win32Console) {
+		import std.string;
+		if(terminalInFamily("xterm", "rxvt", "screen", "tmux"))
+			writeStringRaw(format("\033]0;%s\007", t));
+		else version(Win32Console) if(UseWin32Console) {
 			wchar[256] buffer;
 			size_t bufferLength;
 			foreach(wchar ch; t)
@@ -2067,10 +2099,6 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			else
 				buffer[$-1] = 0;
 			SetConsoleTitleW(buffer.ptr);
-		} else {
-			import std.string;
-			if(terminalInFamily("xterm", "rxvt", "screen", "tmux"))
-				writeStringRaw(format("\033]0;%s\007", t));
 		}
 	}
 
@@ -2106,6 +2134,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		version(Posix) {
 			if(_writeDelegate !is null) {
 				_writeDelegate(writeBuffer);
+				writeBuffer = null;
 			} else {
 				ssize_t written;
 
@@ -2125,14 +2154,22 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				}
 			}
 		} else version(Win32Console) {
-			import std.conv;
-			// FIXME: I'm not sure I'm actually happy with this allocation but
-			// it probably isn't a big deal. At least it has unicode support now.
-			wstring writeBufferw = to!wstring(writeBuffer);
-			while(writeBufferw.length) {
-				DWORD written;
-				WriteConsoleW(hConsole, writeBufferw.ptr, cast(DWORD)writeBufferw.length, &written, null);
-				writeBufferw = writeBufferw[written .. $];
+			// if(_writeDelegate !is null)
+				// _writeDelegate(writeBuffer);
+
+			if(UseWin32Console) {
+				import std.conv;
+				// FIXME: I'm not sure I'm actually happy with this allocation but
+				// it probably isn't a big deal. At least it has unicode support now.
+				wstring writeBufferw = to!wstring(writeBuffer);
+				while(writeBufferw.length) {
+					DWORD written;
+					WriteConsoleW(hConsole, writeBufferw.ptr, cast(DWORD)writeBufferw.length, &written, null);
+					writeBufferw = writeBufferw[written .. $];
+				}
+			} else {
+				import std.stdio;
+				stdout.rawWrite(writeBuffer); // FIXME
 			}
 
 			writeBuffer = null;
@@ -2151,6 +2188,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	private int[] getSizeInternal() {
+		if(!stdoutIsTerminal)
+			throw new Exception("unable to get size of non-terminal");
 		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
 			GetConsoleScreenBufferInfo( hConsole, &info );
@@ -2350,7 +2389,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	void clear() {
 		if(UseVtSequences) {
 			doTermcap("cl");
-		} else version(Win32Console) {
+		} else version(Win32Console) if(UseWin32Console) {
 			// http://support.microsoft.com/kb/99261
 			flush();
 
@@ -2379,7 +2418,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                 if(UseVtSequences) {
                         writeStringRaw("\033[0K");
                 }
-                else version(Windows) {
+                else version(Win32Console) if(UseWin32Console) {
                         updateCursorPosition();
                         auto x = _cursorX;
                         auto y = _cursorY;
@@ -2408,7 +2447,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			terminal.writeln(line);
 			---
 		)
-		You really shouldn't call this if stdin isn't actually a user-interactive terminal! So if you expect people to pipe data to your app, check for that or use something else. See [stdinIsTerminal].
+		You really shouldn't call this if stdin isn't actually a user-interactive terminal! However, if it isn't, it will simply read one line from the pipe without writing the prompt. See [stdinIsTerminal].
 
 		Params:
 			prompt = the prompt to give the user. For example, `"Your name: "`.
@@ -2423,8 +2462,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			Always pass a string if you want it to display a string.
 
 			The `prefilledData` (and overload with it as second param) was added on January 1, 2023 (dub v10.10 / v11.0).
+
+			On November 7, 2023 (dub v11.3), this function started returning stdin.readln in the event that the instance is not connected to a terminal.
 	+/
 	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
+		if(!stdoutIsTerminal || !stdinIsTerminal) {
+			import std.stdio;
+			import std.string;
+			return readln().chomp;
+		}
+
 		if(lineGetter is null)
 			lineGetter = new LineGetter(&this);
 		// since the struct might move (it shouldn't, this should be unmovable!) but since
@@ -2500,12 +2547,16 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                }
 	}
 	private void updateCursorPosition_impl() {
+		if(!stdinIsTerminal || !stdoutIsTerminal)
+			throw new Exception("cannot update cursor position on non-terminal");
 		auto terminal = &this;
 		version(Win32Console) {
-			CONSOLE_SCREEN_BUFFER_INFO info;
-			GetConsoleScreenBufferInfo(terminal.hConsole, &info);
-			_cursorX = info.dwCursorPosition.X;
-			_cursorY = info.dwCursorPosition.Y;
+			if(UseWin32Console) {
+				CONSOLE_SCREEN_BUFFER_INFO info;
+				GetConsoleScreenBufferInfo(terminal.hConsole, &info);
+				_cursorX = info.dwCursorPosition.X;
+				_cursorY = info.dwCursorPosition.Y;
+			}
 		} else version(Posix) {
 			// request current cursor position
 
@@ -4779,6 +4830,8 @@ enum TerminalCapabilities : uint {
 version(Posix)
 private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn, int fdOut) {
 	if(fdIn == -1 || fdOut == -1)
+		return TerminalCapabilities.minimal;
+	if(!isatty(fdIn) || !isatty(fdOut))
 		return TerminalCapabilities.minimal;
 
 	import std.conv;
@@ -8415,15 +8468,37 @@ RGB xtermPaletteIndexToColor(int paletteIdx) {
 	return color;
 }
 
-int approximate16Color(RGB color) {
+Color approximate16Color(RGB color) {
 	int c;
-	c |= color.r > 64 ? RED_BIT : 0;
-	c |= color.g > 64 ? GREEN_BIT : 0;
-	c |= color.b > 64 ? BLUE_BIT : 0;
+	c |= color.r > 64 ? 1 : 0;
+	c |= color.g > 64 ? 2 : 0;
+	c |= color.b > 64 ? 4 : 0;
 
 	c |= (((color.r + color.g + color.b) / 3) > 80) ? Bright : 0;
 
-	return c;
+	return cast(Color) c;
+}
+
+Color win32ConsoleColorToArsdTerminalColor(ushort c) {
+	ushort v = cast(ushort) c;
+	auto b1 = v & 1;
+	auto b2 = v & 2;
+	auto b3 = v & 4;
+	auto b4 = v & 8;
+
+	return cast(Color) ((b1 << 2) | b2 | (b3 >> 2) | b4);
+}
+
+ushort arsdTerminalColorToWin32ConsoleColor(Color c) {
+	assert(c != Color.DEFAULT);
+
+	ushort v = cast(ushort) c;
+	auto b1 = v & 1;
+	auto b2 = v & 2;
+	auto b3 = v & 4;
+	auto b4 = v & 8;
+
+	return cast(ushort) ((b1 << 2) | b2 | (b3 >> 2) | b4);
 }
 
 version(TerminalDirectToEmulator) {
