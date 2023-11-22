@@ -7999,6 +7999,12 @@ class Window : Widget {
 			win.icon = icon;
 	}
 
+	// forwarder to the top-level icon thing so this doesn't conflict too much with the UDAs seen inside the class ins ome older examples
+	// this does NOT change the icon on the window! That's what the other overload is for
+	static @property .icon icon(GenericIcons i) {
+		return .icon(i);
+	}
+
 	///
 	@scriptable
 	@property bool focused() {
@@ -9762,11 +9768,12 @@ class MainWindow : Window {
 	}
 
 	/++
-		Adds a menu and toolbar from annotated functions.
+		Adds a menu and toolbar from annotated functions. It uses the top-level annotations from this module, so it is better to put the commands in a separate struct instad of in your window subclass, to avoid potential conflicts with method names (if you do hit one though, you can use `@(.icon(...))` instead of plain `@icon(...)` to disambiguate, though).
 
 	---
         struct Commands {
                 @menu("File") {
+			@toolbar("") // adds it to a generic toolbar
                         void New() {}
                         void Open() {}
                         void Save() {}
@@ -9777,6 +9784,7 @@ class MainWindow : Window {
                 }
 
                 @menu("Edit") {
+			@icon(GenericIcons.Undo)
                         void Undo() {
                                 undo();
                         }
@@ -9802,6 +9810,7 @@ class MainWindow : Window {
 	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) if(!is(T == class) && !is(T == interface)) {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
 	}
+	/// ditto
 	void setMenuAndToolbarFromAnnotatedCode(T)(T t) if(is(T == class) || is(T == interface)) {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
 	}
