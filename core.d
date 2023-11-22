@@ -38,7 +38,7 @@ version(ArsdUseCustomRuntime)
 {
 	version = EmptyEventLoop;
 	version = UseStdioWriteln;
-} 
+}
 else
 {
 	version = HasFile;
