@@ -119,8 +119,9 @@ import std.stdio;
 // Added Oct 26, 2021
 Row queryOneRow(string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
 	auto res = db.query(sql, t);
+	import arsd.core;
 	if(res.empty)
-		throw new Exception("no row in result", file, line);
+		throw ArsdException!("no row in result")(sql, t, file, line);
 	auto row = res.front;
 	return row;
 }
