@@ -1012,9 +1012,6 @@ version(cef) {
 			// this is for http basic auth popup.....
 			return 0;
 		}
-		override int on_quota_request(RC!(cef_browser_t), const(cef_string_utf16_t)*, long, RC!(cef_callback_t)) nothrow {
-			return 0;
-		}
 		override int on_certificate_error(RC!(cef_browser_t), cef_errorcode_t, const(cef_string_utf16_t)*, RC!(cef_sslinfo_t), RC!(cef_callback_t)) nothrow {
 			return 0;
 		}
