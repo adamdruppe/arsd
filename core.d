@@ -32,11 +32,30 @@ module arsd.core;
 
 // see: https://wiki.openssl.org/index.php/Simple_TLS_Server
 
-import core.thread;
-import core.volatile;
-import core.atomic;
-import core.time;
+///ArsdUseCustomRuntime is used since other derived work from WebAssembly may be used and thus specified in the CLI
+version(WebAssembly) version = ArsdUseCustomRuntime;
+version(ArsdUseCustomRuntime)
+{
+	version = EmptyEventLoop;
+	version = UseStdioWriteln;
+} 
+else
+{
+	version = HasFile;
+	version = HasSocket;
+	version = HasThread;
+	version = HasErrno;
+}
 
+version(HasThread)
+{
+	import core.thread;
+	import core.volatile;
+	import core.atomic;
+	import core.time;
+}
+
+version(HasErrno)
 import core.stdc.errno;
 
 import core.attribute;
@@ -2083,7 +2102,7 @@ package(arsd) enum EventLoopType {
 
 
 // the GC may not be able to see this! remember, it can be hidden inside kernel buffers
-private class CallbackHelper {
+version(HasThread) private class CallbackHelper {
 	import core.memory;
 
 	void call() {
@@ -2307,7 +2326,7 @@ version(Windows) {
 /++
 	An `AbstractFile` represents a file handle on the operating system level. You cannot do much with it.
 +/
-class AbstractFile {
+version(HasFile) class AbstractFile {
 	private {
 		NativeFileHandle handle;
 	}
@@ -2514,7 +2533,7 @@ class AbstractFile {
 /++
 
 +/
-class File : AbstractFile {
+version(HasFile) class File : AbstractFile {
 
 	/++
 		Opens a file in synchronous access mode.
@@ -2553,7 +2572,7 @@ class File : AbstractFile {
 /++
 	 Only one operation can be pending at any time in the current implementation.
 +/
-class AsyncFile : AbstractFile {
+version(HasFile) class AsyncFile : AbstractFile {
 	/++
 		Opens a file in asynchronous access mode.
 	+/
@@ -2855,7 +2874,7 @@ enum OnOutOfSpace {
 
 		interface lookup for bind (stream or dgram)
 +/
-struct SocketAddress {
+version(HasSocket) struct SocketAddress {
 	import core.sys.posix.netdb;
 
 	/++
@@ -3098,7 +3117,7 @@ private version(Windows) {
 	}
 }
 
-class AsyncSocket : AsyncFile {
+version(HasFile) class AsyncSocket : AsyncFile {
 	// otherwise: accept, bind, connect, shutdown, close.
 
 	static auto lastError() {
@@ -3297,7 +3316,7 @@ class AsyncSocket : AsyncFile {
 
 	NOT IMPLEMENTED / NOT STABLE
 +/
-class AsyncConnectRequest : AsyncOperationRequest {
+version(HasSocket) class AsyncConnectRequest : AsyncOperationRequest {
 	// FIXME: i should take a list of addresses and take the first one that succeeds, so a getaddrinfo can be sent straight in.
 	this(AsyncSocket socket, SocketAddress address, ubyte[] dataToWrite) {
 
@@ -3310,7 +3329,7 @@ class AsyncConnectRequest : AsyncOperationRequest {
 }
 /++
 +/
-class AsyncConnectResponse : AsyncOperationResponse {
+version(HasSocket) class AsyncConnectResponse : AsyncOperationResponse {
 	const SystemErrorCode errorCode;
 
 	this(SystemErrorCode errorCode) {
@@ -3330,7 +3349,7 @@ class AsyncConnectResponse : AsyncOperationResponse {
 
 	NOT IMPLEMENTED / NOT STABLE
 +/
-class AsyncAcceptRequest : AsyncOperationRequest {
+version(HasSocket) class AsyncAcceptRequest : AsyncOperationRequest {
 	AsyncSocket socket;
 
 	override void start() {}
@@ -3387,7 +3406,7 @@ class AsyncAcceptRequest : AsyncOperationRequest {
 }
 /++
 +/
-class AsyncAcceptResponse : AsyncOperationResponse {
+version(HasSocket) class AsyncAcceptResponse : AsyncOperationResponse {
 	AsyncSocket newSocket;
 	const SystemErrorCode errorCode;
 
@@ -3407,7 +3426,7 @@ class AsyncAcceptResponse : AsyncOperationResponse {
 
 /++
 +/
-class AsyncReceiveRequest : AsyncOperationRequest {
+version(HasSocket) class AsyncReceiveRequest : AsyncOperationRequest {
 	struct LowLevelOperation {
 		AsyncSocket file;
 		ubyte[] buffer;
@@ -3455,7 +3474,7 @@ class AsyncReceiveRequest : AsyncOperationRequest {
 }
 /++
 +/
-class AsyncReceiveResponse : AsyncOperationResponse {
+version(HasSocket) class AsyncReceiveResponse : AsyncOperationResponse {
 	const ubyte[] bufferWritten;
 	const SystemErrorCode errorCode;
 
@@ -3471,7 +3490,7 @@ class AsyncReceiveResponse : AsyncOperationResponse {
 
 /++
 +/
-class AsyncSendRequest : AsyncOperationRequest {
+version(HasSocket) class AsyncSendRequest : AsyncOperationRequest {
 	struct LowLevelOperation {
 		AsyncSocket file;
 		const(ubyte)[] buffer;
@@ -3517,7 +3536,7 @@ class AsyncSendRequest : AsyncOperationRequest {
 
 /++
 +/
-class AsyncSendResponse : AsyncOperationResponse {
+version(HasSocket) class AsyncSendResponse : AsyncOperationResponse {
 	const ubyte[] bufferWritten;
 	const SystemErrorCode errorCode;
 
@@ -3539,7 +3558,7 @@ class AsyncSendResponse : AsyncOperationResponse {
 
 	NOT IMPLEMENTED / NOT STABLE
 +/
-class StreamServer {
+version(HasSocket) class StreamServer {
 	AsyncSocket[] sockets;
 
 	this(SocketAddress[] listenTo, int backlog = 8) {
@@ -3586,7 +3605,7 @@ unittest {
 
 	NOT IMPLEMENTED / NOT STABLE
 +/
-class DatagramListener {
+version(HasSocket) class DatagramListener {
 	// whenever a udp message arrives, it calls your callback
 	// can be on a specific thread or on any thread
 
@@ -3597,7 +3616,7 @@ class DatagramListener {
 /++
 	Just in case I decide to change the implementation some day.
 +/
-alias AsyncAnonymousPipe = AsyncFile;
+version(HasFile) alias AsyncAnonymousPipe = AsyncFile;
 
 
 // AsyncAnonymousPipe connectNamedPipe(AsyncAnonymousPipe preallocated, string name)
@@ -3614,7 +3633,7 @@ alias AsyncAnonymousPipe = AsyncFile;
 	History:
 		previously in minigui as a private function. Moved to arsd.core on April 3, 2023
 +/
-GetFilesResult getFiles(string directory, scope void delegate(string name, bool isDirectory) dg) {
+version(HasFile) GetFilesResult getFiles(string directory, scope void delegate(string name, bool isDirectory) dg) {
 	// FIXME: my buffers here aren't great lol
 
 	SavedArgument[1] argsForException() {
@@ -4220,7 +4239,7 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 /++
 	You can write to a file asynchronously by creating one of these.
 +/
-final class AsyncWriteRequest : AsyncOperationRequest {
+version(HasSocket) final class AsyncWriteRequest : AsyncOperationRequest {
 	struct LowLevelOperation {
 		AsyncFile file;
 		ubyte[] buffer;
@@ -4274,7 +4293,7 @@ class AsyncWriteResponse : AsyncOperationResponse {
 /++
 
 +/
-final class AsyncReadRequest : AsyncOperationRequest {
+version(HasSocket) final class AsyncReadRequest : AsyncOperationRequest {
 	struct LowLevelOperation {
 		AsyncFile file;
 		ubyte[] buffer;
@@ -4344,7 +4363,7 @@ class AsyncReadResponse : AsyncOperationResponse {
 		runHelperFunction() - whomever it reports to is the parent
 +/
 
-class ScheduableTask : Fiber {
+version(HasThread) class ScheduableTask : Fiber {
 	private void delegate() dg;
 
 	// linked list stuff
@@ -4435,7 +4454,7 @@ void delegate(Throwable t) taskUncaughtException;
 	History:
 		Added August 11, 2023 (dub v11.1)
 +/
-SchedulableTaskController inSchedulableTask() {
+version(HasThread) SchedulableTaskController inSchedulableTask() {
 	import core.thread.fiber;
 
 	if(auto fiber = Fiber.getThis) {
@@ -4446,7 +4465,7 @@ SchedulableTaskController inSchedulableTask() {
 }
 
 /// ditto
-struct SchedulableTaskController {
+version(HasThread) struct SchedulableTaskController {
 	private this(ScheduableTask fiber) {
 		this.fiber = fiber;
 	}
@@ -4497,7 +4516,7 @@ class TaskCancelledException : object.Exception {
 	}
 }
 
-private class CoreWorkerThread : Thread {
+version(HasThread) private class CoreWorkerThread : Thread {
 	this(EventLoopType type) {
 		this.type = type;
 
@@ -4596,7 +4615,7 @@ private int numberOfCpus() {
 	Its destructor runs the event loop then waits to for the workers to finish to clean them up.
 +/
 // FIXME: single instance?
-struct ArsdCoreApplication {
+version(HasThread) struct ArsdCoreApplication {
 	private ICoreEventLoop impl;
 
 	/++
@@ -4650,6 +4669,7 @@ struct ArsdCoreApplication {
 
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
+	version(EmptyEventLoop) void runOnce(){}
 
 	version(Arsd_core_kqueue) {
 		// this thread apc dispatches go as a custom event to the queue
@@ -5579,7 +5599,7 @@ class WritableStream {
 
 	It reads binary data.
 +/
-class ReadableStream {
+version(HasThread) class ReadableStream {
 
 	this() {
 
@@ -6259,7 +6279,13 @@ void writeln(T...)(T t) {
 }
 
 private void actuallyWriteToStdout(scope char[] buffer) @trusted {
-	version(Windows) {
+
+	version(UseStdioWriteln)
+	{
+		import std.stdio;
+		writeln(buffer);
+	}
+	else version(Windows) {
 		import core.sys.windows.wincon;
 
 		auto hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
