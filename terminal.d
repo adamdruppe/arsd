@@ -741,15 +741,11 @@ struct Terminal {
 		// work the way they're advertised. I just have to best-guess hack and hope it
 		// doesn't break anything else. (If you know a better way, let me know!)
 		bool isMacTerminal() {
-		return false;
-		/+
-			// it gives 1,2 in getTerminalCapabilities...
-			// FIXME
+			// it gives 1,2 in getTerminalCapabilities and sets term...
 			import std.process;
 			import std.string;
 			auto term = environment.get("TERM");
-			return term == "xterm-256color";
-		+/
+			return term == "xterm-256color" && tcaps == TerminalCapabilities.vt100;
 		}
 	} else
 		bool isMacTerminal() { return false; }
@@ -1040,7 +1036,19 @@ struct Terminal {
 		return true;
 	}
 
-	uint tcaps;
+	private uint _tcaps;
+	private bool tcapsRequested;
+
+	uint tcaps() const {
+		if(!tcapsRequested) {
+			Terminal* mutable = cast(Terminal*) &this;
+			mutable._tcaps = getTerminalCapabilities(fdIn, fdOut);
+			mutable.tcapsRequested = true;
+		}
+
+		return _tcaps;
+
+	}
 
 	bool inlineImagesSupported() const {
 		return (tcaps & TerminalCapabilities.arsdImage) ? true : false;
@@ -1442,9 +1450,6 @@ struct Terminal {
 			_suppressDestruction = true;
 			return;
 		}
-
-		tcaps = getTerminalCapabilities(fdIn, fdOut);
-		//writeln(tcaps);
 
 		initializeVt();
 	}
@@ -4697,6 +4702,8 @@ void main() {
 
 	//terminal.color(Color.DEFAULT, Color.DEFAULT);
 
+	terminal.writeln(terminal.tcaps);
+
 	//
 	///*
 	auto getter = new FileLineGetter(&terminal, "test");
@@ -4818,8 +4825,13 @@ void main() {
 }
 
 enum TerminalCapabilities : uint {
+	// the low byte is just a linear progression
 	minimal = 0,
-	vt100 = 1 << 0,
+	vt100 = 1, // caps == 1, 2
+	vt220 = 6, // initial 6 in caps. aka the linux console
+	xterm = 64,
+
+	// the rest of them are bitmasks
 
 	// my special terminal emulator extensions
 	arsdClipboard = 1 << 15, // 90 in caps
@@ -4946,22 +4958,31 @@ private uint /* TerminalCapabilities bitmask */ getTerminalCapabilities(int fdIn
 
 	import std.string;
 
-	auto pieces = split(gots, ";");
-	uint ret = TerminalCapabilities.vt100;
-	foreach(p; pieces)
-		switch(p) {
-			case "90":
-				ret |= TerminalCapabilities.arsdClipboard;
-			break;
-			case "91":
-				ret |= TerminalCapabilities.arsdImage;
-			break;
-			case "92":
-				ret |= TerminalCapabilities.arsdHyperlinks;
-			break;
-			default:
+	// import std.stdio; File("tcaps.txt", "wt").writeln(gots);
+
+	if(gots == "1;2") {
+		return TerminalCapabilities.vt100;
+	} else if(gots == "6") {
+		return TerminalCapabilities.vt220;
+	} else {
+		auto pieces = split(gots, ";");
+		uint ret = TerminalCapabilities.xterm;
+		foreach(p; pieces) {
+			switch(p) {
+				case "90":
+					ret |= TerminalCapabilities.arsdClipboard;
+				break;
+				case "91":
+					ret |= TerminalCapabilities.arsdImage;
+				break;
+				case "92":
+					ret |= TerminalCapabilities.arsdHyperlinks;
+				break;
+				default:
+			}
 		}
-	return ret;
+		return ret;
+	}
 }
 
 private extern(C) int mkstemp(char *templ);
