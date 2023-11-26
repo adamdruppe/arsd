@@ -1325,7 +1325,8 @@ struct Terminal {
 			assert(0);
 		}
 
-		tcaps = uint.max; // all capabilities
+		_tcaps = uint.max; // all capabilities
+		tcapsRequested = true;
 		import core.thread;
 
 		version(Posix)
