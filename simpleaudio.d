@@ -2375,7 +2375,7 @@ struct AudioOutput {
 			format.nChannels = cast(ushort) channels;
 			format.nSamplesPerSec = SampleRate;
 			format.nAvgBytesPerSec = SampleRate * channels * 2; // two channels, two bytes per sample
-			format.nBlockAlign = 4;
+			format.nBlockAlign = cast(short)(channels * 2);
 			format.wBitsPerSample = 16;
 			format.cbSize = 0;
 			if(auto err = waveOutOpen(&handle, WAVE_MAPPER, &format, cast(DWORD_PTR) &mmCallback, cast(DWORD_PTR) &this, CALLBACK_FUNCTION))
