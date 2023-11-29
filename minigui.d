@@ -9616,6 +9616,10 @@ class Labeled(T) : Widget {
 				override int flexBasisWidth() {
 					return widthThatWouldFitChildLabels(outerParent);
 				}
+				/+
+				override int widthShrinkiness() { return 0; }
+				override int widthStretchiness() { return 1; }
+				+/
 
 				override int paddingRight() { return 6; }
 				override int paddingLeft() { return 9; }
@@ -9636,6 +9640,7 @@ class Labeled(T) : Widget {
 	T lineEdit; ///
 
 	override int flexBasisWidth() { return 250; }
+	override int widthShrinkiness() { return 1; }
 
 	override int minHeight() {
 		return this.children[0].minHeight;
@@ -12643,6 +12648,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	override int minWidth() { return scaleWithDpi(16); }
 	override int widthStretchiness() { return 7; }
+	override int widthShrinkiness() { return 1; }
 
 	version(use_new_text_system)
 	override int maxHeight() { return tdh.maxHeight; }
@@ -13082,7 +13088,7 @@ class LineEdit : EditableTextWidget {
 	}
 
 	version(win32_widgets) {
-		mixin Padding!q{2};
+		mixin Padding!q{0};
 		override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultLineHeight))).height; }
 		override int maxHeight() { return minHeight; }
 	}
