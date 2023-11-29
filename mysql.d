@@ -208,8 +208,8 @@ class MySql : Database {
 
 		// we want UTF8 for everything
 
-		query("SET NAMES 'utf8'");
-		//query("SET CHARACTER SET utf8");
+		query("SET NAMES 'utf8mb4'");
+		//query("SET CHARACTER SET utf8mb4");
 	}
 
 	string dbname;

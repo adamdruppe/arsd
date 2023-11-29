@@ -623,7 +623,10 @@ version(with_addon_servers)
 	version=with_addon_servers_connections;
 
 version(embedded_httpd) {
-	version=embedded_httpd_hybrid;
+	version(OSX)
+		version = embedded_httpd_threads;
+	else
+		version=embedded_httpd_hybrid;
 	/*
 	version(with_openssl) {
 		pragma(lib, "crypto");
@@ -8578,16 +8581,23 @@ final class ScheduledJobServerImplementation : ScheduledJobServer, EventIoServer
 	int epoll_fd() { return epoll_fd_; }
 }
 
-///
+/++
+	History:
+		Added January 6, 2019
++/
 version(with_addon_servers_connections)
 interface EventSourceServer {
 	/++
 		sends this cgi request to the event server so it will be fed events. You should not do anything else with the cgi object after this.
 
-		$(WARNING This API is extremely unstable. I might change it or remove it without notice.)
-
 		See_Also:
 			[sendEvent]
+
+		Bugs:
+			Not implemented on Windows!
+
+		History:
+			Officially stabilised on November 23, 2023 (dub v11.4). It actually worked pretty well in its original design.
 	+/
 	public static void adoptConnection(Cgi cgi, in char[] eventUrl) {
 		/*
@@ -8641,16 +8651,17 @@ interface EventSourceServer {
 	/++
 		Sends an event to the event server, starting it if necessary. The event server will distribute it to any listening clients, and store it for `lifetime` seconds for any later listening clients to catch up later.
 
-		$(WARNING This API is extremely unstable. I might change it or remove it without notice.)
-
 		Params:
 			url = A string identifying this event "bucket". Listening clients must also connect to this same string. I called it `url` because I envision it being just passed as the url of the request.
 			event = the event type string, which is used in the Javascript addEventListener API on EventSource
 			data = the event data. Available in JS as `event.data`.
 			lifetime = the amount of time to keep this event for replaying on the event server.
 
-		See_Also:
-			[sendEventToEventServer]
+		Bugs:
+			Not implemented on Windows!
+
+		History:
+			Officially stabilised on November 23, 2023 (dub v11.4). It actually worked pretty well in its original design.
 	+/
 	public static void sendEvent(string url, string event, string data, int lifetime) {
 		auto s = openLocalServerConnection("/tmp/arsd_cgi_event_server", "--event-server");

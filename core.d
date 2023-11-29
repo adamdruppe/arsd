@@ -55,6 +55,13 @@ version(HasThread)
 	import core.time;
 }
 
+version(OSX) {
+	version(ArsdNoCocoa)
+		enum bool UseCocoa = false;
+	else
+		enum bool UseCocoa = true;
+}
+
 version(HasErrno)
 import core.stdc.errno;
 
@@ -7183,6 +7190,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 	}
 
 	// helper raii refcount object
+	static if(UseCocoa)
 	struct MacString {
 		union {
 			// must be wrapped cuz of bug in dmd

@@ -1042,7 +1042,10 @@ struct Terminal {
 	uint tcaps() const {
 		if(!tcapsRequested) {
 			Terminal* mutable = cast(Terminal*) &this;
-			mutable._tcaps = getTerminalCapabilities(fdIn, fdOut);
+			version(Posix)
+				mutable._tcaps = getTerminalCapabilities(fdIn, fdOut);
+			else
+				{} // FIXME do something for windows too...
 			mutable.tcapsRequested = true;
 		}
 
