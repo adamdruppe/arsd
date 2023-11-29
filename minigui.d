@@ -9563,6 +9563,23 @@ class DataViewerWidget : Widget {
 +/
 alias LabeledLineEdit = Labeled!LineEdit;
 
+private int widthThatWouldFitChildLabels(Widget w) {
+	if(w is null)
+		return 0;
+
+	int max;
+
+	if(auto label = cast(TextLabel) w) {
+		return label.TextLabel.flexBasisWidth() + label.paddingLeft() + label.paddingRight();
+	} else {
+		foreach(child; w.children) {
+			max = mymax(max, widthThatWouldFitChildLabels(child));
+		}
+	}
+
+	return max;
+}
+
 /++
 	History:
 		Added May 19, 2021
@@ -9589,13 +9606,23 @@ class Labeled(T) : Widget {
 		auto hl = new L(this);
 		if(horizontal) {
 			static class SpecialTextLabel : TextLabel {
-				this(string label, TextAlignment alignment, Widget parent) {
+				Widget outerParent;
+
+				this(string label, TextAlignment alignment, Widget outerParent, Widget parent) {
+					this.outerParent = outerParent;
 					super(label, alignment, parent);
 				}
 
-				override int paddingTop() { return 6; }
+				override int flexBasisWidth() {
+					return widthThatWouldFitChildLabels(outerParent);
+				}
+
+				override int paddingRight() { return 6; }
+				override int paddingLeft() { return 9; }
+
+				override int paddingTop() { return 3; }
 			}
-			this.label = new SpecialTextLabel(label, alignment, hl);
+			this.label = new SpecialTextLabel(label, alignment, parent, hl);
 		} else
 			this.label = new TextLabel(label, alignment, hl);
 		this.lineEdit = new T(hl);

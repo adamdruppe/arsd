@@ -112,21 +112,12 @@ class ColorPickerDialog : Dialog {
 			}
 		};
 
+		auto hs = new HorizontalSlider(0, 1000, 50, t);
+
 		auto hr = new HorizontalLayout(t);
 
-		auto vlRgb = new class VerticalLayout {
-			this() {
-				super(hr);
-			}
-			override int maxWidth() { return 150; };
-		};
-
-		auto vlHsl = new class VerticalLayout {
-			this() {
-				super(hr);
-			}
-			override int maxWidth() { return 150; };
-		};
+		auto vlRgb = new VerticalLayout(180, hr);
+		auto vlHsl = new VerticalLayout(180, hr);
 
 		h = new LabeledLineEdit("Hue:", TextAlignment.Right, vlHsl);
 		s = new LabeledLineEdit("Saturation:", TextAlignment.Right, vlHsl);
@@ -142,6 +133,8 @@ class ColorPickerDialog : Dialog {
 		import std.conv;
 		import std.format;
 
+		double[3] lastHsl;
+
 		void updateCurrent() {
 			r.content = to!string(current.r);
 			g.content = to!string(current.g);
@@ -149,12 +142,18 @@ class ColorPickerDialog : Dialog {
 			a.content = to!string(current.a);
 
 			auto hsl = current.toHsl;
+			if(hsl[2] == 0.0 || hsl[2] == 1.0) {
+				hsl[0 .. 2] = lastHsl[0 .. 2];
+			}
 
-			h.content = format("%0.2f", hsl[0]);
-			s.content = format("%0.2f", hsl[1]);
-			l.content = format("%0.2f", hsl[2]);
+			h.content = format("%0.3f", hsl[0]);
+			s.content = format("%0.3f", hsl[1]);
+			l.content = format("%0.3f", hsl[2]);
+
+			hs.setPosition(cast(int) (hsl[2] * 1000));
 
 			css.content = current.toCssString();
+			lastHsl = hsl;
 		}
 
 		updateCurrent();
@@ -180,6 +179,18 @@ class ColorPickerDialog : Dialog {
 			}
 		}
 
+		hs.addEventListener((ChangeEvent!int ce) {
+			// this should only change l, not hs
+			auto ch = h.content;
+			auto cs = s.content;
+			l.content = to!string(ce.value / 1000.0);
+			convertFromHsl();
+
+			h.content = ch;
+			s.content = cs;
+		});
+
+
 		h.addEventListener("change", &convertFromHsl);
 		s.addEventListener("change", &convertFromHsl);
 		l.addEventListener("change", &convertFromHsl);
@@ -190,26 +201,38 @@ class ColorPickerDialog : Dialog {
 		});
 
 		void helper(MouseEventBase event) {
-			auto h = cast(double) event.clientX / hslImage.width * 360.0;
-			auto s = 1.0 - (cast(double) event.clientY / hslImage.height * 1.0);
-			auto l = this.l.content.to!double;
+			try {
+				// this should ONLY actually change hue and saturation
 
-			current = Color.fromHsl(h, s, l);
-			current.a = a.content.to!ubyte;
+				auto h = cast(double) event.clientX / hslImage.width * 360.0;
+				auto s = 1.0 - (cast(double) event.clientY / hslImage.height * 1.0);
+				auto oldl = this.l.content;
+				auto oldhsp = hs.position;
+				auto l = this.l.content.to!double;
 
-			updateCurrent();
+				current = Color.fromHsl(h, s, l);
+				// import std.stdio; writeln(current.toHsl, " ", h, " ", s, " ", l);
+				current.a = a.content.to!ubyte;
 
-			auto e2 = new Event("change", this);
-			e2.dispatch();
+				updateCurrent();
+
+				this.l.content = oldl;
+				hs.setPosition(oldhsp);
+
+				auto e2 = new Event("change", this);
+				e2.dispatch();
+			} catch(Exception e) {
+			}
 		}
 
 		if(hslImage !is null)
-		wid.addEventListener((MouseDownEvent ev) { helper(ev); });
+			wid.addEventListener((MouseDownEvent ev) { helper(ev); });
+
 		if(hslImage !is null)
-		wid.addEventListener((MouseMoveEvent event) {
-			if(event.state & ModifierState.leftButtonDown)
-				helper(event);
-		});
+			wid.addEventListener((MouseMoveEvent event) {
+				if(event.state & ModifierState.leftButtonDown)
+					helper(event);
+			});
 
 		this.addEventListener((KeyDownEvent event) {
 			if(event.key == Key.Enter || event.key == Key.PadEnter)
