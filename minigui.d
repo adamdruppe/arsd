@@ -1599,7 +1599,8 @@ class Widget : ReflectableProperties {
 		version(win32_widgets) {
 			if(hwnd) {
 				auto pos = getChildPositionRelativeToParentHwnd(this);
-				MoveWindow(hwnd, pos[0], pos[1], width, height, false); // setting this to false can sometimes speed things up but only if it is actually drawn later and that's kinda iffy to do right here so being slower but safer rn
+				MoveWindow(hwnd, pos[0], pos[1], width, height, true); // setting this to false can sometimes speed things up but only if it is actually drawn later and that's kinda iffy to do right here so being slower but safer rn
+				this.redraw();
 			}
 		}
 		sendResizeEvent();
@@ -3675,7 +3676,7 @@ struct WidgetPainter {
 	static @property void visualTheme(BaseVisualTheme theme) {
 		_visualTheme = theme;
 
-		// FIXME: notify all windows about the new theme
+		// FIXME: notify all windows about the new theme, they should recompute layout and redraw.
 	}
 
 	/// ditto
@@ -5104,7 +5105,7 @@ class ScrollableWidget : Widget {
 
 		version(custom_widgets) {
 			if(showingVerticalScroll || showingHorizontalScroll) {
-				outerContainer.recomputeChildLayout();
+				outerContainer.queueRecomputeChildLayout();
 			}
 
 			if(showingVerticalScroll())
@@ -5112,7 +5113,7 @@ class ScrollableWidget : Widget {
 			if(showingHorizontalScroll())
 				outerContainer.horizontalScrollBar.redraw();
 		} else version(win32_widgets) {
-			recomputeChildLayout();
+			queueRecomputeChildLayout();
 		} else static assert(0);
 	}
 
@@ -5284,6 +5285,12 @@ private mixin template ScrollableChildren() {
 			paintFrameAndBackground(painter);
 		}
 
+		/+
+		version(win32_widgets) {
+			if(hwnd) RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW);// | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		}
+		+/
+
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
 		if(force || redrawRequested) {
@@ -5306,6 +5313,7 @@ private mixin template ScrollableChildren() {
 			actuallyPainted = true;
 			redrawRequested = false;
 		}
+
 		foreach(child; children) {
 			if(cast(FixedPosition) child)
 				child.privatePaint(painter, painter.originX + scrollOrigin.x, painter.originY + scrollOrigin.y, clip, actuallyPainted, invalidate);
@@ -7172,7 +7180,7 @@ class PageWidget : Widget {
 		foreach(idx, child; children)
 			if(idx == item) {
 				child.show();
-				child.recomputeChildLayout();
+				child.queueRecomputeChildLayout();
 			} else {
 				child.hide();
 			}
@@ -7816,7 +7824,7 @@ class ScrollMessageWidget : Widget {
 			magic = false;
 			scope(exit) magic = true;
 			this.header = new Widget(this);
-			recomputeChildLayout();
+			queueRecomputeChildLayout();
 		}
 		return this.header;
 	}
@@ -8097,7 +8105,6 @@ class Window : Widget {
 		}
 		auto painter = w.draw(true);
 		privatePaint(WidgetPainter(painter, this), lox, loy, Rectangle(0, 0, int.max, int.max), false, willDraw());
-		// RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
 	}
 
 
@@ -8152,7 +8159,7 @@ class Window : Widget {
 		win.windowResized = (int w, int h) {
 			this.width = w;
 			this.height = h;
-			recomputeChildLayout();
+			queueRecomputeChildLayout();
 			// this causes a HUGE performance problem for no apparent benefit, hence the commenting
 			//version(win32_widgets)
 				//InvalidateRect(hwnd, null, true);
@@ -8661,7 +8668,7 @@ class Window : Widget {
 		bool rd = false;
 		if(firstShow) {
 			firstShow = false;
-			recomputeChildLayout();
+			queueRecomputeChildLayout();
 			auto f = getFirstFocusable(this); // FIXME: autofocus?
 			if(f)
 				f.focus();
@@ -9979,7 +9986,7 @@ class MainWindow : Window {
 	MenuBar menuBar(MenuBar m) {
 		if(m is _menu) {
 			version(custom_widgets)
-				recomputeChildLayout();
+				queueRecomputeChildLayout();
 			return m;
 		}
 
@@ -9998,7 +10005,7 @@ class MainWindow : Window {
 		//	clientArea.y = menu.height;
 		//	clientArea.height = this.height - menu.height;
 
-			recomputeChildLayout();
+			queueRecomputeChildLayout();
 		} else static assert(false);
 
 		return _menu;
@@ -10086,7 +10093,7 @@ class ToolBar : Widget {
 		idealHeight = useLarge ? 34 : 26;
 
 		if(parent) {
-			parent.recomputeChildLayout();
+			parent.queueRecomputeChildLayout();
 			parent.redraw();
 		}
 
@@ -10420,7 +10427,7 @@ class StatusBar : Widget {
 			p.idx = cast(int) owner.partsArray.length;
 			owner.partsArray ~= p;
 
-			owner.recomputeChildLayout();
+			owner.queueRecomputeChildLayout();
 
 			version(win32_widgets) {
 				int[256] pos;
@@ -10965,7 +10972,7 @@ class Menu : Window {
 				// hacking it to get the ideal height out of recomputeChildLayout
 				this.width = w;
 				this.height = h;
-				this.recomputeChildLayout();
+				this.recomputeChildLayoutEntry();
 				h = this.children[$-1].y + this.children[$-1].height + this.children[$-1].marginBottom;
 				h += paddingBottom;
 
@@ -10982,7 +10989,7 @@ class Menu : Window {
 			this.width = dropDown.width;
 			this.height = dropDown.height;
 			this.drawableWindow = dropDown;
-			this.recomputeChildLayout();
+			this.recomputeChildLayoutEntry();
 
 			static if(UsingSimpledisplayX11)
 				XSync(XDisplayConnection.get, 0);

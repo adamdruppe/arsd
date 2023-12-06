@@ -12277,6 +12277,8 @@ version(Windows) {
 
 					// nothing relevant changed, don't bother redrawing
 					if(oldWidth == _width && oldHeight == _height) {
+						if(msg == 0x0232)
+							goto finalize_resize;
 						break;
 					}
 
@@ -12334,13 +12336,23 @@ version(Windows) {
 					if(windowResized !is null)
 						windowResized(_width, _height);
 
+					/+
 					if(inSizeMove) {
-						SimpleWindow.processAllCustomEvents();
-						SimpleWindow.processAllCustomEvents();
+						// SimpleWindow.processAllCustomEvents();
+						// SimpleWindow.processAllCustomEvents();
+
+						//RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
+						//sdpyPrintDebugString("redraw b");
 					} else {
+					+/ {
+						finalize_resize:
 						// when it is all done, make sure everything is freshly drawn or there might be
 						// weird bugs left.
+						SimpleWindow.processAllCustomEvents();
+						SimpleWindow.processAllCustomEvents();
+
 						RedrawWindow(hwnd, null, null, RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
+						// sdpyPrintDebugString("redraw");
 					}
 
 					oldWidth = this._width;
