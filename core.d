@@ -34,6 +34,12 @@ module arsd.core;
 
 ///ArsdUseCustomRuntime is used since other derived work from WebAssembly may be used and thus specified in the CLI
 version(WebAssembly) version = ArsdUseCustomRuntime;
+
+version(iOS)
+{
+	version = EmptyEventLoop;
+	version = EmptyCoreEvent;
+}
 version(ArsdUseCustomRuntime)
 {
 	version = EmptyEventLoop;
@@ -2008,7 +2014,10 @@ interface ICoreEventLoop {
 				} else version(Arsd_core_kqueue) {
 					// intentionally blank - all registrations are one-shot there
 					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
-				} else static assert(0);
+				} else version(EmptyCoreEvent) {
+
+				}
+				else static assert(0);
 
 				cb.release();
 				this = typeof(this).init;
@@ -2034,6 +2043,8 @@ interface ICoreEventLoop {
 				} else version(Arsd_core_kqueue) {
 					// intentionally blank - all registrations are one-shot there
 					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
+				} else version(EmptyCoreEvent) {
+
 				} else static assert(0);
 
 				cb.release();
@@ -4677,6 +4688,13 @@ version(HasThread) struct ArsdCoreApplication {
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
 	version(EmptyEventLoop) void runOnce(){}
+	version(EmptyCoreEvent)
+	{
+		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb){return typeof(return).init;}
+		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb){return typeof(return).init;}
+		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb){return typeof(return).init;}
+		private void rearmFd(RearmToken token) {}
+	}
 
 	version(Arsd_core_kqueue) {
 		// this thread apc dispatches go as a custom event to the queue
