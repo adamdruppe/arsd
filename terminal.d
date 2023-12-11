@@ -9579,6 +9579,9 @@ auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 			terminal = new Terminal(ConsoleOutputType.linear);
 			rtti = new RealTimeConsoleInput(terminal, ConsoleInputFlags.releasedKeys);
 			listener = rtti.integrateWithSimpleDisplayEventLoop(delegate(InputEvent ie) {
+				if(ie.type == InputEvent.Type.HangupEvent || ie.type == InputEvent.Type.EndOfFileEvent)
+					disconnect();
+
 				if(ie.type != InputEvent.Type.KeyboardEvent)
 					return;
 				auto kbd = ie.get!(InputEvent.Type.KeyboardEvent);
@@ -9664,12 +9667,24 @@ auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 				}
 			});
 		}
-		~this() {
+
+		void disconnect() {
+			if(listener is null)
+				return;
 			listener.dispose();
-			.destroy(*rtti);
-			.destroy(*terminal);
+			listener = null;
+			try {
+				.destroy(*rtti);
+				.destroy(*terminal);
+			} catch(Exception e) {
+
+			}
 			rtti = null;
 			terminal = null;
+		}
+
+		~this() {
+			disconnect();
 		}
 	}
 	return impl(window);

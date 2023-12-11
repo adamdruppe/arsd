@@ -2730,6 +2730,7 @@ P s = 2 3 ; 2 → Restore xterm window title from stack.
 					case 'E': cursorY = cursorY + getArgs(1)[0]; cursorX = 0; break;
 					case 'F': cursorY = cursorY - getArgs(1)[0]; cursorX = 0; break;
 					case 'G': cursorX = getArgs(1)[0] - 1; break;
+					case 'f': // wikipedia says it is the same except it is a format func instead of editor func. idk what the diff is
 					case 'H':
 						auto got = getArgs(1, 1);
 						cursorX = got[1] - 1;
