@@ -10032,11 +10032,13 @@ q"css
 			}
 			#site-container {
 				display: flex;
+				flex-wrap: wrap;
 			}
 			main {
 				flex: 1 1 auto;
 				order: 2;
 				min-height: calc(100vh - 64px - 64px);
+				min-width: 80ch;
 				padding: 4px;
 				padding-left: 1em;
 			}
