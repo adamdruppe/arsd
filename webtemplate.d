@@ -27,6 +27,8 @@
 
 			<render-template file="partial.html" />
 
+			<document-fragment></document-fragment>
+
 			<script>
 				var a = <%= some_var %>; // it will be json encoded in a script tag, so it can be safely used from Javascript
 			</script>
@@ -144,10 +146,56 @@ void addDefaultFunctions(var context) {
 		context.data = var.emptyObject;
 }
 
-///
-Document renderTemplate(string templateName, var context = var.emptyObject, var skeletonContext = var.emptyObject, string skeletonName = null) {
-	import std.file;
+/++
+	A loader object for reading raw template, so you can use something other than files if you like.
+
+	See [TemplateLoader.forDirectory] to a pre-packaged class that implements a loader for a particular directory.
+
+	History:
+		Added December 11, 2023 (dub v11.3)
++/
+interface TemplateLoader {
+	/++
+		This is the main method to look up a template name and return its HTML as a string.
+
+		Typical implementation is to just `return std.file.readText(directory ~ name);`
+	+/
+	string loadTemplateHtml(string name);
+
+	/++
+		Returns a loader for files in the given directory.
+	+/
+	static TemplateLoader forDirectory(string directoryName) {
+		if(directoryName.length && directoryName[$-1] != '/')
+			directoryName ~= "/";
+
+		return new class TemplateLoader {
+			string loadTemplateHtml(string name) {
+				import std.file;
+				return readText(directoryName ~ name);
+			}
+		};
+	}
+}
+
+/++
+	Loads a template from the template directory, applies the given context variables, and returns the html document in dom format. You can use [Document.toString] to make a string.
+
+	Parameters:
+		templateName = the name of the main template to load. This is usually a .html filename in the `templates` directory (but see also the `loader` param)
+		context = the global object available to scripts inside the template
+		skeletonContext = the global object available to the skeleton template
+		skeletonName = the name of the skeleton template to load. This is usually a .html filename in the `templates` directory (but see also the `loader` param), and the skeleton file has the boilerplate html and defines placeholders for the main template
+		loader = a class that defines how to load templates by name. If you pass `null`, it uses a default implementation that loads files from the `templates/` directory.
+
+	History:
+		Parameter `loader` was added on December 11, 2023 (dub v11.3)
++/
+Document renderTemplate(string templateName, var context = var.emptyObject, var skeletonContext = var.emptyObject, string skeletonName = null, TemplateLoader loader = null) {
 	import arsd.cgi;
+
+	if(loader is null)
+		loader = TemplateLoader.forDirectory("templates/");
 
 	try {
 		addDefaultFunctions(context);
@@ -156,12 +204,12 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 		if(skeletonName.length == 0)
 			skeletonName = "skeleton.html";
 
-		auto skeleton = new Document(readText("templates/" ~ skeletonName), true, true);
+		auto skeleton = new Document(loader.loadTemplateHtml(skeletonName), true, true);
 		auto document = new Document();
 		document.parseSawAspCode = (string) => true; // enable adding <% %> to the dom
-		document.parse("<root>" ~ readText("templates/" ~ templateName) ~ "</root>", true, true);
+		document.parse("<root>" ~ loader.loadTemplateHtml(templateName) ~ "</root>", true, true);
 
-		expandTemplate(skeleton.root, skeletonContext);
+		expandTemplate(skeleton.root, skeletonContext, loader);
 
 		foreach(nav; skeleton.querySelectorAll("nav[data-relative-to]")) {
 			auto r = nav.getAttribute("data-relative-to");
@@ -170,9 +218,11 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 			}
 		}
 
-		expandTemplate(document.root, context);
+		expandTemplate(document.root, context, loader);
 
 		// also do other unique elements and move them over.
+		// and have some kind of <document-fragment> that can be just reduced when going out in the final result.
+
 		// and try partials.
 
 		auto templateMain = document.requireSelector(":root > main");
@@ -182,8 +232,16 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 		}
 
 		skeleton.requireSelector("main").replaceWith(templateMain.removeFromTree);
+
 		if(auto title = document.querySelector(":root > title"))
 			skeleton.requireSelector(":root > head > title").innerHTML = title.innerHTML;
+
+		// also allow top-level unique id replacements
+		foreach(item; document.querySelectorAll(":root > [id]"))
+			skeleton.requireElementById(item.id).replaceWith(item.removeFromTree);
+
+		foreach(df; skeleton.querySelectorAll("document-fragment"))
+			df.stripOut();
 
 		debug
 		skeleton.root.prependChild(new HtmlComment(null, templateName ~ " inside skeleton.html"));
@@ -195,8 +253,47 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 	}
 }
 
-// I don't particularly like this
-void expandTemplate(Element root, var context) {
+/++
+	Shows how top-level things from the template are moved to their corresponding items on the  skeleton.
++/
+unittest {
+	// for the unittest, we want to inject a loader that uses plain strings instead of files.
+	auto testLoader = new class TemplateLoader {
+		string loadTemplateHtml(string name) {
+			switch(name) {
+				case "skeleton":
+					return `
+						<html>
+							<head>
+								<!-- you can define replaceable things with ids -->
+								<!-- including <document-fragment>s which are stripped out when the template is finalized -->
+								<document-fragment id="header-stuff" />
+							</head>
+							<body>
+								<main></main>
+							</body>
+						</html>
+					`;
+				case "main":
+					return `
+						<main>Hello</main>
+						<document-fragment id="header-stuff">
+							<title>My title</title>
+						</document-fragment>
+					`;
+				default: assert(0);
+			}
+		}
+	};
+
+	Document doc = renderTemplate("main", var.emptyObject, var.emptyObject, "skeleton", testLoader);
+
+	assert(doc.querySelector("document-fragment") is null); // the <document-fragment> items are stripped out
+	assert(doc.querySelector("title") !is null); // but the stuff from inside it is brought in
+	assert(doc.requireSelector("main").textContent == "Hello"); // and the main from the template is moved to the skeelton
+}
+
+private void expandTemplate(Element root, var context, TemplateLoader loader) {
 	import std.string;
 
 	string replaceThingInString(string v) {
@@ -237,7 +334,7 @@ void expandTemplate(Element root, var context) {
 			auto got = interpret(ele.attrs.cond, context).opCast!bool;
 			if(got) {
 				ele.tagName = "root";
-				expandTemplate(ele, context);
+				expandTemplate(ele, context, loader);
 				fragment.stealChildren(ele);
 			}
 			lastBoolResult = got;
@@ -246,7 +343,7 @@ void expandTemplate(Element root, var context) {
 			auto fragment = new DocumentFragment(null);
 			if(!lastBoolResult) {
 				ele.tagName = "root";
-				expandTemplate(ele, context);
+				expandTemplate(ele, context, loader);
 				fragment.stealChildren(ele);
 			}
 			ele.replaceWith(fragment);
@@ -262,7 +359,7 @@ void expandTemplate(Element root, var context) {
 					nc[ele.attrs.index] = k;
 				auto clone = ele.cloneNode(true);
 				clone.tagName = "root"; // it certainly isn't a for-each anymore!
-				expandTemplate(clone, nc);
+				expandTemplate(clone, nc, loader);
 
 				fragment.stealChildren(clone);
 			}
@@ -272,7 +369,7 @@ void expandTemplate(Element root, var context) {
 			auto templateName = ele.getAttribute("file");
 			auto document = new Document();
 			document.parseSawAspCode = (string) => true; // enable adding <% %> to the dom
-			document.parse("<root>" ~ readText("templates/" ~ templateName) ~ "</root>", true, true);
+			document.parse("<root>" ~ loader.loadTemplateHtml(templateName) ~ "</root>", true, true);
 
 			var obj = var.emptyObject;
 			obj.prototype = context;
@@ -282,7 +379,7 @@ void expandTemplate(Element root, var context) {
 				obj["data"] = var.fromJson(data);
 			}
 
-			expandTemplate(document.root, obj);
+			expandTemplate(document.root, obj, loader);
 
 			auto fragment = new DocumentFragment(null);
 
@@ -347,7 +444,7 @@ void expandTemplate(Element root, var context) {
 				ele.innerRawSource = newCode;
 			}
 		} else {
-			expandTemplate(ele, context);
+			expandTemplate(ele, context, loader);
 		}
 	}
 
@@ -488,7 +585,7 @@ template WebPresenterWithTemplateSupport(CTRP) {
 	import arsd.cgi;
 	class WebPresenterWithTemplateSupport : WebPresenter!(CTRP) {
 		override Element htmlContainer() {
-			auto skeleton = renderTemplate("generic.html");
+			auto skeleton = renderTemplate("generic.html", var.emptyObject, var.emptyObject, "skeleton.html", templateLoader());
 			return skeleton.requireSelector("main");
 		}
 
@@ -526,9 +623,20 @@ template WebPresenterWithTemplateSupport(CTRP) {
 		/// You can override this
 		void addContext(Cgi cgi, var ctx) {}
 
+		/++
+			You can override this. The default is "templates/". Your returned string must end with '/'.
+			(in future versions it will probably allow a null return too, but right now it must be a /).
+
+			History:
+				Added December 6, 2023 (dub v11.3)
+		+/
+		TemplateLoader templateLoader() {
+			return null;
+		}
+
 		void presentSuccessfulReturnAsHtml(T : RenderTemplate)(Cgi cgi, T ret, Meta meta) {
 			addContext(cgi, ret.context);
-			auto skeleton = renderTemplate(ret.name, ret.context, ret.skeletonContext, ret.skeletonName);
+			auto skeleton = renderTemplate(ret.name, ret.context, ret.skeletonContext, ret.skeletonName, templateLoader());
 			cgi.setResponseContentType("text/html; charset=utf8");
 			cgi.gzipResponse = true;
 			cgi.write(skeleton.toString(), true);
