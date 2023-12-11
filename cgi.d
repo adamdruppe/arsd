@@ -568,6 +568,35 @@ unittest {
 	}
 }
 
+/++
+	The session system works via a built-in spawnable server.
+
+	Bugs:
+		Requires addon servers, which are not implemented yet on Windows.
++/
+version(Posix)
+version(Demo)
+unittest {
+	import arsd.cgi;
+
+	struct SessionData {
+		string userId;
+	}
+
+	void handler(Cgi cgi) {
+		auto session = cgi.getSessionObject!SessionData;
+
+		if(cgi.pathInfo == "/login") {
+			session.userId = cgi.queryString;
+			cgi.setResponseLocation("view");
+		} else {
+			cgi.write(session.userId);
+		}
+	}
+
+	mixin GenericMain!handler;
+}
+
 static import std.file;
 
 static import arsd.core;
@@ -2790,15 +2819,17 @@ class Cgi {
 			// FIXME: the changes are not printed out at the end!
 			if(_commandLineSession !is null) {
 				if(commandLineSessionObject is null) {
-					commandLineSessionObject = new MockSession!Data();
+					auto clso = new MockSession!Data();
+					commandLineSessionObject = clso;
+
 
 					foreach(memberName; __traits(allMembers, Data)) {
-						if(auto str = memberName in commandLineSessionObject)
-							__traits(getMember, commandLineSessionObject.store_, memberName) = to!(typeof(__traits(getMember, Data, memberName)))(*str);
+						if(auto str = memberName in _commandLineSession)
+							__traits(getMember, clso.store_, memberName) = to!(typeof(__traits(getMember, Data, memberName)))(*str);
 					}
 				}
 
-				return commandLineSessionObject;
+				return cast(typeof(return)) commandLineSessionObject;
 			}
 
 			// normal operation
