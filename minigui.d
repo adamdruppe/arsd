@@ -7624,8 +7624,8 @@ class ScrollMessageWidget : Widget {
 		auto _this = this;
 		container.addEventListener((scope ClickEvent ce) {
 
-			if(ce.target && ce.target.tabStop)
-				ce.target.focus();
+			//if(ce.target && ce.target.tabStop)
+				//ce.target.focus();
 
 			// ctrl is reserved for the application
 			if(ce.ctrlKey)
@@ -8232,8 +8232,10 @@ class Window : Widget {
 
 	version(custom_widgets)
 	override void defaultEventHandler_click(ClickEvent event) {
-		if(event.target && event.target.tabStop)
-			event.target.focus();
+		if(event.button != MouseButton.wheelDown && event.button != MouseButton.wheelUp) {
+			if(event.target && event.target.tabStop)
+				event.target.focus();
+		}
 	}
 
 	private static void delegate(Window) newWindowCreated;
@@ -12072,13 +12074,18 @@ class TextDisplayHelper : Widget {
 	override Menu contextMenu(int x, int y) {
 		if(ctx is null) {
 			ctx = new Menu("Actions", this);
-			ctx.addItem(new MenuItem(new Action("&Undo", GenericIcons.Undo, &undo)));
-			ctx.addItem(new MenuItem(new Action("&Redo", GenericIcons.Redo, &redo)));
-			ctx.addSeparator();
-			ctx.addItem(new MenuItem(new Action("Cu&t", GenericIcons.Cut, &cut)));
+			if(!readonly) {
+				ctx.addItem(new MenuItem(new Action("&Undo", GenericIcons.Undo, &undo)));
+				ctx.addItem(new MenuItem(new Action("&Redo", GenericIcons.Redo, &redo)));
+				ctx.addSeparator();
+			}
+			if(!readonly)
+				ctx.addItem(new MenuItem(new Action("Cu&t", GenericIcons.Cut, &cut)));
 			ctx.addItem(new MenuItem(new Action("&Copy", GenericIcons.Copy, &copy)));
-			ctx.addItem(new MenuItem(new Action("&Paste", GenericIcons.Paste, &paste)));
-			ctx.addItem(new MenuItem(new Action("&Delete", 0, &deleteContentOfSelection)));
+			if(!readonly)
+				ctx.addItem(new MenuItem(new Action("&Paste", GenericIcons.Paste, &paste)));
+			if(!readonly)
+				ctx.addItem(new MenuItem(new Action("&Delete", 0, &deleteContentOfSelection)));
 			ctx.addSeparator();
 			ctx.addItem(new MenuItem(new Action("Select &All", 0, &selectAll)));
 		}
@@ -12099,6 +12106,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	void undo() {
+		if(readonly) return;
 		if(undoStack.length) {
 			auto state = undoStack[$-1];
 			undoStack = undoStack[0 .. $-1];
@@ -12113,6 +12121,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	void redo() {
+		if(readonly) return;
 		if(redoStack.length) {
 			doStateCheckpoint();
 			auto state = redoStack[$-1];
@@ -12127,6 +12136,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	void cut() {
+		if(readonly) return;
 		with(l.selection()) {
 			if(!isEmpty()) {
 				setClipboardText(parentWindow.win, getContentString());
@@ -12150,6 +12160,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	void paste() {
+		if(readonly) return;
 		getClipboardText(parentWindow.win, (txt) {
 			doStateCheckpoint();
 			l.selection.replaceContent(txt);
@@ -12160,6 +12171,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	void deleteContentOfSelection() {
+		if(readonly) return;
 		doStateCheckpoint();
 		l.selection.replaceContent("");
 		l.selection.setUserXCoordinate();
@@ -13253,6 +13265,21 @@ class TextDisplay : EditableTextWidget {
 			smw.horizontalScrollBar.hide();
 			super(textLayout, smw);
 			this.readonly = true;
+		}
+
+		override void registerMovement() {
+			super.registerMovement();
+
+			// FIXME: do the horizontal one too as needed and make sure that it does
+			// wordwrapping again
+			if(l.height + smw.horizontalScrollBar.height > this.height)
+				smw.verticalScrollBar.show();
+			else
+				smw.verticalScrollBar.hide();
+
+			l.wordWrapWidth = this.width;
+
+			smw.verticalScrollBar.setPosition = 0;
 		}
 
 		class Style : Widget.Style {
