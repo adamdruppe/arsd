@@ -3057,7 +3057,6 @@ struct cef_cookie_t
     /// The cookie creation date. This is automatically populated by the system on
     /// cookie creation.
     ///
-g
     cef_basetime_t creation;
 
     ///
@@ -4378,7 +4377,6 @@ struct cef_draggable_region_t
     ///
     /// Bounds of the region.
     ///
-g
     cef_rect_t bounds;
 
     ///
@@ -5717,11 +5715,10 @@ alias CT_DND_LINK = cef_cursor_type_t.CT_DND_LINK;
 ///
 struct cef_cursor_info_t
 {
-g
     cef_point_t hotspot;
     float image_scale_factor;
     void* buffer;
-g
+
     cef_size_t size;
 }
 
@@ -6245,7 +6242,6 @@ struct cef_box_layout_settings_t
     ///
     /// Adds additional space around the child view area.
     ///
-g
     cef_insets_t inside_border_insets;
 
     ///
@@ -7424,7 +7420,6 @@ struct cef_accessibility_handler_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_ACCESSIBILITY_HANDLER_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_accessibility_handler_t* self,
@@ -7492,7 +7487,6 @@ struct cef_app_t
     /// cef_command_line_t object passed to this function. The
     /// cef_settings_t.command_line_args_disabled value can be used to start with
     /// an NULL command-line object. Any values specified in CefSettings that
-g
     cef_base_ref_counted_t base;
     /// equate to command-line arguments will be set before this function is
     /// called. Be cautious when using this function to modify command-line
@@ -7672,7 +7666,6 @@ struct cef_audio_handler_t
     /// Called on a browser audio capture thread when the browser starts streaming
     /// audio. OnAudioStreamStopped will always be called after
     /// OnAudioStreamStarted; both functions may be called multiple times for the
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_audio_handler_t* self,
@@ -7787,7 +7780,6 @@ struct cef_auth_callback_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_AUTH_CALLBACK_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_auth_callback_t* self,
@@ -7951,7 +7943,6 @@ struct cef_browser_t
     ///
     /// True if this object is currently valid. This will return false (0) after
     /// cef_life_span_handler_t::OnBeforeClose is called.
-g
     cef_base_ref_counted_t base;
     ///
     extern(System) int function (cef_browser_t* self) nothrow is_valid;
@@ -8951,7 +8942,6 @@ struct cef_browser_process_handler_t
     /// accessed via cef_preference_manager_t::GetGlobalPreferences after
     /// OnContextInitialized is called. Global preferences are registered a single
     /// time at application startup. See related cef_settings_t.cache_path and
-g
     cef_base_ref_counted_t base;
     /// cef_settings_t.persist_user_preferences configuration.
     ///
@@ -9091,7 +9081,6 @@ struct cef_callback_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_CALLBACK_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) void function (cef_callback_t* self) nothrow cont;
     extern(System) void function (cef_callback_t* self) nothrow cancel;
@@ -9154,7 +9143,6 @@ struct cef_client_t
     ///
     /// Base structure.
     ///
-g
     cef_base_ref_counted_t base; ///
     /// Return the handler for audio rendering events.
     ///
@@ -9334,7 +9322,6 @@ struct cef_command_handler_t
     /// will be called after cef_context_menu_handler_t::OnContextMenuCommand.
     /// Only used with the Chrome runtime.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_command_handler_t* self,
@@ -9445,7 +9432,6 @@ struct cef_command_line_t
     ///
     /// Returns true (1) if this object is valid. Do not call any other functions
     /// if this function returns false (0).
-g
     cef_base_ref_counted_t base;
     ///
     extern(System) int function (cef_command_line_t* self) nothrow is_valid;
@@ -9659,7 +9645,6 @@ struct cef_run_context_menu_callback_t
 
     ///
     /// Callback structure used for continuation of custom quick menu display.
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_run_context_menu_callback_t* self,
@@ -10022,7 +10007,6 @@ struct cef_cookie_manager_t
     /// Visit a subset of cookies on the UI thread. The results are filtered by
     /// the given url scheme, host, domain and path. If |includeHttpOnly| is true
     /// (1) HTTP-only cookies will also be included in the results. The returned
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_cookie_manager_t* self,
@@ -10367,7 +10351,6 @@ struct cef_dev_tools_message_observer_t
     /// OnDevToolsMethodResult or OnDevToolsEvent functions as appropriate.
     ///
     /// Method result dictionaries include an "id" (int) value that identifies the
-g
     cef_base_ref_counted_t base;
     /// orginating function call sent from
     /// cef_browser_host_t::SendDevToolsMessage, and optionally either a "result"
@@ -10508,7 +10491,6 @@ struct cef_file_dialog_callback_t
     /// Implement this structure to handle dialog events. The functions of this
     /// structure will be called on the browser process UI thread.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_file_dialog_callback_t* self,
@@ -10611,7 +10593,6 @@ struct cef_display_handler_t
     ///
     /// Called when the page title changes.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_display_handler_t* self,
@@ -10789,7 +10770,6 @@ struct cef_domvisitor_t
     ///
     /// Structure used to represent a DOM document. The functions of this structure
     /// should only be called on the render process main thread thread.
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_domvisitor_t* self,
@@ -11114,7 +11094,6 @@ struct cef_before_download_callback_t
     ///
     /// Callback structure used to asynchronously cancel a download.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_before_download_callback_t* self,
@@ -11273,7 +11252,6 @@ struct cef_download_item_t
     ///
     /// Returns true (1) if the download has been interrupted.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_download_item_t* self) nothrow is_valid;
     extern(System) int function (cef_download_item_t* self) nothrow is_in_progress;
@@ -11435,7 +11413,6 @@ struct cef_drag_data_t
     ///
     /// Returns true (1) if the drag data is a file.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) cef_drag_data_t* function (cef_drag_data_t* self) nothrow clone;
     extern(System) int function (cef_drag_data_t* self) nothrow is_read_only;
@@ -11656,7 +11633,6 @@ struct cef_drag_handler_t
     /// operation. Return false (0) for default drag handling behavior or true (1)
     /// to cancel the drag event.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_drag_handler_t* self,
@@ -11745,7 +11721,6 @@ struct cef_extension_t
     /// Returns the absolute path to the extension directory on disk. This value
     /// will be prefixed with PK_DIR_RESOURCES if a relative path was passed to
     /// cef_request_context_t::LoadExtension.
-g
     cef_base_ref_counted_t base;
     extern(System) cef_string_userfree_t function (cef_extension_t* self) nothrow get_identifier;
     ///
@@ -11861,7 +11836,6 @@ struct cef_get_extension_resource_callback_t
     ///
     /// Implement this structure to handle events related to browser extensions. The
     /// functions of this structure will be called on the UI thread. See
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_get_extension_resource_callback_t* self,
@@ -12185,7 +12159,6 @@ struct cef_find_handler_t
     /// results, and |finalUpdate| is true (1) if this is the last find
     /// notification.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_find_handler_t* self,
@@ -12260,7 +12233,6 @@ struct cef_focus_handler_t
 
     ///
     /// Called when the browser component is requesting focus. |source| indicates
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_focus_handler_t* self,
@@ -12348,7 +12320,6 @@ struct cef_frame_t
 
     ///
     /// Execute undo in this frame.
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_frame_t* self) nothrow is_valid;
     ///
@@ -12658,7 +12629,6 @@ struct cef_frame_handler_t
     ///
     /// Base structure.
     ///
-g
     cef_base_ref_counted_t base;
 
     ///
@@ -12830,7 +12800,6 @@ struct cef_image_t
     /// Returns true (1) if this Image and |that| Image share the same underlying
     /// storage. Will also return true (1) if both images are NULL.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_image_t* self) nothrow is_empty;
     extern(System) int function (cef_image_t* self, cef_image_t* that) nothrow is_same;
@@ -13034,7 +13003,6 @@ struct cef_jsdialog_callback_t
 
     ///
     /// Called to run a JavaScript dialog. If |origin_url| is non-NULL it can be
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_jsdialog_callback_t* self,
@@ -13165,7 +13133,6 @@ struct cef_keyboard_handler_t
     /// keyboard shortcut set |is_keyboard_shortcut| to true (1) and return false
     /// (0).
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_keyboard_handler_t* self,
@@ -13250,7 +13217,6 @@ struct cef_life_span_handler_t
     /// The |target_disposition| value indicates where the user intended to open
     /// the popup (e.g. current tab, new tab, etc). The |user_gesture| value will
     /// be true (1) if the popup was opened via explicit user gesture (e.g.
-g
     cef_base_ref_counted_t base;
     /// clicking a link) or false (0) if the popup opened automatically (e.g. via
     /// the DomContentLoaded event). The |popupFeatures| structure contains
@@ -13466,7 +13432,6 @@ struct cef_load_handler_t
     /// cancellation of failure. It will be called before any calls to OnLoadStart
     /// and after all calls to OnLoadError and/or OnLoadEnd.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_load_handler_t* self,
@@ -13582,7 +13547,6 @@ struct cef_media_router_t
     /// Add an observer for MediaRouter events. The observer will remain
     /// registered until the returned Registration object is destroyed.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) cef_registration_t* function (
         cef_media_router_t* self,
@@ -13936,7 +13900,6 @@ struct cef_menu_model_t
 
     ///
     /// Add a separator to the menu. Returns true (1) on success.
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_menu_model_t* self) nothrow is_sub_menu;
     extern(System) int function (cef_menu_model_t* self) nothrow clear;
@@ -14458,7 +14421,6 @@ struct cef_menu_model_delegate_t
     /// Called when the user moves the mouse outside the menu and over the owning
     /// window.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_menu_model_delegate_t* self,
@@ -14579,7 +14541,6 @@ struct cef_navigation_entry_t
     /// Returns a display-friendly version of the URL.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_navigation_entry_t* self) nothrow is_valid;
     extern(System) cef_string_userfree_t function (cef_navigation_entry_t* self) nothrow get_url;
@@ -15016,7 +14977,6 @@ struct cef_media_access_callback_t
     ///
     /// Cancel the media access request.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_media_access_callback_t* self,
@@ -15179,7 +15139,6 @@ struct cef_preference_registrar_t
     ///
     /// Manage access to preferences. Many built-in preferences are registered by
     /// Chromium. Custom preferences can be registered in
-g
     cef_base_scoped_t base;
     extern(System) int function (
         cef_preference_registrar_t* self,
@@ -15195,7 +15154,6 @@ struct cef_preference_manager_t
     ///
     /// Base structure.
     ///
-g
     cef_base_ref_counted_t base;
 
     ///
@@ -15330,7 +15288,6 @@ struct cef_print_dialog_callback_t
     ///
     /// Indicate completion of the print job.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_print_dialog_callback_t* self,
@@ -15494,7 +15451,6 @@ struct cef_print_settings_t
 
     ///
     /// Set the printer printable area in device units. Some platforms already
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_print_settings_t* self) nothrow is_valid;
     extern(System) int function (cef_print_settings_t* self) nothrow is_read_only;
@@ -15682,7 +15638,6 @@ struct cef_process_message_t
     /// Returns a writable copy of this object. Returns nullptr when message
     /// contains a shared memory region.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_process_message_t* self) nothrow is_valid;
     extern(System) int function (cef_process_message_t* self) nothrow is_read_only;
@@ -15820,7 +15775,6 @@ struct cef_registration_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_REGISTRATION_CAPI_H_
-g
     cef_base_ref_counted_t base;
 }
 
@@ -15884,7 +15838,6 @@ struct cef_render_handler_t
     /// Called to retrieve the root window rectangle in screen DIP coordinates.
     /// Return true (1) if the rectangle was provided. If this function returns
     /// false (0) the rectangle from GetViewRect will be used.
-g
     cef_base_ref_counted_t base;
     extern(System) cef_accessibility_handler_t* function (
         cef_render_handler_t* self) nothrow get_accessibility_handler;
@@ -16143,7 +16096,6 @@ struct cef_render_process_handler_t
     ///
     /// Called after a browser has been created. When browsing cross-origin a new
     /// browser will be created before the old browser with the same identifier is
-g
     cef_base_ref_counted_t base;
     extern(System) void function (cef_render_process_handler_t* self) nothrow on_web_kit_initialized;
     /// destroyed. |extra_info| is an optional read-only value originating from
@@ -16305,7 +16257,6 @@ struct cef_request_t
     /// is provided and GET otherwise.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_request_t* self) nothrow is_read_only;
     extern(System) cef_string_userfree_t function (cef_request_t* self) nothrow get_url;
@@ -16651,7 +16602,6 @@ struct cef_resolve_callback_t
     /// |result| will be the result code. |resolved_ips| will be the list of
     /// resolved IP addresses or NULL if the resolution failed.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_resolve_callback_t* self,
@@ -16716,7 +16666,6 @@ struct cef_request_context_t
     ///
     /// Register a scheme handler factory for the specified |scheme_name| and
     /// optional |domain_name|. An NULL |domain_name| value for a standard scheme
-g
     cef_preference_manager_t base;
     extern(System) int function (
         cef_request_context_t* self,
@@ -17045,7 +16994,6 @@ struct cef_request_context_handler_t
 
     ///
     /// Called on the browser process IO thread before a resource request is
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_request_context_handler_t* self,
@@ -17134,7 +17082,6 @@ struct cef_select_client_certificate_callback_t
     /// Chooses the specified certificate for client certificate authentication.
     /// NULL value means that no client certificate should be used.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_select_client_certificate_callback_t* self,
@@ -17375,7 +17322,6 @@ struct cef_resource_bundle_t
     /// of valid string ID values.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-g
     cef_base_ref_counted_t base;
     extern(System) cef_string_userfree_t function (
         cef_resource_bundle_t* self,
@@ -17470,7 +17416,6 @@ struct cef_resource_bundle_handler_t
 
     ///
     /// Called to retrieve data for the specified scale independent |resource_id|.
-g
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_resource_bundle_handler_t* self,
@@ -17565,7 +17510,6 @@ struct cef_resource_skip_callback_t
 
     ///
     /// Callback for asynchronous continuation of cef_resource_handler_t::read().
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_resource_skip_callback_t* self,
@@ -17771,7 +17715,6 @@ struct cef_resource_request_handler_t
     /// Called on the IO thread before a resource request is loaded. The |browser|
     /// and |frame| values represent the source of the request, and may be NULL
     /// for requests originating from service workers or cef_urlrequest_t. To
-g
     cef_base_ref_counted_t base;
     /// optionally filter cookies for the request return a
     /// cef_cookie_access_filter_t object. The |request| object cannot not be
@@ -18028,7 +17971,6 @@ struct cef_response_t
 
     ///
     /// Set the response status code.
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_response_t* self) nothrow is_read_only;
     extern(System) cef_errorcode_t function (cef_response_t* self) nothrow get_error;
@@ -18192,7 +18134,6 @@ struct cef_response_filter_t
     ///     be NULL if |data_in_size| is zero.
     ///  2. Write filtered output data to |data_out| and set |data_out_written| to
     ///     the number of bytes that were written up to a maximum of
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_response_filter_t* self) nothrow init_filter;
     ///     |data_out_size|. If no output data was written then all data must be
@@ -18294,7 +18235,6 @@ struct cef_scheme_registrar_t
     ///
     /// Structure that creates cef_resource_handler_t instances for handling scheme
     /// requests. The functions of this structure will always be called on the IO
-g
     cef_base_scoped_t base;
     extern(System) int function (
         cef_scheme_registrar_t* self,
@@ -18310,7 +18250,6 @@ struct cef_scheme_handler_factory_t
     ///
     /// Base structure.
     ///
-g
     cef_base_ref_counted_t base;
 
     ///
@@ -18421,7 +18360,6 @@ struct cef_server_t
     ///
     /// Stop the server and shut down the dedicated server thread. See
     /// cef_server_handler_t::OnServerCreated documentation for a description of
-g
     cef_base_ref_counted_t base;
     extern(System) cef_task_runner_t* function (cef_server_t* self) nothrow get_task_runner;
     /// server lifespan.
@@ -18753,7 +18691,6 @@ struct cef_shared_memory_region_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_SHARED_MEMORY_REGION_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_shared_memory_region_t* self) nothrow is_valid;
     extern(System) size_t function (cef_shared_memory_region_t* self) nothrow size;
@@ -18824,7 +18761,6 @@ struct cef_shared_process_message_builder_t
     ///
     /// Returns the pointer to the writable memory. Returns nullptr for invalid
     /// instances. The returned pointer is only valid for the life span of this
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_shared_process_message_builder_t* self) nothrow is_valid;
     extern(System) size_t function (cef_shared_process_message_builder_t* self) nothrow size;
@@ -18914,7 +18850,6 @@ struct cef_sslinfo_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_SSL_INFO_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) cef_cert_status_t function (cef_sslinfo_t* self) nothrow get_cert_status;
     extern(System) cef_x509certificate_t* function (
@@ -18988,7 +18923,6 @@ struct cef_sslstatus_t
     ///
     /// Returns a bitmask containing the page security content status.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_sslstatus_t* self) nothrow is_secure_connection;
     extern(System) cef_cert_status_t function (cef_sslstatus_t* self) nothrow get_cert_status;
@@ -19071,7 +19005,6 @@ struct cef_read_handler_t
     ///
 
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) size_t function (
         cef_read_handler_t* self,
@@ -19321,7 +19254,6 @@ struct cef_string_visitor_t
     ///
 
     // CEF_INCLUDE_CAPI_CEF_STRING_VISITOR_CAPI_H_
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_string_visitor_t* self,
@@ -19393,7 +19325,6 @@ struct cef_task_t
     ///
     /// CEF maintains multiple internal threads that are used for handling different
     /// types of tasks in different processes. The cef_thread_id_t definitions in
-g
     cef_base_ref_counted_t base;
     extern(System) void function (cef_task_t* self) nothrow execute;
 }
@@ -19541,7 +19472,6 @@ struct cef_thread_t
 
     ///
     /// Returns the cef_task_runner_t that will execute code on this thread's
-g
     cef_base_ref_counted_t base;
     /// message loop. This function is safe to call from any thread.
     ///
@@ -19652,7 +19582,6 @@ struct cef_end_tracing_callback_t
     /// complete.
     ///
     /// If CefBeginTracing was called previously, or if a CefEndTracingAsync call is
-g
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_end_tracing_callback_t* self,
@@ -19756,7 +19685,6 @@ struct cef_urlrequest_t
     /// Returns the request object used to create this URL request. The returned
     /// object is read-only and should not be modified.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) cef_request_t* function (cef_urlrequest_t* self) nothrow get_request;
     ///
@@ -19954,7 +19882,6 @@ struct cef_v8context_t
     /// Returns the task runner associated with this context. V8 handles can only
     /// be accessed from the thread on which they are created. This function can
     /// be called on any render process thread.
-g
     cef_base_ref_counted_t base;
     ///
     extern(System) cef_task_runner_t* function (cef_v8context_t* self) nothrow get_task_runner;
@@ -20994,7 +20921,6 @@ struct cef_value_t
 
     ///
     /// Returns true (1) if the underlying data is owned by another object.
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_value_t* self) nothrow is_valid;
     ///
@@ -21765,7 +21691,6 @@ struct cef_waitable_event_t
     ///
     /// Put the event in the un-signaled state.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) void function (cef_waitable_event_t* self) nothrow reset;
     ///
@@ -21875,7 +21800,6 @@ struct cef_x509cert_principal_t
 
     ///
     /// Returns the locality name.
-g
     cef_base_ref_counted_t base;
     extern(System) cef_string_userfree_t function (
         cef_x509cert_principal_t* self) nothrow get_display_name;
@@ -22066,7 +21990,6 @@ struct cef_xml_reader_t
     ///
     /// Returns true (1) if an error has been reported by the XML parser.
     ///
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_xml_reader_t* self) nothrow move_to_next_node;
     extern(System) int function (cef_xml_reader_t* self) nothrow close;
@@ -22322,7 +22245,6 @@ struct cef_zip_reader_t
     ///
     /// Moves the cursor to the specified file in the archive. If |caseSensitive|
     /// is true (1) then the search will be case sensitive. Returns true (1) if
-g
     cef_base_ref_counted_t base;
     extern(System) int function (cef_zip_reader_t* self) nothrow move_to_first_file;
     extern(System) int function (cef_zip_reader_t* self) nothrow move_to_next_file;
