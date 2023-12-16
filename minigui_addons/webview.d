@@ -29,6 +29,9 @@
 module arsd.minigui_addons.webview;
 // FIXME: i think i can download the cef automatically if needed.
 
+// want to add mute support
+// https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_8?view=webview2-1.0.2210.55
+
 import arsd.core;
 
 version(linux)
@@ -114,6 +117,7 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 version(wv2)
 class WebViewWidget_WV2 : WebViewWidgetBase {
 	private RC!ICoreWebView2 webview_window;
+	private RC!ICoreWebView2_12 webview_window_12;
 	private RC!ICoreWebView2Environment webview_env;
 	private RC!ICoreWebView2Controller controller;
 
@@ -135,9 +139,56 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 					webview_window = controller.CoreWebView2;
 
+					webview_window_12 = webview_window.queryInterface!ICoreWebView2_12;
+
+					bool enableStatusBar = true;
+
+					if(webview_window_12) {
+						enableStatusBar = false;
+						webview_window_12.add_StatusBarTextChanged((sender, args) {
+							this.status = toGC(&webview_window_12.raw.get_StatusBarText);
+							return S_OK;
+						});
+					}
+
 					webview_window.add_DocumentTitleChanged((sender, args) {
 						this.title = toGC(&sender.get_DocumentTitle);
 						return S_OK;
+					});
+
+					webview_window.add_NewWindowRequested((sender, args) {
+						// args.get_Uri
+						// args.get_IsUserInitiated
+						// args.put_NewWindow();
+
+						string url = toGC(&args.get_Uri);
+						int ret;
+
+						WebViewWidget_WV2 widget;
+
+						runInGuiThread({
+							ret = 0;
+
+							scope WebViewWidget delegate(Widget, BrowserSettings) accept = (parent, passed_settings) {
+								ret = 1;
+								if(parent !is null) {
+									auto widget = new WebViewWidget_WV2(url, openNewWindow, passed_settings, parent);
+
+									return widget;
+								}
+								return null;
+							};
+							openNewWindow(OpenNewWindowParams(url, accept));
+							return;
+						});
+
+						if(ret) {
+							args.put_Handled(true);
+							// args.put_NewWindow(widget.webview_window.returnable);
+						}
+
+						return S_OK;
+
 					});
 
 					// add_HistoryChanged
@@ -147,7 +198,7 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 					Settings.IsScriptEnabled = TRUE;
 					Settings.AreDefaultScriptDialogsEnabled = TRUE;
 					Settings.IsWebMessageEnabled = TRUE;
-
+					Settings.IsStatusBarEnabled = enableStatusBar;
 
 					auto ert = webview_window.add_NavigationStarting(
 						delegate (sender, args) {
@@ -162,8 +213,10 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 					//error = webview_window.NavigateToString("<html><body>Hello</body></html>"w.ptr);
 					//error = webview_window.Navigate("http://192.168.1.10/"w.ptr);
 
-					WCharzBuffer bfr = WCharzBuffer(url);
-					webview_window.Navigate(bfr.ptr);
+					if(url !is null) {
+						WCharzBuffer bfr = WCharzBuffer(url);
+						webview_window.Navigate(bfr.ptr);
+					}
 
 					controller.IsVisible = true;
 
