@@ -682,6 +682,19 @@
 			}
 		},
 		{
+			"name": "pixelpresenter",
+			"description": "Pixel display",
+			"targetType": "library",
+			"sourceFiles": ["pixelpresenter.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*",
+				"arsd-official:simpledisplay":"*"
+			},
+			"dflags-dmd": ["-mv=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"],
+			"dflags-ldc": ["--mv=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"]
+		},
+		{
 			"name": "ttf",
 			"description": "port of stb_ttf to D",
 			"targetType": "library",
