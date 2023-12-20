@@ -232,6 +232,20 @@ struct Color {
 		this.a = cast(ubyte) (a * 255);
 	}
 
+	/++
+		Constructs a color from a [ColorF] (floating-point)
+
+		History:
+			Added December 20, 2023
+	+/
+	nothrow pure @nogc
+	this(const ColorF colorF) {
+		this.r = cast(ubyte) (colorF.r * 255);
+		this.g = cast(ubyte) (colorF.g * 255);
+		this.b = cast(ubyte) (colorF.b * 255);
+		this.a = cast(ubyte) (colorF.a * 255);
+	}
+
 	/// Static convenience functions for common color names
 	nothrow pure @nogc
 	static Color transparent() { return Color(0, 0, 0, 0); }
@@ -509,6 +523,79 @@ struct Color {
 				part = cast(ubyte) (part * foreground.a / 255 +  background.components[idx] * (255 - foreground.a) / 255);
 			return foreground;
 		}
+	}
+}
+
+/++
+	Represents an RGBA color in floating-point (from 0 to 1.0).
+
+	$(NOTE
+		Most of the time, you’ll probably want to use [Color] instead.
+
+		This primarily exists to provide a tested out-of-the-box solution
+		when utilizing APIs that work with FP colors.
+
+		Constructors and setters come with $(B `in`-contracts)
+		to assert one won’t run into out-of-range color values.
+	)
+
+	History:
+		Added December 20, 2023
+ +/
+struct ColorF {
+
+	private float[4] _components;
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(const float[4] components)
+			in(isValidComponent(components[0]))
+			in(isValidComponent(components[1]))
+			in(isValidComponent(components[2]))
+			in(isValidComponent(components[3])) {
+		_components = components;
+	}
+
+	/// ditto
+	public this(float r, float g, float b, float a = 1.0f)
+			in(isValidComponent(r))
+			in(isValidComponent(g))
+			in(isValidComponent(b))
+			in(isValidComponent(a)) {
+		_components = [r, g, b, a];
+	}
+
+	/++
+		Constructs a FP color from an integer one
+	 +/
+	public this(const Color integer) {
+		_components = [
+			r / 255.0f,
+			g / 255.0f,
+			b / 255.0f,
+			a / 255.0f,
+		];
+	}
+
+	///
+	float[4] components() inout { return _components; }
+
+	// component getters
+	float r() inout { return _components[0]; } /// red
+	float g() inout { return _components[1]; } /// green
+	float b() inout { return _components[2]; } /// blue
+	float a() inout { return _components[3]; } /// alpha
+
+	// component setters
+	void r(float v) in(isValidComponent(v)) { _components[0] = v; } /// red
+	void g(float v) in(isValidComponent(v)) { _components[1] = v; } /// green
+	void b(float v) in(isValidComponent(v)) { _components[2] = v; } /// blue
+	void a(float v) in(isValidComponent(v)) { _components[3] = v; } /// alpha
+
+	///
+	static bool isValidComponent(const float v) {
+		return (v >= 0.0f && v <= 1.0f);
 	}
 }
 
