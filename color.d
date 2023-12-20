@@ -570,12 +570,7 @@ struct ColorF {
 		Constructs a FP color from an integer one
 	 +/
 	public this(const Color integer) {
-		_components = [
-			r / 255.0f,
-			g / 255.0f,
-			b / 255.0f,
-			a / 255.0f,
-		];
+		_components[0.. 4] = integer.components[0 .. 4] / 255.0f;
 	}
 
 	///
