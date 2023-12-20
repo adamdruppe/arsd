@@ -73,6 +73,10 @@ T callback(T)(typeof(&T.init.Invoke) dg) {
 			return dg(_args_);
 		}
 
+		this() {
+			AddRef();
+		}
+
 		override HRESULT QueryInterface(const (IID)*riid, LPVOID *ppv) {
 			if (IID_IUnknown == *riid) {
 				*ppv = cast(void*) cast(IUnknown) this;
@@ -91,10 +95,20 @@ T callback(T)(typeof(&T.init.Invoke) dg) {
 
 		shared LONG count = 0;
 		ULONG AddRef() {
-			return atomicOp!"+="(count, 1);
+			auto cnt = atomicOp!"+="(count, 1);
+			if(cnt == 1) {
+				import core.memory;
+				GC.addRoot(cast(void*) this);
+			}
+			return cnt;
 		}
 		ULONG Release() {
-			return atomicOp!"-="(count, 1);
+			auto cnt = atomicOp!"-="(count, 1);
+			if(cnt == 0) {
+				import core.memory;
+				GC.removeRoot(cast(void*) this);
+			}
+			return cnt;
 		}
 	};
 }
@@ -151,7 +165,7 @@ struct RC(T) {
 		return object;
 	}
 
-	static foreach(memberName; __traits(derivedMembers, T)) {
+	static foreach(memberName; __traits(allMembers /*derivedMembers*/, T)) {
 		mixin ForwardMethod!(memberName);
 	}
 }

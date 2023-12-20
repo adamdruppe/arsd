@@ -8,6 +8,11 @@
 	History:
 		Added November 5, 2021. NOT YET STABLE.
 
+		status text and favicon change notifications implemented on Windows WebView2 on December 16, 2023 (so long as the necessary api version is available, otherwise it will silently drop it).
+
+	Dependencies:
+		Requires arsd.png on Windows for favicons, may require more in the future.
+
 	Examples:
 	---
 	/+ dub.sdl:
@@ -31,6 +36,13 @@ module arsd.minigui_addons.webview;
 
 // want to add mute support
 // https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_8?view=webview2-1.0.2210.55
+
+// javascript : AddScriptToExecuteOnDocumentCreated / cef_register_extension or https://bitbucket.org/chromiumembedded/cef/wiki/JavaScriptIntegration.md idk
+// need a: post web message / on web message posted
+
+// and some magic reply to certain url schemes.
+
+// also want to make sure it can prefix http:// and such when typing in a url bar cross platform
 
 import arsd.core;
 
@@ -117,7 +129,10 @@ class WebViewWidgetBase : NestedChildWindowWidget {
 version(wv2)
 class WebViewWidget_WV2 : WebViewWidgetBase {
 	private RC!ICoreWebView2 webview_window;
-	private RC!ICoreWebView2_12 webview_window_12;
+	// 12 introduces status bar
+	// 15 introduces favicon notifications
+	// 16 introduces printing
+	private RC!ICoreWebView2_16 webview_window_ext_1;
 	private RC!ICoreWebView2Environment webview_env;
 	private RC!ICoreWebView2Controller controller;
 
@@ -139,14 +154,55 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 					webview_window = controller.CoreWebView2;
 
-					webview_window_12 = webview_window.queryInterface!ICoreWebView2_12;
+					webview_window_ext_1 = webview_window.queryInterface!(ICoreWebView2_16);
 
 					bool enableStatusBar = true;
 
-					if(webview_window_12) {
+					if(webview_window_ext_1) {
 						enableStatusBar = false;
-						webview_window_12.add_StatusBarTextChanged((sender, args) {
-							this.status = toGC(&webview_window_12.raw.get_StatusBarText);
+						webview_window_ext_1.add_StatusBarTextChanged((sender, args) {
+							this.status = toGC(&webview_window_ext_1.raw.get_StatusBarText);
+							return S_OK;
+						});
+
+						webview_window_ext_1.add_FaviconChanged((sender, args) {
+							webview_window_ext_1.GetFavicon(
+								COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+								callback!(ICoreWebView2GetFaviconCompletedHandler)(delegate(error, streamPtrConst) {
+
+									auto streamPtr = cast(IStream) streamPtrConst;
+
+									ubyte[] buffer = new ubyte[](640); // most favicons are pretty small
+									enum growth_size = 1024; // and we'll grow linearly by the kilobyte
+									size_t at;
+
+									more:
+									ULONG actuallyRead;
+									auto ret = streamPtr.Read(buffer.ptr + at, cast(UINT) (buffer.length - at), &actuallyRead);
+									if(ret == S_OK) {
+										// read completed, possibly more data pending
+										auto moreData = actuallyRead >= (buffer.length - at);
+
+										at += actuallyRead;
+										if(moreData && (buffer.length - at < growth_size))
+											buffer.length += growth_size;
+										goto more;
+									} else if(ret == S_FALSE) {
+										// end of file reached
+										at += actuallyRead;
+										buffer = buffer[0 .. at];
+
+										import arsd.png;
+										this.favicon = readPngFromBytes(buffer);
+									} else {
+										// other error
+										throw new ComException(ret);
+									}
+
+									return S_OK;
+								})
+							);
+
 							return S_OK;
 						});
 					}
