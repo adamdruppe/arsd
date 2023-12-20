@@ -570,7 +570,7 @@ struct ColorF {
 		Constructs a FP color from an integer one
 	 +/
 	public this(const Color integer) {
-		_components[0.. 4] = integer.components[0 .. 4] / 255.0f;
+		_components[] = integer.components[] / 255.0f;
 	}
 
 	///
@@ -1862,7 +1862,7 @@ struct Point {
 		return Point(mixin("x" ~ op ~ "rhs"), mixin("y" ~ op ~ "rhs"));
 	}
 
-	Size opCast(T = Size)() inout @nogc {
+	Size opCast(T : Size)() inout @nogc {
 		return Size(x, y);
 	}
 }
@@ -1881,10 +1881,14 @@ struct Size {
 	 +/
 	int area() const @nogc { return width * height; }
 
-	Point opCast(T = Point)() inout @nogc {
+	Point opCast(T : Point)() inout @nogc {
 		return Point(width, height);
 	}
 
+	// gonna leave this undocumented for now since it might be removed later
+	/+ +
+		Adding (and other arithmetic operations) two sizes together will operate on the width and height independently. So Size(2, 3) + Size(4, 5) will give you Size(6, 8).
+	+/
 	Size opBinary(string op)(in Size rhs) const @nogc {
 		return Size(
 			mixin("width" ~ op ~ "rhs.width"),
@@ -1912,7 +1916,10 @@ struct Size {
 	i.e. both coordinates (x and y) of `pos` are positive.
 
 	Returns:
-		y × width + x
+		`y * width + x`
+
+	History:
+		Added December 19, 2023 (dub v11.4)
  +/
 int linearOffset(const Point pos, const int width) @safe pure nothrow @nogc {
 	return ((width * pos.y) + pos.x);
