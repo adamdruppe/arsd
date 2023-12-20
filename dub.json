@@ -605,7 +605,7 @@
 		{
 			"name": "jni",
 			"description": "Provides easy interop with Java via JNI.",
-			"targetType": "library",
+			"targetType": "sourceLibrary",
 			"dflags-dmd": ["-mv=arsd.jni=$PACKAGE_DIR/jni.d"],
 			"dflags-ldc": ["--mv=arsd.jni=$PACKAGE_DIR/jni.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.jni=$PACKAGE_DIR/jni.d"],
