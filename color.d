@@ -1850,10 +1850,12 @@ void floydSteinbergDither(IndexedImage img, in TrueColorImage original) nothrow 
 
 // these are just really useful in a lot of places where the color/image functions are used,
 // so I want them available with Color
-///
+/++
+	2D location point
+ +/
 struct Point {
-	int x; ///
-	int y; ///
+	int x; /// x-coordinate (aka abscissa)
+	int y; /// y-coordinate (aka ordinate)
 
 	pure const nothrow @safe:
 
@@ -1864,6 +1866,10 @@ struct Point {
 	Point opBinary(string op)(int rhs) @nogc {
 		return Point(mixin("x" ~ op ~ "rhs"), mixin("y" ~ op ~ "rhs"));
 	}
+
+	Size opCast(T = Size)() inout @nogc {
+		return Size(x, y);
+	}
 }
 
 ///
@@ -1871,7 +1877,55 @@ struct Size {
 	int width; ///
 	int height; ///
 
-	int area() pure nothrow @safe const @nogc { return width * height; }
+	pure nothrow @safe:
+
+	/++
+		Rectangular surface area
+
+		Calculates the surface area of a rectangle with dimensions equivalent to the width and height of the size.
+	 +/
+	int area() const @nogc { return width * height; }
+
+	Point opCast(T = Point)() inout @nogc {
+		return Point(width, height);
+	}
+
+	Size opBinary(string op)(in Size rhs) const @nogc {
+		return Size(
+			mixin("width" ~ op ~ "rhs.width"),
+			mixin("height" ~ op ~ "rhs.height"),
+		);
+	}
+
+	Size opBinary(string op)(int rhs) const @nogc {
+		return Size(
+			mixin("width" ~ op ~ "rhs"),
+			mixin("height" ~ op ~ "rhs"),
+		);
+	}
+}
+
+/++
+	Calculates the linear offset of a point
+	from the start (0/0) of a rectangle.
+
+	This assumes that (0/0) is equivalent to offset `0`.
+	Each step on the x-coordinate advances the resulting offset by `1`.
+	Each step on the y-coordinate advances the resulting offset by `width`.
+
+	This function is only defined for the 1st quadrant,
+	i.e. both coordinates (x and y) of `pos` are positive.
+
+	Returns:
+		y × width + x
+ +/
+int linearOffset(const Point pos, const int width) @safe pure nothrow @nogc {
+	return ((width * pos.y) + pos.x);
+}
+
+/// ditto
+int linearOffset(const int width, const Point pos) @safe pure nothrow @nogc {
+	return ((width * pos.y) + pos.x);
 }
 
 ///
