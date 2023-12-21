@@ -18626,6 +18626,8 @@ extern(System) nothrow @nogc {
 		void glReadBuffer(uint);
 		void glReadPixels(int, int, int, int, int, int, void*);
 
+		void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
+
 		void glFlush();
 		void glFinish();
 
