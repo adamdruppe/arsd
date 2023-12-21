@@ -18767,6 +18767,7 @@ extern(System) nothrow @nogc {
 	enum uint GL_RGB = 0x1907;
 	enum uint GL_BGRA = 0x80e1;
 	enum uint GL_RGBA = 0x1908;
+	enum uint GL_RGBA8 = 0x8058;
 	enum uint GL_TEXTURE_2D =   0x0DE1;
 	enum uint GL_TEXTURE_MIN_FILTER = 0x2801;
 	enum uint GL_NEAREST = 0x2600;
