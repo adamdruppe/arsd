@@ -136,6 +136,7 @@
 				presenter.isFullscreen = !presenter.isFullscreen;
 			}
 		});
+	}
 	---
  +/
 module arsd.pixelpresenter;
