@@ -93,7 +93,7 @@
 		                                        // multiple of the internal
 		                                        // resolution.
 		// The gentle reader might have noticed that the integer scaling will result
-		// in a padding/border area around the image for most window sizes. Let’s
+		// in a padding/border area around the image for most window sizes.
 		// How about changing its color?
 		cfg.renderer.background = ColorF(Pixel.white);
 
