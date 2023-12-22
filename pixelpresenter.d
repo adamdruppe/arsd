@@ -609,6 +609,39 @@ final class PixelPresenter {
 		}
 	}
 
+	// additional convience ctors
+	public {
+
+		///
+		this(
+			string title,
+			const Size resolution,
+			const Size initialWindowSize,
+			Scaling scaling = Scaling.contain,
+			ScalingFilter filter = ScalingFilter.nearest,
+		) {
+			auto cfg = PresenterConfig();
+
+			cfg.window.title = title;
+			cfg.renderer.resolution = resolution;
+			cfg.window.size = initialWindowSize;
+			cfg.renderer.scaling = scaling;
+			cfg.renderer.filter = filter;
+
+			this(cfg);
+		}
+
+		///
+		this(
+			string title,
+			const Size resolution,
+			Scaling scaling = Scaling.contain,
+			ScalingFilter filter = ScalingFilter.nearest,
+		) {
+			this(title, resolution, resolution, scaling, filter,);
+		}
+	}
+
 	// public functions
 	public {
 
