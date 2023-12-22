@@ -43,6 +43,7 @@ import arsd.simpledisplay;
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
 	- Hybrid scaling mode: integer up, FP down
+	- Fix timing
  */
 
 ///
@@ -614,8 +615,9 @@ final class PixelPresenter {
 		///
 		int eventLoop(T...)(T eventHandlers) if (T.length == 0 || is(T[0] == delegate)) {
 			return _pro.window.eventLoop(
-				16,
+				16, // ~60 FPS
 				delegate() { eventHandlers[0](); _pro.window.redrawOpenGlSceneSoon(); },
+				eventHandlers[1 .. $],
 			);
 		}
 
