@@ -24,6 +24,119 @@
 		This module is $(B work in progress).
 		API is subject to changes until further notice.
 	)
+
+	## Usage examples
+
+	### Basic usage
+
+	This example displays a blue frame that increases in color intensity,
+	then jumps back to black and the process repeats.
+
+	---
+	void main() {
+		// Internal resolution of the images (“frames”) we will render.
+		// From the PixelPresenter’s perspective,
+		// these are the “fully-rendered frames” that it will blit to screen.
+		// They may be up- & down-scaled to the window’s actual size
+		// (according to the chosen scaling mode) by the presenter.
+		const resolution = Size(240, 120);
+
+		// Let’s create a new presenter.
+		// (For more fine-grained control there’s also a constructor overload that
+		// accepts a [PresenterConfig] instance).
+		auto presenter = new PixelPresenter(
+			"Demo",         // window title
+			resolution,     // internal resolution
+			Size(960, 480), // initial window size (optional; default: =resolution)
+		);
+
+		// This variable will be “shared” across events (and frames).
+		int blueChannel = 0;
+
+		// Run the eventloop
+		presenter.eventLoop(delegate() {
+			// Update the frame(buffer) here…
+
+			// Construct an RGB color value.
+			auto color = Pixel(0x00, 0x00, blueChannel);
+			// For demo purposes, apply it to the whole framebuffer.
+			presenter.framebuffer.clear(color);
+
+			// Increment the amount of blue to be used by the next frame.
+			++blueChannel;
+			// reset if greater than 0xFF (=ubyte.max)
+			if (blueChannel > 0xFF)
+				blueChannel = 0;
+		});
+	}
+	---
+
+	### Advanced example
+
+	---
+	import arsd.pixelpresenter;
+	import arsd.simpledisplay : MouseEvent;
+
+	void main() {
+		// Internal resolution of the images (“frames”) we will render.
+		// For further details, check out the previous example.
+		const resolution = Size(240, 120);
+
+		// Configure our presenter in advance.
+		auto cfg = PresenterConfig();
+		cfg.window.title = "Demo II";
+		cfg.window.size = Size(960, 480);
+		cfg.renderer.resolution = resolution;
+		cfg.renderer.scaling = Scaling.integer; // integer scaling
+		                                        // → The frame on-screen will
+		                                        // always have a size that is a
+		                                        // multiple of the internal
+		                                        // resolution.
+		// The gentle reader might have noticed that the integer scaling will result
+		// in a padding/border area around the image for most window sizes. Let’s
+		// How about changing its color?
+		cfg.renderer.background = ColorF(Pixel.white);
+
+		// Let’s instantiate a new presenter with the previously created config.
+		auto presenter = new PixelPresenter(cfg);
+
+		// Start with a green frame, so we can easily observe what’s going on.
+		presenter.framebuffer.clear(rgb(0x00, 0xDD, 0x00));
+
+		int line = 0;
+		ubyte color = 0;
+		byte colorDelta = 2;
+
+		// Run the eventloop
+		presenter.eventLoop(delegate() {
+			// Determine the start and end index of the current line in the
+			// framebuffer.
+			immutable x0 = line * resolution.width;
+			immutable x1 = x0 + resolution.width;
+
+			// Change the color of the current line
+			presenter.framebuffer.data[x0 .. x1] = rgb(color, color, 0xFF);
+
+			// Determine the color to use for the next line
+			// (to be applied on the next update).
+			color += colorDelta;
+			if (color == 0x00)
+				colorDelta = 2;
+			else if (color >= 0xFE)
+				colorDelta = -2;
+
+			// Increment the line counter; reset to 0 once we’ve reached the
+			// end of the framebuffer (=the final/last line).
+			++line;
+			if (line == resolution.height)
+				line = 0;
+		}, delegate(MouseEvent ev) {
+			// toggle fullscreen mode on double-click
+			if (ev.doubleClick) {
+				presenter.isFullscreen = !presenter.isFullscreen;
+			}
+		});
+	---
  +/
 module arsd.pixelpresenter;
 
