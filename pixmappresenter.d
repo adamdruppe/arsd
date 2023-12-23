@@ -170,9 +170,6 @@ import arsd.simpledisplay;
 	- Minimum window size
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
-	- Add my fast&accurate int8 alphaBlending()
-		- add unittests
-		- benchmark vs. CPUblit
  */
 
 ///
