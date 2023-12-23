@@ -33,7 +33,7 @@
 	then jumps back to black and the process repeats.
 
 	---
-	void main() {
+	int main() {
 		// Internal resolution of the images (“frames”) we will render.
 		// From the PixelPresenter’s perspective,
 		// these are the “fully-rendered frames” that it will blit to screen.
@@ -53,8 +53,9 @@
 		// This variable will be “shared” across events (and frames).
 		int blueChannel = 0;
 
-		// Run the eventloop
-		presenter.eventLoop(delegate() {
+		// Run the eventloop.
+		// The callback delegate will get executed every ~16ms (≙ ~60FPS) and schedule a redraw.
+		return presenter.eventLoop(16, delegate() {
 			// Update the frame(buffer) here…
 
 			// Construct an RGB color value.
@@ -107,7 +108,8 @@
 		ubyte color = 0;
 		byte colorDelta = 2;
 
-		// Run the eventloop
+		// Run the eventloop.
+		// Note how the callback delegate returns a [LoopCtrl] instance.
 		presenter.eventLoop(delegate() {
 			// Determine the start and end index of the current line in the
 			// framebuffer.
@@ -130,6 +132,9 @@
 			++line;
 			if (line == resolution.height)
 				line = 0;
+
+			// Schedule a redraw in ~16ms.
+			return LoopCtrl.redrawIn(16);
 		}, delegate(MouseEvent ev) {
 			// toggle fullscreen mode on double-click
 			if (ev.doubleClick) {
@@ -148,7 +153,6 @@ import arsd.simpledisplay;
 	## TODO
 
 	- Complete documentation
-	- Usage example(s)
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
 		- a legacy OpenGL renderer (maybe)
@@ -156,8 +160,9 @@ import arsd.simpledisplay;
 	- Minimum window size
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
-	- Fix timing
  */
+
+private enum hasTimer = is(Timer == class);
 
 ///
 alias Pixel = Color;
@@ -441,18 +446,33 @@ interface PixelRenderer {
 		Called once during setup.
 		Perform initialization tasks in here.
 
+		$(NOTE
+			The final thing a setup function does
+			is usually to call `reconfigure()` on the renderer.
+		)
+
 		Params:
 			pro = Pointer to the [PresenterObjects] of the presenter. To be stored for later use.
 	 +/
 	public void setup(PresenterObjects* pro);
 
 	/++
-		Reconfigure renderer
+		Reconfigures the renderer
 
 		Called upon configuration changes.
 		The new config can be found in the [PresenterObjects] received during `setup()`.
 	 +/
 	public void reconfigure();
+
+	/++
+		Schedules a redraw
+	 +/
+	public void redrawSchedule();
+
+	/++
+		Triggers a redraw
+	 +/
+	public void redrawNow();
 }
 
 ///
@@ -657,6 +677,14 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 		_clear = true;
 	}
 
+	void redrawSchedule() {
+		_pro.window.redrawOpenGlSceneSoon();
+	}
+
+	void redrawNow() {
+		_pro.window.redrawOpenGlSceneNow();
+	}
+
 	private {
 		static immutable GLfloat[] vertices = [
 			//dfmt off
@@ -677,6 +705,32 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 	}
 }
 
+///
+struct LoopCtrl {
+	int interval; /// in milliseconds
+	bool redraw; ///
+
+	///
+	@disable this();
+
+@safe pure nothrow @nogc:
+
+	private this(int interval, bool redraw) {
+		this.interval = interval;
+		this.redraw = redraw;
+	}
+
+	///
+	static LoopCtrl waitFor(int intervalMS) {
+		return LoopCtrl(intervalMS, false);
+	}
+
+	///
+	static LoopCtrl redrawIn(int intervalMS) {
+		return LoopCtrl(intervalMS, true);
+	}
+}
+
 /++
  +/
 final class PixelPresenter {
@@ -684,6 +738,10 @@ final class PixelPresenter {
 	private {
 		PresenterObjects* _pro;
 		PixelRenderer _renderer;
+
+		static if (hasTimer) {
+			Timer _timer;
+		}
 	}
 
 	// ctors
@@ -772,13 +830,66 @@ final class PixelPresenter {
 	// public functions
 	public {
 
-		///
-		int eventLoop(T...)(T eventHandlers) if (T.length == 0 || is(T[0] == delegate)) {
+		/++
+			Runs the event loop (with a pulse timer)
+
+			A redraw will be scheduled automatically each pulse.
+		 +/
+		int eventLoop(T...)(long pulseTimeout, void delegate() onPulse, T eventHandlers) {
+			// run event-loop with pulse timer
 			return _pro.window.eventLoop(
-				16, // ~60 FPS
-				delegate() { eventHandlers[0](); _pro.window.redrawOpenGlSceneSoon(); },
-				eventHandlers[1 .. $],
+				pulseTimeout,
+				delegate() { onPulse(); this.scheduleRedraw(); },
+				eventHandlers,
 			);
+		}
+
+		//dfmt off
+		/++
+			Runs the event loop
+
+			Redraws have to manually scheduled through [scheduleRedraw] when using this overload.
+		 +/
+		int eventLoop(T...)(T eventHandlers) if (
+			(T.length == 0) || (is(T[0] == delegate) && !is(typeof(() { return T[0](); }()) == LoopCtrl))
+		) {
+			return _pro.window.eventLoop(eventHandlers);
+		}
+		//dfmt on
+
+		static if (hasTimer) {
+			/++
+				Runs the event loop
+				with [LoopCtrl] timing mechanism
+			 +/
+			int eventLoop(T...)(LoopCtrl delegate() callback, T eventHandlers) {
+				if (callback !is null) {
+					LoopCtrl prev = LoopCtrl(1, true);
+
+					_timer = new Timer(prev.interval, delegate() {
+						// redraw if requested by previous ctrl message
+						if (prev.redraw) {
+							_renderer.redrawNow();
+							prev.redraw = false; // done
+						}
+
+						// execute callback
+						const LoopCtrl ctrl = callback();
+
+						// different than previous ctrl message?
+						if (ctrl.interval != prev.interval) {
+							// update timer
+							_timer.changeTime(ctrl.interval);
+						}
+
+						// save ctrl message
+						prev = ctrl;
+					});
+				}
+
+				// run event-loop
+				return _pro.window.eventLoop(0, eventHandlers);
+			}
 		}
 
 		///
@@ -791,6 +902,11 @@ final class PixelPresenter {
 			assert(false, "Not implemented");
 			//_framebuffer.size = config.internalResolution;
 			//_renderer.reconfigure(config);
+		}
+
+		///
+		void scheduleRedraw() {
+			_renderer.redrawSchedule();
 		}
 
 		///
