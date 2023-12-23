@@ -1,10 +1,10 @@
 /+
-	== pixelpresenter ==
+	== pixmappresenter ==
 	Copyright Elias Batek (0xEAB) 2023.
 	Distributed under the Boost Software License, Version 1.0.
  +/
 /++
-	$(B Pixel Presenter) is a high-level display library for one specific scenario:
+	$(B Pixmap Presenter) is a high-level display library for one specific scenario:
 	Blitting fully-rendered frames to the screen.
 
 	This is useful for software-rendered applications.
@@ -35,7 +35,7 @@
 	---
 	int main() {
 		// Internal resolution of the images (“frames”) we will render.
-		// From the PixelPresenter’s perspective,
+		// From the PixmapPresenter’s perspective,
 		// these are the “fully-rendered frames” that it will blit to screen.
 		// They may be up- & down-scaled to the window’s actual size
 		// (according to the chosen scaling mode) by the presenter.
@@ -44,7 +44,7 @@
 		// Let’s create a new presenter.
 		// (For more fine-grained control there’s also a constructor overload that
 		// accepts a [PresenterConfig] instance).
-		auto presenter = new PixelPresenter(
+		auto presenter = new PixmapPresenter(
 			"Demo",         // window title
 			resolution,     // internal resolution
 			Size(960, 480), // initial window size (optional; default: =resolution)
@@ -75,7 +75,7 @@
 	### Advanced example
 
 	---
-	import arsd.pixelpresenter;
+	import arsd.pixmappresenter;
 	import arsd.simpledisplay : MouseEvent;
 
 	void main() {
@@ -99,7 +99,7 @@
 		cfg.renderer.background = ColorF(Pixel.white);
 
 		// Let’s instantiate a new presenter with the previously created config.
-		auto presenter = new PixelPresenter(cfg);
+		auto presenter = new PixmapPresenter(cfg);
 
 		// Start with a green frame, so we can easily observe what’s going on.
 		presenter.framebuffer.clear(rgb(0x00, 0xDD, 0x00));
@@ -144,7 +144,7 @@
 	}
 	---
  +/
-module arsd.pixelpresenter;
+module arsd.pixmappresenter;
 
 import arsd.color;
 import arsd.simpledisplay;
@@ -414,7 +414,7 @@ struct PresenterConfig {
 
 	///
 	static struct Window {
-		string title = "ARSD Pixel Presenter";
+		string title = "ARSD Pixmap Presenter";
 		Size size;
 	}
 }
@@ -737,7 +737,7 @@ struct LoopCtrl {
 
 /++
  +/
-final class PixelPresenter {
+final class PixmapPresenter {
 
 	private {
 		PresenterObjects* _pro;

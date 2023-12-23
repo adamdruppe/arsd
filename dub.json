@@ -682,17 +682,17 @@
 			}
 		},
 		{
-			"name": "pixelpresenter",
+			"name": "pixmappresenter",
 			"description": "High-level display library. Designed to blit fully-rendered frames to the screen.",
 			"targetType": "library",
-			"sourceFiles": ["pixelpresenter.d"],
+			"sourceFiles": ["pixmappresenter.d"],
 			"dependencies": {
 				"arsd-official:color_base":"*",
 				"arsd-official:simpledisplay":"*"
 			},
-			"dflags-dmd": ["-mv=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"],
-			"dflags-ldc": ["--mv=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"],
-			"dflags-gdc": ["-fmodule-file=arsd.pixelpresenter=$PACKAGE_DIR/pixelpresenter.d"]
+			"dflags-dmd": ["-mv=arsd.pixmappresenter=$PACKAGE_DIR/pixmappresenter.d"],
+			"dflags-ldc": ["--mv=arsd.pixmappresenter=$PACKAGE_DIR/pixmappresenter.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.pixmappresenter=$PACKAGE_DIR/pixmappresenter.d"]
 		},
 		{
 			"name": "ttf",

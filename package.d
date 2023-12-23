@@ -86,7 +86,7 @@
 		$(H4 $(ID desktop-game) Games)
 			See [arsd.simpledisplay] and [arsd.gamehelpers].
 
-			Check out [arsd.pixelpresenter] for old-skool games that blit fully-rendered frames to the screen.
+			Check out [arsd.pixmappresenter] for old-skool games that blit fully-rendered frames to the screen.
 
 		$(H4 $(ID desktop-gui) GUIs)
 			See [arsd.minigui], [arsd.nanovega], and also: https://github.com/drug007/nanogui
