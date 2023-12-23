@@ -72,6 +72,16 @@
 	}
 	---
 
+	### Minimal example
+
+	---
+	void main() {
+		auto pmp = new PixmapPresenter("My Pixmap App", Size(640, 480));
+		pmp.framebuffer.clear(rgb(0xFF, 0x00, 0x99));
+		pmp.eventLoop();
+	}
+	---
+
 	### Advanced example
 
 	---
