@@ -22,6 +22,8 @@ Future release, likely May 2024 or later.
 
 Nothing is planned for it at this time.
 
+arsd.pixmappresenter was added.
+
 ## 11.0
 
 Released: Planned for May 2023, actually out August 2023.

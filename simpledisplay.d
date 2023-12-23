@@ -5605,12 +5605,7 @@ class Timer {
 
 			mapping[fd] = this;
 
-			itimerspec value;
-			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
-			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
-
-			value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
-			value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+			itimerspec value = makeItimerspec(intervalInMilliseconds);
 
 			if(timerfd_settime(fd, 0, &value, null) == -1)
 				throw new Exception("couldn't make pulse timer");
@@ -5683,7 +5678,6 @@ class Timer {
 		}
 	}
 
-
 	void changeTime(int intervalInMilliseconds)
 	{
 		this.intervalInMilliseconds = intervalInMilliseconds;
@@ -5696,6 +5690,15 @@ class Timer {
 				if(handle is null || !SetWaitableTimer(handle, cast(LARGE_INTEGER*)&initialTime, intervalInMilliseconds, &timerCallback, handle, false))
 					throw new WindowsApiException("couldn't change pulse timer", GetLastError());
 			}
+		} else version(linux) {
+			import core.sys.linux.timerfd;
+
+			itimerspec value = makeItimerspec(intervalInMilliseconds);
+			if(timerfd_settime(fd, 0, &value, null) == -1) {
+				throw new Exception("couldn't change pulse timer");
+			}
+		} else {
+			assert(false, "Timer.changeTime(int) is not implemented for this platform");
 		}
 	}
 
@@ -5705,6 +5708,21 @@ class Timer {
 	void delegate() onPulse;
 
 	int lastEventLoopRoundTriggered;
+
+	version(linux) {
+		static auto makeItimerspec(int intervalInMilliseconds) {
+			import core.sys.linux.timerfd;
+
+			itimerspec value;
+			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+
+			value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+			value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+
+			return value;
+		}
+	}
 
 	void trigger() {
 		version(linux) {
@@ -18769,6 +18787,7 @@ extern(System) nothrow @nogc {
 	enum uint GL_RGB = 0x1907;
 	enum uint GL_BGRA = 0x80e1;
 	enum uint GL_RGBA = 0x1908;
+	enum uint GL_RGBA8 = 0x8058;
 	enum uint GL_TEXTURE_2D =   0x0DE1;
 	enum uint GL_TEXTURE_MIN_FILTER = 0x2801;
 	enum uint GL_NEAREST = 0x2600;
