@@ -156,7 +156,6 @@ import arsd.simpledisplay;
 	- Minimum window size
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
-	- Hybrid scaling mode: integer up, FP down
 	- Fix timing
  */
 
@@ -271,6 +270,12 @@ struct PixelBuffer {
 @safe pure nothrow @nogc {
 
 	// keep aspect ratio (contain)
+	bool karContainNeedsDownscaling(const Size drawing, const Size canvas) {
+		return (drawing.width > canvas.width)
+			|| (drawing.height > canvas.height);
+	}
+
+	// keep aspect ratio (contain)
 	int karContainScalingFactorInt(const Size drawing, const Size canvas) {
 		const int w = canvas.width / drawing.width;
 		const int h = canvas.height / drawing.height;
@@ -318,10 +323,11 @@ struct PixelBuffer {
 	$(SMALL_TABLE
 		Mode feature matrix
 		Mode        | Aspect Ratio | Pixel Ratio | Cropping | Border | Comment(s)
-		`none`      | preserved    | preserved   | yes      | 4      |
-		`stretch`	| no           | no          | no       | none   |
-		`contain`   | preserved    | no          | no       | 4      | letterboxing/pillarboxing
-		`integer`   | preserved    | preserved   | no       | 2      | works only if `window.size >= frame.size`
+		`none`      | preserved    | preserved   | yes      | 4      | Crops if the `window.size < frame.size`.
+		`stretch`   | no           | no          | no       | none   |
+		`contain`   | preserved    | no          | no       | 2      | Letterboxing/Pillarboxing
+		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= frame.size`.
+		`integerFP` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, floating-point downscaling
 		`cover`     | preserved    | no          | yes      | none   |
 	)
 
@@ -342,6 +348,7 @@ enum Scaling {
 	stretch, ///
 	contain, ///
 	integer, ///
+	integerFP, ///
 	cover, ///
 
 	// aliases
@@ -628,6 +635,12 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 			const int scaleI = karContainScalingFactorInt(_pro.config.renderer.resolution, _pro.config.window.size);
 			viewport = (_pro.config.renderer.resolution * scaleI);
 			break;
+
+		case Scaling.integerFP:
+			if (karContainNeedsDownscaling(_pro.config.renderer.resolution, _pro.config.window.size)) {
+				goto case Scaling.contain;
+			}
+			goto case Scaling.integer;
 
 		case Scaling.cover:
 			const float fillF = karCoverScalingFactorF(_pro.config.renderer.resolution, _pro.config.window.size);
