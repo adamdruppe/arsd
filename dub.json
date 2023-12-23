@@ -683,7 +683,7 @@
 		},
 		{
 			"name": "pixelpresenter",
-			"description": "Pixel display",
+			"description": "High-level display library. Designed to blit fully-rendered frames to the screen.",
 			"targetType": "library",
 			"sourceFiles": ["pixelpresenter.d"],
 			"dependencies": {
