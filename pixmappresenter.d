@@ -33,7 +33,7 @@
 	then jumps back to black and the process repeats.
 
 	---
-	int main() {
+	void main() {
 		// Internal resolution of the images (“frames”) we will render.
 		// From the PixmapPresenter’s perspective,
 		// these are the “fully-rendered frames” that it will blit to screen.
@@ -55,7 +55,7 @@
 
 		// Run the eventloop.
 		// The callback delegate will get executed every ~16ms (≙ ~60FPS) and schedule a redraw.
-		return presenter.eventLoop(16, delegate() {
+		presenter.eventLoop(16, delegate() {
 			// Update the frame(buffer) here…
 
 			// Construct an RGB color value.
@@ -78,7 +78,7 @@
 	import arsd.pixmappresenter;
 	import arsd.simpledisplay : MouseEvent;
 
-	void main() {
+	int main() {
 		// Internal resolution of the images (“frames”) we will render.
 		// For further details, check out the previous example.
 		const resolution = Size(240, 120);
@@ -110,7 +110,7 @@
 
 		// Run the eventloop.
 		// Note how the callback delegate returns a [LoopCtrl] instance.
-		presenter.eventLoop(delegate() {
+		return presenter.eventLoop(delegate() {
 			// Determine the start and end index of the current line in the
 			// framebuffer.
 			immutable x0 = line * resolution.width;
