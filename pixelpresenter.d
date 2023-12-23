@@ -160,9 +160,10 @@ import arsd.simpledisplay;
 	- Minimum window size
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
+	- Add my fast&accurate int8 alphaBlending()
+		- add unittests
+		- benchmark vs. CPUblit
  */
-
-private enum hasTimer = is(Timer == class);
 
 ///
 alias Pixel = Color;
@@ -178,6 +179,9 @@ alias Point = arsd.color.Point;
 
 // verify assumption(s)
 static assert(Pixel.sizeof == uint.sizeof);
+
+// is the Timer class available on this platform?
+private enum hasTimer = is(Timer == class);
 
 /// casts value `v` to type `T`
 auto ref T typeCast(T, S)(auto ref S v) {
@@ -266,13 +270,13 @@ struct PixelBuffer {
 		return (width * int(Pixel.sizeof));
 	}
 
-	/// Clears the buffers contents (by setting each pixel to the same color)
+	/// Clears the buffer’s contents (by setting each pixel to the same color)
 	void clear(Pixel value) {
 		data[] = value;
 	}
 }
 
-@safe pure nothrow @nogc {
+private @safe pure nothrow @nogc {
 
 	// keep aspect ratio (contain)
 	bool karContainNeedsDownscaling(const Size drawing, const Size canvas) {
@@ -361,10 +365,10 @@ enum Scaling {
 	keepAspectRatio = contain, ///
 
 	// CSS `object-fit` style aliases
-	cssNone = none, ///
-	cssContain = contain, ///
-	cssFill = stretch, ///
-	cssCover = cover, ///
+	cssNone = none, /// equivalent CSS: `object-fit: none;`
+	cssContain = contain, /// equivalent CSS: `object-fit: contain;`
+	cssFill = stretch, /// equivalent CSS: `object-fit: fill;`
+	cssCover = cover, /// equivalent CSS: `object-fit: cover;`
 }
 
 ///
