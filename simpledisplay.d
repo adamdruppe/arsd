@@ -4414,6 +4414,10 @@ struct EventLoopImpl {
 								if(PosixFdReader* pfr = fd in PosixFdReader.mapping)
 									(*pfr).ready(flags);
 
+								// we don't know what the user did in this timer, so we need to assume that
+								// there's X data to be flushed and potentially processed
+								forceXPending = true;
+
 								// or i might add support for other FDs too
 								// but for now it is just timer
 								// (if you want other fds, use arsd.eventloop and compile with -version=with_eventloop), it offers a fuller api for arbitrary stuff.
