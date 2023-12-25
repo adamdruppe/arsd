@@ -138,149 +138,158 @@ class WebViewWidget_WV2 : WebViewWidgetBase {
 
 	private bool initialized;
 
-	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, BrowserSettings settings, Widget parent) {
-		// FIXME: openNewWindow and openUrlInNewWindow
-		super(parent);
-		// that ctor sets containerWindow
+	private HRESULT initializeWithController(ICoreWebView2Controller controller_raw) {
 
-		Wv2App.useEnvironment((env) {
-			env.CreateCoreWebView2Controller(containerWindow.impl.hwnd,
-				callback!(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler)(delegate(error, controller_raw) {
-					if(error || controller_raw is null)
-						return error;
+		// need to keep this beyond the callback or we're doomed.
+		this.controller = RC!ICoreWebView2Controller(controller_raw);
 
-					// need to keep this beyond the callback or we're doomed.
-					controller = RC!ICoreWebView2Controller(controller_raw);
+		this.webview_window = controller.CoreWebView2;
 
-					webview_window = controller.CoreWebView2;
+		this.webview_window_ext_1 = this.webview_window.queryInterface!(ICoreWebView2_16);
 
-					webview_window_ext_1 = webview_window.queryInterface!(ICoreWebView2_16);
+		bool enableStatusBar = true;
 
-					bool enableStatusBar = true;
+		if(this.webview_window_ext_1) {
+			enableStatusBar = false;
+			this.webview_window_ext_1.add_StatusBarTextChanged!(typeof(this))((sender, args, this_) {
+				this_.status = toGC(&this_.webview_window_ext_1.raw.get_StatusBarText);
+				return S_OK;
+			}, this);
 
-					if(webview_window_ext_1) {
-						enableStatusBar = false;
-						webview_window_ext_1.add_StatusBarTextChanged((sender, args) {
-							this.status = toGC(&webview_window_ext_1.raw.get_StatusBarText);
-							return S_OK;
-						});
+			webview_window_ext_1.add_FaviconChanged!(typeof(this))((sender, args, this_) {
+				this_.webview_window_ext_1.GetFavicon(
+					COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+					callback!(ICoreWebView2GetFaviconCompletedHandler, typeof(this_))(function(error, streamPtrConst, ctx2) {
 
-						webview_window_ext_1.add_FaviconChanged((sender, args) {
-							webview_window_ext_1.GetFavicon(
-								COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
-								callback!(ICoreWebView2GetFaviconCompletedHandler)(delegate(error, streamPtrConst) {
+						auto streamPtr = cast(IStream) streamPtrConst;
 
-									auto streamPtr = cast(IStream) streamPtrConst;
+						ubyte[] buffer = new ubyte[](640); // most favicons are pretty small
+						enum growth_size = 1024; // and we'll grow linearly by the kilobyte
+						size_t at;
 
-									ubyte[] buffer = new ubyte[](640); // most favicons are pretty small
-									enum growth_size = 1024; // and we'll grow linearly by the kilobyte
-									size_t at;
+						more:
+						ULONG actuallyRead;
+						auto ret = streamPtr.Read(buffer.ptr + at, cast(UINT) (buffer.length - at), &actuallyRead);
+						if(ret == S_OK) {
+							// read completed, possibly more data pending
+							auto moreData = actuallyRead >= (buffer.length - at);
 
-									more:
-									ULONG actuallyRead;
-									auto ret = streamPtr.Read(buffer.ptr + at, cast(UINT) (buffer.length - at), &actuallyRead);
-									if(ret == S_OK) {
-										// read completed, possibly more data pending
-										auto moreData = actuallyRead >= (buffer.length - at);
+							at += actuallyRead;
+							if(moreData && (buffer.length - at < growth_size))
+								buffer.length += growth_size;
+							goto more;
+						} else if(ret == S_FALSE) {
+							// end of file reached
+							at += actuallyRead;
+							buffer = buffer[0 .. at];
 
-										at += actuallyRead;
-										if(moreData && (buffer.length - at < growth_size))
-											buffer.length += growth_size;
-										goto more;
-									} else if(ret == S_FALSE) {
-										// end of file reached
-										at += actuallyRead;
-										buffer = buffer[0 .. at];
-
-										import arsd.png;
-										this.favicon = readPngFromBytes(buffer);
-									} else {
-										// other error
-										throw new ComException(ret);
-									}
-
-									return S_OK;
-								})
-							);
-
-							return S_OK;
-						});
-					}
-
-					webview_window.add_DocumentTitleChanged((sender, args) {
-						this.title = toGC(&sender.get_DocumentTitle);
-						return S_OK;
-					});
-
-					webview_window.add_NewWindowRequested((sender, args) {
-						// args.get_Uri
-						// args.get_IsUserInitiated
-						// args.put_NewWindow();
-
-						string url = toGC(&args.get_Uri);
-						int ret;
-
-						WebViewWidget_WV2 widget;
-
-						runInGuiThread({
-							ret = 0;
-
-							scope WebViewWidget delegate(Widget, BrowserSettings) accept = (parent, passed_settings) {
-								ret = 1;
-								if(parent !is null) {
-									auto widget = new WebViewWidget_WV2(url, openNewWindow, passed_settings, parent);
-
-									return widget;
-								}
-								return null;
-							};
-							openNewWindow(OpenNewWindowParams(url, accept));
-							return;
-						});
-
-						if(ret) {
-							args.put_Handled(true);
-							// args.put_NewWindow(widget.webview_window.returnable);
+							import arsd.png;
+							ctx2.favicon = readPngFromBytes(buffer);
+						} else {
+							// other error
+							throw new ComException(ret);
 						}
 
 						return S_OK;
+					}, this_)
+				);
 
-					});
+				return S_OK;
+			}, this);
+		}
 
-					// add_HistoryChanged
-					// that's where CanGoBack and CanGoForward can be rechecked.
+		webview_window.add_DocumentTitleChanged!(typeof(this))((sender, args, this_) {
+			this_.title = toGC(&sender.get_DocumentTitle);
+			return S_OK;
+		}, this);
 
-					RC!ICoreWebView2Settings Settings = webview_window.Settings;
-					Settings.IsScriptEnabled = TRUE;
-					Settings.AreDefaultScriptDialogsEnabled = TRUE;
-					Settings.IsWebMessageEnabled = TRUE;
-					Settings.IsStatusBarEnabled = enableStatusBar;
+		webview_window.add_NewWindowRequested!(typeof(this))((sender, args, this_) {
+			// args.get_Uri
+			// args.get_IsUserInitiated
+			// args.put_NewWindow();
 
-					auto ert = webview_window.add_NavigationStarting(
-						delegate (sender, args) {
-							this.url = toGC(&args.get_Uri);
-							return S_OK;
-						});
+			string url = toGC(&args.get_Uri);
+			int ret;
 
-					RECT bounds;
-					GetClientRect(containerWindow.impl.hwnd, &bounds);
-					controller.Bounds = bounds;
-					//error = webview_window.Navigate("http://arsdnet.net/test.html"w.ptr);
-					//error = webview_window.NavigateToString("<html><body>Hello</body></html>"w.ptr);
-					//error = webview_window.Navigate("http://192.168.1.10/"w.ptr);
+			WebViewWidget_WV2 widget;
 
-					if(url !is null) {
-						WCharzBuffer bfr = WCharzBuffer(url);
-						webview_window.Navigate(bfr.ptr);
+			runInGuiThread({
+				ret = 0;
+
+				scope WebViewWidget delegate(Widget, BrowserSettings) accept = (parent, passed_settings) {
+					ret = 1;
+					if(parent !is null) {
+						auto widget = new WebViewWidget_WV2(url, this_.openNewWindow, passed_settings, parent);
+
+						return widget;
 					}
-
-					controller.IsVisible = true;
-
-					initialized = true;
-
-					return S_OK;
-				}));
+					return null;
+				};
+				this_.openNewWindow(OpenNewWindowParams(url, accept));
+				return;
 			});
+
+			if(ret) {
+				args.put_Handled(true);
+				// args.put_NewWindow(widget.webview_window.returnable);
+			}
+
+			return S_OK;
+
+		}, this);
+
+		// add_HistoryChanged
+		// that's where CanGoBack and CanGoForward can be rechecked.
+
+		RC!ICoreWebView2Settings Settings = this.webview_window.Settings;
+		Settings.IsScriptEnabled = TRUE;
+		Settings.AreDefaultScriptDialogsEnabled = TRUE;
+		Settings.IsWebMessageEnabled = TRUE;
+		Settings.IsStatusBarEnabled = enableStatusBar;
+
+		auto ert = this.webview_window.add_NavigationStarting!(typeof(this))(
+			function (sender, args, this_) {
+				this_.url = toGC(&args.get_Uri);
+				return S_OK;
+			}, this);
+
+		RECT bounds;
+		GetClientRect(this.containerWindow.impl.hwnd, &bounds);
+		controller.Bounds = bounds;
+		//error = webview_window.Navigate("http://arsdnet.net/test.html"w.ptr);
+		//error = webview_window.NavigateToString("<html><body>Hello</body></html>"w.ptr);
+		//error = webview_window.Navigate("http://192.168.1.10/"w.ptr);
+
+		if(url !is null) {
+			WCharzBuffer bfr = WCharzBuffer(url);
+			this.webview_window.Navigate(bfr.ptr);
+		}
+
+		controller.IsVisible = true;
+
+		this.initialized = true;
+
+		return S_OK;
+	}
+
+	private void delegate(scope OpenNewWindowParams) openNewWindow;
+
+	this(string url, void delegate(scope OpenNewWindowParams) openNewWindow, BrowserSettings settings, Widget parent) {
+		this.openNewWindow = openNewWindow;
+		super(parent);
+		// that ctor sets containerWindow
+
+		this.url = url;
+
+		Wv2App.useEnvironment((env) {
+			env.CreateCoreWebView2Controller(containerWindow.impl.hwnd,
+				callback!(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler, typeof(this))(function(error, controller_raw, ctx) {
+					if(error || controller_raw is null)
+						return error;
+
+					return ctx.initializeWithController(controller_raw);
+				}, this));
+		});
 	}
 
 	override void registerMovementAdditionalWork() {

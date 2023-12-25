@@ -63,17 +63,31 @@ import core.atomic;
 
 //import std.stdio;
 
-T callback(T)(typeof(&T.init.Invoke) dg) {
-	return new class T {
+private template InvokerArgFor(T, Context) {
+	alias invoker = typeof(&T.init.Invoke);
+	static if(is(invoker fntype == delegate))
+	static if(is(fntype Params == __parameters))
+		alias InvokerArgFor = HRESULT function(Params, Context);
+	else
+		static assert(0);
+}
+
+T callback(T, Context)(InvokerArgFor!(T, Context) dg, Context ctx) {
+	return new class(dg, ctx) T {
 		extern(Windows):
 
 		static if(is(typeof(T.init.Invoke) R == return))
 		static if(is(typeof(T.init.Invoke) P == __parameters))
   		override R Invoke(P _args_) {
-			return dg(_args_);
+			return dgMember(_args_, ctxMember);
 		}
 
-		this() {
+		InvokerArgFor!(T, Context) dgMember;
+		Context ctxMember;
+
+		this(typeof(dgMember) dg_, Context ctx_) {
+			this.dgMember = dg_;
+			this.ctxMember = ctx_;
 			AddRef();
 		}
 
@@ -238,10 +252,9 @@ mixin template ForwardMethod(string methodName) {
 	static if(methodName.length > 4 && methodName[0 .. 4] == "add_") {
 		static if(is(typeof(__traits(getMember, T, memberName)) Params == function))
 			alias Handler = Params[0];
-		alias HandlerDg = typeof(&Handler.init.Invoke);
-		mixin(q{ EventRegistrationToken } ~ memberName ~ q{ (HandlerDg handler) {
+		mixin(q{ EventRegistrationToken } ~ memberName ~ q{ (Context)(InvokerArgFor!(Handler, Context) handler, Context ctx) {
 			EventRegistrationToken token;
-			__traits(getMember, object, memberName)(callback!Handler(handler), &token);
+			__traits(getMember, object, memberName)(callback!(Handler, Context)(handler, ctx), &token);
 			return token;
 		}});
 	} else
@@ -296,26 +309,26 @@ struct Wv2App {
 			throw new Exception("CreateCoreWebView2EnvironmentWithOptions failed from WebView2Loader...");
 
 		auto result = func(null, null, null,
-			callback!(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler)(
-				delegate(error, env) {
-					initialized = true;
-					code = error;
+			callback!(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler, Wv2App*)(
+				function(error, env, this_) {
+					this_.initialized = true;
+					this_.code = error;
 
 					if(error)
 						return error;
 
-					webview_env = env;
+					this_.webview_env = env;
 
 					auto len = pending.length;
-					foreach(item; pending) {
-						item(webview_env);
+					foreach(item; this_.pending) {
+						item(this_.webview_env);
 					}
 
-					pending = pending[len .. $];
+					this_.pending = this_.pending[len .. $];
 
 					return S_OK;
 				}
-			)
+			, &this)
 		);
 
 		if(result != S_OK) {
