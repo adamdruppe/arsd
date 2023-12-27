@@ -441,7 +441,7 @@ struct WantsOpenGl {
 }
 
 ///
-interface PixelRenderer {
+interface PixmapRenderer {
 	/++
 		Does this renderer use OpenGL?
 
@@ -487,7 +487,7 @@ interface PixelRenderer {
 }
 
 ///
-final class OpenGL3PixelRenderer : PixelRenderer {
+final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	private {
 		PresenterObjects* _pro;
@@ -748,7 +748,7 @@ final class PixmapPresenter {
 
 	private {
 		PresenterObjects* _pro;
-		PixelRenderer _renderer;
+		PixmapRenderer _renderer;
 
 		static if (hasTimer) {
 			Timer _timer;
@@ -761,14 +761,14 @@ final class PixmapPresenter {
 		///
 		this(const PresenterConfig config, bool useOpenGl = true) {
 			if (useOpenGl) {
-				this(config, new OpenGL3PixelRenderer());
+				this(config, new OpenGl3PixmapRenderer());
 			} else {
 				assert(false, "Not implemented");
 			}
 		}
 
 		///
-		this(const PresenterConfig config, PixelRenderer renderer) {
+		this(const PresenterConfig config, PixmapRenderer renderer) {
 			_renderer = renderer;
 
 			// create software framebuffer
