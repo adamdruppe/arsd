@@ -166,7 +166,7 @@ import arsd.simpledisplay;
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
 		- a legacy OpenGL renderer (maybe)
-	- Is there something in arsd that serves a similar purpose to `PixelBuffer`?
+	- Is there something in arsd that serves a similar purpose to `Pixmap`?
 	- Minimum window size
 		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
@@ -210,7 +210,7 @@ auto ref T typeCast(T, S)(auto ref S v) {
 /++
 	Pixel data container
  +/
-struct PixelBuffer {
+struct Pixmap {
 
 	/// Pixel data
 	Pixel[] data;
@@ -428,7 +428,7 @@ struct PresenterConfig {
 
 // undocumented
 struct PresenterObjects {
-	PixelBuffer framebuffer;
+	Pixmap framebuffer;
 	SimpleWindow window;
 	PresenterConfig config;
 }
@@ -772,7 +772,7 @@ final class PixmapPresenter {
 			_renderer = renderer;
 
 			// create software framebuffer
-			auto framebuffer = PixelBuffer(config.renderer.resolution);
+			auto framebuffer = Pixmap(config.renderer.resolution);
 
 			// OpenGL?
 			auto openGlOptions = OpenGlOptions.no;
@@ -904,9 +904,12 @@ final class PixmapPresenter {
 		}
 
 		///
-		PixelBuffer framebuffer() @safe pure nothrow @nogc {
+		Pixmap pixmap() @safe pure nothrow @nogc {
 			return _pro.framebuffer;
 		}
+
+		/// ditto
+		alias framebuffer = pixmap;
 
 		///
 		void reconfigure(const PresenterConfig config) {
