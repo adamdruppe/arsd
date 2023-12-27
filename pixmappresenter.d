@@ -11,13 +11,14 @@
 	Think of old-skool games, emulators etc.
 
 	This library builds upon [arsd.simpledisplay] and [arsd.color].
-	It wraps a [arsd.simpledisplay.SimpleWindow|SimpleWindow]) and displays the provided frame data.
+	It wraps a [arsd.simpledisplay.SimpleWindow|SimpleWindow] and displays the provided frame data.
 	Each frame is automatically centered on, and optionally scaled to, the carrier window.
 	This processing is done with hardware acceleration (OpenGL).
 	Later versions might add a software-mode.
 
 	Several $(B scaling) modes are supported.
-	Most notably `keepAspectRatio` that scales frames to the while preserving the original aspect ratio.
+	Most notably [pixmappresenter.Scaling.contain|contain] that scales pixmaps to the window’s current size
+	while preserving the original aspect ratio.
 	See [Scaling] for details.
 
 	$(PITFALL
@@ -56,11 +57,11 @@
 		// Run the eventloop.
 		// The callback delegate will get executed every ~16ms (≙ ~60FPS) and schedule a redraw.
 		presenter.eventLoop(16, delegate() {
-			// Update the frame(buffer) here…
+			// Update the pixmap (“framebuffer”) here…
 
 			// Construct an RGB color value.
 			auto color = Pixel(0x00, 0x00, blueChannel);
-			// For demo purposes, apply it to the whole framebuffer.
+			// For demo purposes, apply it to the whole pixmap.
 			presenter.framebuffer.clear(color);
 
 			// Increment the amount of blue to be used by the next frame.
@@ -90,7 +91,7 @@
 
 	int main() {
 		// Internal resolution of the images (“frames”) we will render.
-		// For further details, check out the previous example.
+		// For further details, check out the “Basic usage” example.
 		const resolution = Size(240, 120);
 
 		// Configure our presenter in advance.
@@ -331,7 +332,7 @@ private @safe pure nothrow @nogc {
 /++
 	Scaling/Fit Modes
 
-	Each scaling modes has unique behavior for different window-size to frame-size ratios.
+	Each scaling modes has unique behavior for different window-size to pixmap-size ratios.
 
 	Unfortunately, there are no universally applicable naming conventions for these modes.
 	In fact, different implementations tend to contradict each other.
@@ -339,10 +340,10 @@ private @safe pure nothrow @nogc {
 	$(SMALL_TABLE
 		Mode feature matrix
 		Mode        | Aspect Ratio | Pixel Ratio | Cropping | Border | Comment(s)
-		`none`      | preserved    | preserved   | yes      | 4      | Crops if the `window.size < frame.size`.
+		`none`      | preserved    | preserved   | yes      | 4      | Crops if the `window.size < pixmap.size`.
 		`stretch`   | no           | no          | no       | none   |
 		`contain`   | preserved    | no          | no       | 2      | Letterboxing/Pillarboxing
-		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= frame.size`.
+		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= pixmap.size`.
 		`integerFP` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, floating-point downscaling
 		`cover`     | preserved    | no          | yes      | none   |
 	)
@@ -447,7 +448,11 @@ struct WantsOpenGl {
 	}
 }
 
-///
+/++
+	Renderer abstraction
+
+	A renderer scales, centers and blits pixmaps to screen.
+ +/
 interface PixmapRenderer {
 	/++
 		Does this renderer use OpenGL?
@@ -493,7 +498,9 @@ interface PixmapRenderer {
 	public void redrawNow();
 }
 
-///
+/++
+	OpenGL 3.0 implementation of a [PixmapRenderer]
+ +/
 final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	private {
@@ -750,6 +757,10 @@ struct LoopCtrl {
 }
 
 /++
+	Pixmap Presenter window
+
+	A high-level window class that displays fully-rendered frames in the form of [Pixmap|Pixmaps].
+	The pixmap will be centered and (optionally) scaled.
  +/
 final class PixmapPresenter {
 
@@ -812,7 +823,7 @@ final class PixmapPresenter {
 		}
 	}
 
-	// additional convience ctors
+	// additional convenience ctors
 	public {
 
 		///
@@ -910,7 +921,11 @@ final class PixmapPresenter {
 			}
 		}
 
-		///
+		/++
+			The [Pixmap] to be presented.
+
+			Use this to “draw” on screen.
+		 +/
 		Pixmap pixmap() @safe pure nothrow @nogc {
 			return _poc.framebuffer;
 		}
@@ -918,30 +933,36 @@ final class PixmapPresenter {
 		/// ditto
 		alias framebuffer = pixmap;
 
-		///
+		/++
+			Updates the configuration of the presenter
+		 +/
 		void reconfigure(const PresenterConfig config) {
 			assert(false, "Not implemented");
 			//_framebuffer.size = config.internalResolution;
 			//_renderer.reconfigure(config);
 		}
 
-		///
+		/++
+			Schedules a redraw
+		 +/
 		void scheduleRedraw() {
 			_renderer.redrawSchedule();
 		}
 
-		///
+		/++
+			Fullscreen mode
+		 +/
 		bool isFullscreen() {
 			return _poc.window.fullscreen;
 		}
 
 		/// ditto
 		void isFullscreen(bool enabled) {
-			return _poc.window.fullscreen = enabled;
+			_poc.window.fullscreen = enabled;
 		}
 
 		/++
-			Returns the underlying `SimpleWindow`
+			Returns the underlying [arsd.simpledisplay.SimpleWindow|SimpleWindow]
 
 			$(WARNING
 				This is unsupported; use at your own risk.
@@ -950,8 +971,27 @@ final class PixmapPresenter {
 				that a presenter or renderer could possibly have set up.
 			)
 		 +/
-		SimpleWindow tinker() @safe pure nothrow @nogc {
+		SimpleWindow tinkerWindow() @safe pure nothrow @nogc {
 			return _poc.window;
+		}
+
+		/++
+			Returns the underlying [PixmapRenderer]
+
+			$(TIP
+				Type-cast the returned reference to the actual implementation type for further use.
+			)
+
+			$(WARNING
+				This is quasi unsupported; use at your own risk.
+
+				Using the result of this function is pratictically no different than
+				using a reference to the renderer further on after passing it the presenter’s constructor.
+				It can’t be prohibited but it resembles a footgun.
+			)
+		 +/
+		PixmapRenderer tinkerRenderer() @safe pure nothrow @nogc {
+			return _renderer;
 		}
 	}
 
