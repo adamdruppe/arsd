@@ -163,14 +163,16 @@ import arsd.simpledisplay;
 /*
 	## TODO
 
-	- Complete documentation
+	- More comprehensive documentation
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
 		- a legacy OpenGL renderer (maybe)
 	- Is there something in arsd that serves a similar purpose to `Pixmap`?
+		- Can we convert to/from it?
 	- Minimum window size
-		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
+	- More control over timing
+		- that’s a simpledisplay thing, though
  */
 
 ///
@@ -336,8 +338,10 @@ private @safe pure nothrow @nogc {
 
 	Each scaling modes has unique behavior for different window-size to pixmap-size ratios.
 
-	Unfortunately, there are no universally applicable naming conventions for these modes.
-	In fact, different implementations tend to contradict each other.
+	$(NOTE
+		Unfortunately, there are no universally applicable naming conventions for these modes.
+		In fact, different implementations tend to contradict each other.
+	)
 
 	$(SMALL_TABLE
 		Mode feature matrix
@@ -346,8 +350,15 @@ private @safe pure nothrow @nogc {
 		`stretch`   | no           | no          | no       | none   |
 		`contain`   | preserved    | no          | no       | 2      | Letterboxing/Pillarboxing
 		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= pixmap.size`.
-		`integerFP` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, floating-point downscaling
+		`intHybrid` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, decimal downscaling
 		`cover`     | preserved    | no          | yes      | none   |
+	)
+
+	$(NOTE
+		Integer scaling – Note that the resulting integer ratio of a window smaller than a pixmap is `0`.
+
+		Use `intHybrid` to prevent the pixmap from disappearing on disproportionately small window sizes.
+		It uses $(I integer)-mode for upscaling and the regular $(I contain)-mode for downscaling.
 	)
 
 	$(SMALL_TABLE
@@ -367,7 +378,7 @@ enum Scaling {
 	stretch, ///
 	contain, ///
 	integer, ///
-	integerFP, ///
+	intHybrid, ///
 	cover, ///
 
 	// aliases
