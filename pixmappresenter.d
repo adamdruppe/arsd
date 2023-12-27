@@ -427,7 +427,7 @@ struct PresenterConfig {
 }
 
 // undocumented
-struct PresenterObjects {
+struct PresenterObjectsContainer {
 	Pixmap framebuffer;
 	SimpleWindow window;
 	PresenterConfig config;
@@ -470,15 +470,15 @@ interface PixmapRenderer {
 		)
 
 		Params:
-			pro = Pointer to the [PresenterObjects] of the presenter. To be stored for later use.
+			container = Pointer to the [PresenterObjectsContainer] of the presenter. To be stored for later use.
 	 +/
-	public void setup(PresenterObjects* pro);
+	public void setup(PresenterObjectsContainer* container);
 
 	/++
 		Reconfigures the renderer
 
 		Called upon configuration changes.
-		The new config can be found in the [PresenterObjects] received during `setup()`.
+		The new config can be found in the [PresenterObjectsContainer] received during `setup()`.
 	 +/
 	public void reconfigure();
 
@@ -497,7 +497,7 @@ interface PixmapRenderer {
 final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	private {
-		PresenterObjects* _pro;
+		PresenterObjectsContainer* _poc;
 
 		bool _clear = true;
 
@@ -518,15 +518,15 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	}
 
 	// TODO: make this ctor?
-	public void setup(PresenterObjects* pro) {
-		_pro = pro;
-		_pro.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
-		_pro.window.redrawOpenGlScene = &this.redrawOpenGlScene;
+	public void setup(PresenterObjectsContainer* pro) {
+		_poc = pro;
+		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
+		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
 
 	private {
 		void visibleForTheFirstTime() {
-			_pro.window.setAsCurrentOpenGlContext();
+			_poc.window.setAsCurrentOpenGlContext();
 			gl3.loadDynamicLibrary();
 
 			this.compileLinkShader();
@@ -538,10 +538,10 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		void redrawOpenGlScene() {
 			if (_clear) {
 				glClearColor(
-					_pro.config.renderer.background.r,
-					_pro.config.renderer.background.g,
-					_pro.config.renderer.background.b,
-					_pro.config.renderer.background.a
+					_poc.config.renderer.background.r,
+					_poc.config.renderer.background.g,
+					_poc.config.renderer.background.b,
+					_poc.config.renderer.background.a
 				);
 				glClear(GL_COLOR_BUFFER_BIT);
 				_clear = false;
@@ -553,9 +553,9 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				GL_TEXTURE_2D,
 				0,
 				0, 0,
-				_pro.config.renderer.resolution.width, _pro.config.renderer.resolution.height,
+				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				GL_RGBA, GL_UNSIGNED_BYTE,
-				cast(void*) _pro.framebuffer.data.ptr
+				cast(void*) _poc.framebuffer.data.ptr
 			);
 
 			glUseProgram(_shader.shaderProgram);
@@ -621,7 +621,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 			glBindTexture(GL_TEXTURE_2D, _texture);
 
-			final switch (_pro.config.renderer.filter) with (ScalingFilter) {
+			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
 			case nearest:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -638,7 +638,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				GL_TEXTURE_2D,
 				0,
 				GL_RGBA8,
-				_pro.config.renderer.resolution.width, _pro.config.renderer.resolution.height,
+				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				0,
 				GL_RGBA, GL_UNSIGNED_BYTE,
 				null
@@ -651,56 +651,56 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	public void reconfigure() {
 		Size viewport;
 
-		final switch (_pro.config.renderer.scaling) {
+		final switch (_poc.config.renderer.scaling) {
 
 		case Scaling.none:
-			viewport = _pro.config.renderer.resolution;
+			viewport = _poc.config.renderer.resolution;
 			break;
 
 		case Scaling.stretch:
-			viewport = _pro.config.window.size;
+			viewport = _poc.config.window.size;
 			break;
 
 		case Scaling.contain:
-			const float scaleF = karContainScalingFactorF(_pro.config.renderer.resolution, _pro.config.window.size);
+			const float scaleF = karContainScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
 			viewport = Size(
-				typeCast!int(scaleF * _pro.config.renderer.resolution.width),
-				typeCast!int(scaleF * _pro.config.renderer.resolution.height),
+				typeCast!int(scaleF * _poc.config.renderer.resolution.width),
+				typeCast!int(scaleF * _poc.config.renderer.resolution.height),
 			);
 			break;
 
 		case Scaling.integer:
-			const int scaleI = karContainScalingFactorInt(_pro.config.renderer.resolution, _pro.config.window.size);
-			viewport = (_pro.config.renderer.resolution * scaleI);
+			const int scaleI = karContainScalingFactorInt(_poc.config.renderer.resolution, _poc.config.window.size);
+			viewport = (_poc.config.renderer.resolution * scaleI);
 			break;
 
 		case Scaling.integerFP:
-			if (karContainNeedsDownscaling(_pro.config.renderer.resolution, _pro.config.window.size)) {
+			if (karContainNeedsDownscaling(_poc.config.renderer.resolution, _poc.config.window.size)) {
 				goto case Scaling.contain;
 			}
 			goto case Scaling.integer;
 
 		case Scaling.cover:
-			const float fillF = karCoverScalingFactorF(_pro.config.renderer.resolution, _pro.config.window.size);
+			const float fillF = karCoverScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
 			viewport = Size(
-				typeCast!int(fillF * _pro.config.renderer.resolution.width),
-				typeCast!int(fillF * _pro.config.renderer.resolution.height),
+				typeCast!int(fillF * _poc.config.renderer.resolution.width),
+				typeCast!int(fillF * _poc.config.renderer.resolution.height),
 			);
 			break;
 		}
 
-		const Point viewportPos = offsetCenter(viewport, _pro.config.window.size);
+		const Point viewportPos = offsetCenter(viewport, _poc.config.window.size);
 		glViewport(viewportPos.x, viewportPos.y, viewport.width, viewport.height);
 		this.setupTexture();
 		_clear = true;
 	}
 
 	void redrawSchedule() {
-		_pro.window.redrawOpenGlSceneSoon();
+		_poc.window.redrawOpenGlSceneSoon();
 	}
 
 	void redrawNow() {
-		_pro.window.redrawOpenGlSceneNow();
+		_poc.window.redrawOpenGlSceneNow();
 	}
 
 	private {
@@ -754,7 +754,7 @@ struct LoopCtrl {
 final class PixmapPresenter {
 
 	private {
-		PresenterObjects* _pro;
+		PresenterObjectsContainer* _poc;
 		PixmapRenderer _renderer;
 
 		static if (hasTimer) {
@@ -802,13 +802,13 @@ final class PixmapPresenter {
 			window.windowResized = &this.windowResized;
 
 			// alloc objects
-			_pro = new PresenterObjects(
+			_poc = new PresenterObjectsContainer(
 				framebuffer,
 				window,
 				config,
 			);
 
-			_renderer.setup(_pro);
+			_renderer.setup(_poc);
 		}
 	}
 
@@ -855,7 +855,7 @@ final class PixmapPresenter {
 		 +/
 		int eventLoop(T...)(long pulseTimeout, void delegate() onPulse, T eventHandlers) {
 			// run event-loop with pulse timer
-			return _pro.window.eventLoop(
+			return _poc.window.eventLoop(
 				pulseTimeout,
 				delegate() { onPulse(); this.scheduleRedraw(); },
 				eventHandlers,
@@ -871,7 +871,7 @@ final class PixmapPresenter {
 		int eventLoop(T...)(T eventHandlers) if (
 			(T.length == 0) || (is(T[0] == delegate) && !is(typeof(() { return T[0](); }()) == LoopCtrl))
 		) {
-			return _pro.window.eventLoop(eventHandlers);
+			return _poc.window.eventLoop(eventHandlers);
 		}
 		//dfmt on
 
@@ -906,13 +906,13 @@ final class PixmapPresenter {
 				}
 
 				// run event-loop
-				return _pro.window.eventLoop(0, eventHandlers);
+				return _poc.window.eventLoop(0, eventHandlers);
 			}
 		}
 
 		///
 		Pixmap pixmap() @safe pure nothrow @nogc {
-			return _pro.framebuffer;
+			return _poc.framebuffer;
 		}
 
 		/// ditto
@@ -932,12 +932,12 @@ final class PixmapPresenter {
 
 		///
 		bool isFullscreen() {
-			return _pro.window.fullscreen;
+			return _poc.window.fullscreen;
 		}
 
 		/// ditto
 		void isFullscreen(bool enabled) {
-			return _pro.window.fullscreen = enabled;
+			return _poc.window.fullscreen = enabled;
 		}
 
 		/++
@@ -951,14 +951,14 @@ final class PixmapPresenter {
 			)
 		 +/
 		SimpleWindow tinker() @safe pure nothrow @nogc {
-			return _pro.window;
+			return _poc.window;
 		}
 	}
 
 	// event handlers
 	private {
 		void windowResized(int width, int height) {
-			_pro.config.window.size = Size(width, height);
+			_poc.config.window.size = Size(width, height);
 			_renderer.reconfigure();
 		}
 	}
