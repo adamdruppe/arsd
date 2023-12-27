@@ -938,8 +938,6 @@ final class PixmapPresenter {
 		 +/
 		void reconfigure(const PresenterConfig config) {
 			assert(false, "Not implemented");
-			//_framebuffer.size = config.internalResolution;
-			//_renderer.reconfigure(config);
 		}
 
 		/++
@@ -959,6 +957,16 @@ final class PixmapPresenter {
 		/// ditto
 		void isFullscreen(bool enabled) {
 			_poc.window.fullscreen = enabled;
+		}
+
+		/++
+			Toggles the fullscreen state of the window.
+
+			Turns a non-fullscreen window into fullscreen mode.
+			Exits fullscreen mode for fullscreen-windows.
+		 +/
+		void toggleFullscreen() {
+			this.isFullscreen = !this.isFullscreen;
 		}
 
 		/++
