@@ -435,9 +435,16 @@ struct PresenterObjects {
 
 ///
 struct WantsOpenGl {
-	bool wanted; /// Is OpenGL wanted?
-	ubyte vMaj; /// major version
-	ubyte vMin; /// minor version
+	ubyte vMaj; /// Major version
+	ubyte vMin; /// Minor version
+	bool compat; /// Compatibility profile? → true = Compatibility Profile; false = Core Profile
+
+@safe pure nothrow @nogc:
+
+	/// Is OpenGL wanted?
+	bool wanted() const {
+		return vMaj > 0;
+	}
 }
 
 ///
@@ -507,7 +514,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	}
 
 	public WantsOpenGl wantsOpenGl() @safe pure nothrow @nogc {
-		return WantsOpenGl(true, 3, 0);
+		return WantsOpenGl(3, 0, false);
 	}
 
 	// TODO: make this ctor?
@@ -779,7 +786,7 @@ final class PixmapPresenter {
 			const openGl = _renderer.wantsOpenGl;
 			if (openGl.wanted) {
 				setOpenGLContextVersion(openGl.vMaj, openGl.vMin);
-				openGLContextCompatible = false;
+				openGLContextCompatible = openGl.compat;
 
 				openGlOptions = OpenGlOptions.yes;
 			}
