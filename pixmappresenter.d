@@ -149,7 +149,7 @@
 		}, delegate(MouseEvent ev) {
 			// toggle fullscreen mode on double-click
 			if (ev.doubleClick) {
-				presenter.isFullscreen = !presenter.isFullscreen;
+				presenter.toggleFullscreen();
 			}
 		});
 	}
