@@ -255,7 +255,7 @@ struct Pixmap {
 	int height() inout {
 		if (data.length == 0)
 			return 0;
-		return (cast(int) data.length / width);
+		return typeCast!int(data.length / width);
 	}
 
 	/// Rectangular size of the buffer
@@ -265,7 +265,7 @@ struct Pixmap {
 
 	/// Length of the buffer, i.e. the number of pixels
 	int length() inout {
-		return cast(int) data.length;
+		return typeCast!int(data.length);
 	}
 
 	/++
@@ -325,7 +325,7 @@ private @safe pure nothrow @nogc {
 
 	Point offsetCenter(const Size drawing, const Size canvas) {
 		auto delta = canvas.deltaPerimeter(drawing);
-		return (cast(Point) delta) >> 1;
+		return (typeCast!Point(delta) >> 1);
 	}
 }
 
@@ -562,7 +562,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				0, 0,
 				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				GL_RGBA, GL_UNSIGNED_BYTE,
-				cast(void*) _poc.framebuffer.data.ptr
+				typeCast!(void*)(_poc.framebuffer.data.ptr)
 			);
 
 			glUseProgram(_shader.shaderProgram);
@@ -617,7 +617,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, null);
 			glEnableVertexAttribArray(0);
 
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, cast(void*)(2 * GLfloat.sizeof));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, typeCast!(void*)(2 * GLfloat.sizeof));
 			glEnableVertexAttribArray(1);
 		}
 
