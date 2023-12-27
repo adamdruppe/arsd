@@ -244,7 +244,7 @@ struct Pixmap {
 
 	/// ditto
 	void size(int totalPixels, int width)
-	in (length % width == 0) {
+	in (totalPixels % width == 0) {
 		data.length = totalPixels;
 		this.width = width;
 	}
@@ -253,8 +253,10 @@ struct Pixmap {
 
 	/// Height of the buffer, i.e. the number of lines
 	int height() inout {
-		if (data.length == 0)
+		if (width == 0) {
 			return 0;
+		}
+
 		return typeCast!int(data.length / width);
 	}
 
