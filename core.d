@@ -37,6 +37,9 @@ module arsd.core;
 ///ArsdUseCustomRuntime is used since other derived work from WebAssembly may be used and thus specified in the CLI
 version(WebAssembly) version = ArsdUseCustomRuntime;
 
+// note that kqueue might run an i/o loop on mac, ios, etc. but then NSApp.run on the io thread
+// but on bsd, you want the kqueue loop in i/o too....
+
 version(iOS)
 {
 	version = EmptyEventLoop;
@@ -6916,6 +6919,56 @@ package(arsd) version(Windows) extern(Windows) {
 }
 
 package(arsd) version(OSXCocoa) {
+
+/* Copy/paste chunk from Jacob Carlborg { */
+// from https://raw.githubusercontent.com/jacob-carlborg/druntime/550edd0a64f0eb2c4f35d3ec3d88e26b40ac779e/src/core/stdc/clang_block.d
+// with comments stripped (see docs in the original link), code reformatted, and some names changed to avoid potential conflicts
+
+import core.stdc.config;
+struct ObjCBlock(R = void, Params...) {
+private:
+	alias extern(C) R function(ObjCBlock*, Params) Invoke;
+
+	void* isa;
+	int flags;
+	int reserved = 0;
+	Invoke invoke;
+	Descriptor* descriptor;
+
+	// Imported variables go here
+	R delegate(Params) dg;
+
+	this(void* isa, int flags, Invoke invoke, R delegate(Params) dg) {
+		this.isa = isa;
+		this.flags = flags;
+		this.invoke = invoke;
+		this.dg = dg;
+		this.descriptor = &.objcblock_descriptor;
+	}
+}
+ObjCBlock!(R, Params) block(R, Params...)(R delegate(Params) dg) {
+	static if (Params.length == 0)
+	    enum flags = 0x50000000;
+	else
+		enum flags = 0x40000000;
+
+	return ObjCBlock!(R, Params)(&_NSConcreteStackBlock, flags, &objcblock_invoke!(R, Params), dg);
+}
+
+private struct Descriptor {
+    c_ulong reserved;
+    c_ulong size;
+    const(char)* signature;
+}
+private extern(C) extern __gshared void*[32] _NSConcreteStackBlock;
+private __gshared auto objcblock_descriptor = Descriptor(0, ObjCBlock!().sizeof);
+private extern(C) R objcblock_invoke(R, Args...)(ObjCBlock!(R, Args)* block, Args args) {
+    return block.dg(args);
+}
+
+
+/* End copy/paste chunk from Jacob Carlborg } */
+
 
 /+
 To let Cocoa know that you intend to use multiple threads, all you have to do is spawn a single thread using the NSThread class and let that thread immediately exit. Your thread entry point need not do anything. Just the act of spawning a thread using NSThread is enough to ensure that the locks needed by the Cocoa frameworks are put in place.
