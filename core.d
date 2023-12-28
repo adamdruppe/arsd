@@ -32,6 +32,8 @@ module arsd.core;
 
 // see: https://wiki.openssl.org/index.php/Simple_TLS_Server
 
+// see: When you only want to track changes on a file or directory, be sure to open it using the O_EVTONLY flag.
+
 ///ArsdUseCustomRuntime is used since other derived work from WebAssembly may be used and thus specified in the CLI
 version(WebAssembly) version = ArsdUseCustomRuntime;
 
@@ -59,6 +61,13 @@ version(HasThread)
 	import core.volatile;
 	import core.atomic;
 	import core.time;
+}
+else
+{
+	// polyfill for missing core.time
+	struct Duration {
+		static Duration max() { return Duration(); }
+	}
 }
 
 version(OSX) {
@@ -1050,6 +1059,32 @@ unittest {
 	assert(flagsToString!MyFlags(2) == "b");
 }
 
+private auto toDelegate(T)(T t) {
+	// static assert(is(T == function)); // lol idk how to do what i actually want here
+
+	static if(is(T Return == return))
+	static if(is(typeof(*T) Params == __parameters)) {
+		static struct Wrapper {
+			Return call(Params params) {
+				return (cast(T) &this)(params);
+			}
+		}
+		return &((cast(Wrapper*) t).call);
+	} else static assert(0, "could not get params");
+	else static assert(0, "could not get return value");
+}
+
+unittest {
+	int function(int) fn;
+	fn = (a) { return a; };
+
+	int delegate(int) dg = toDelegate(fn);
+
+	assert(dg.ptr is fn); // it stores the original function as the context pointer
+	assert(dg.funcptr !is fn); // which is called through a lil trampoline
+	assert(dg(5) == 5); // and forwards the args correctly
+}
+
 /++
 	This populates a struct from a list of values (or other expressions, but it only looks at the values) based on types of the members, with one exception: `bool` members.. maybe.
 
@@ -1981,15 +2016,94 @@ interface ICoreEventLoop {
 		Runs the event loop for this thread until the `until` delegate returns `true`.
 	+/
 	final void run(scope bool delegate() until) {
-		while(!until()) {
+		while(!exitApplicationRequested && !until()) {
 			runOnce();
+		}
+	}
+
+	private __gshared bool exitApplicationRequested;
+
+	final static void exitApplication() {
+		exitApplicationRequested = true;
+		// FIXME: wake up all the threads
+	}
+
+	/++
+		Returns details from a call to [runOnce]. Use the named methods here for details, or it can be used in a `while` loop directly thanks to its `opCast` automatic conversion to `bool`.
+
+		History:
+			Added December 28, 2023
+	+/
+	static struct RunOnceResult {
+		enum Possibilities {
+			CarryOn,
+			LocalExit,
+			GlobalExit
+
+		}
+		Possibilities result;
+
+		/++
+			Returns `true` if the event loop should generally continue.
+
+			Might be false if the local loop was exited or if the application is supposed to exit. If this is `false`, check [applicationExitRequested] to determine if you should move on to other work or start your final cleanup process.
+		+/
+		bool shouldContinue() const {
+			return result == Possibilities.CarryOn;
+		}
+
+		/++
+			Returns `true` if [ICoreEventLoop.exitApplication] was called during this event, or if the user or operating system has requested the application exit.
+
+			Details might be available through other means.
+		+/
+		bool applicationExitRequested() const {
+			return result == Possibilities.GlobalExit;
+		}
+
+		/++
+			Returns [shouldContinue] when used in a context for an implicit bool (e.g. `if` statements).
+		+/
+		bool opCast(T : bool)() const {
+			reutrn shouldContinue();
 		}
 	}
 
 	/++
 		Runs a single iteration of the event loop for this thread. It will return when the first thing happens, but that thing might be totally uninteresting to anyone, or it might trigger significant work you'll wait on.
+
+		Note that running this externally instead of `run` gives only the $(I illusion) of control. You're actually better off setting a recurring timer if you need things to run on a clock tick, or a single-shot timer for a one time event. They're more likely to be called on schedule inside this function than outside it.
+
+		Parameters:
+			timeout = a timeout value for an idle loop. There is no guarantee you won't return earlier or later than this; the function might run longer than the timeout if it has work to do. Pass `Duration.max` (the default) for an infinite duration timeout (but remember, once it finds work to do, including a false-positive wakeup or interruption by the operating system, it will return early anyway).
+
+		History:
+			Prior to December 28, 2023, it returned `void` and took no arguments. This change is breaking, but since the entire module is documented as unstable, it was permitted to happen as that document provided prior notice.
 	+/
-	void runOnce();
+	RunOnceResult runOnce(Duration timeout = Duration.max);
+
+	/++
+		Adds a delegate to be called on each loop iteration, called based on the `timingFlags`.
+
+
+		The order in which the delegates are called is undefined and may change with each iteration of the loop. Additionally, when and how many times a loop iterates is undefined; multiple events might be handled by each iteration, or sometimes, nothing will be handled and it woke up spuriously. Your delegates need to be ok with all of this.
+
+		Parameters:
+			dg = the delegate to call
+			timingFlags =
+				0: never actually run the function; it can assert error if you pass this
+				1: run before each loop OS wait call
+				2: run after each loop OS wait call
+				3: run both before and after each OS wait call
+				4: single shot?
+				8: no-coalesce? (if after was just run, it will skip the before loops unless this flag is set)
+
+	+/
+	void addDelegateOnLoopIteration(void delegate() dg, uint timingFlags);
+
+	final void addDelegateOnLoopIteration(void function() dg, uint timingFlags) {
+		addDelegateOnLoopIteration(toDelegate(dg), timingFlags);
+	}
 
 	// to send messages between threads, i'll queue up a function that just call dispatchMessage. can embed the arg inside the callback helper prolly.
 	// tho i might prefer to actually do messages w/ run payloads so it is easier to deduplicate i can still dedupe by insepcting the call args so idk
@@ -2064,6 +2178,31 @@ interface ICoreEventLoop {
 		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb);
 		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb);
 	}
+
+	version(Windows) {
+		@mustuse
+		static struct UnregisterToken {
+			private CoreEventLoopImplementation impl;
+			private HANDLE handle;
+			private CallbackHelper cb;
+
+			/++
+				Unregisters the handle from the event loop and releases the reference to the callback held by the event loop (which will probably free it).
+
+				You must call this when you're done. Normally, this will be right before you close the handle.
+			+/
+			void unregister() {
+				assert(impl !is null, "Cannot reuse unregister token");
+
+				impl.unregisterHandle(handle, cb);
+
+				cb.release();
+				this = typeof(this).init;
+			}
+		}
+
+		UnregisterToken addCallbackOnHandleReady(HANDLE handle, CallbackHelper cb);
+	}
 }
 
 /++
@@ -2120,7 +2259,7 @@ package(arsd) enum EventLoopType {
 
 
 // the GC may not be able to see this! remember, it can be hidden inside kernel buffers
-version(HasThread) private class CallbackHelper {
+version(HasThread) package(arsd) class CallbackHelper {
 	import core.memory;
 
 	void call() {
@@ -4687,7 +4826,7 @@ version(HasThread) struct ArsdCoreApplication {
 
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
-	version(EmptyEventLoop) void runOnce(){}
+	version(EmptyEventLoop) RunOnceResult runOnce(Duration timeout = Duration.max) { return RunOnceResult.Possibilities.LocalExit; }
 	version(EmptyCoreEvent)
 	{
 		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb){return typeof(return).init;}
@@ -4696,11 +4835,29 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		private void rearmFd(RearmToken token) {}
 	}
 
+
+	private {
+		static struct LoopIterationDelegate {
+			void delegate() dg;
+			uint flags;
+		}
+		LoopIterationDelegate[] loopIterationDelegates;
+
+		void runLoopIterationDelegates() {
+			foreach(lid; loopIterationDelegates)
+				lid.dg();
+		}
+	}
+
+	void addDelegateOnLoopIteration(void delegate() dg, uint timingFlags) {
+		loopIterationDelegates ~= LoopIterationDelegate(dg, timingFlags);
+	}
+
 	version(Arsd_core_kqueue) {
 		// this thread apc dispatches go as a custom event to the queue
 		// the other queues go through one byte at a time pipes (barf). freebsd 13 and newest nbsd have eventfd too tho so maybe i can use them but the other kqueue systems don't.
 
-		void runOnce() {
+		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			kevent_t[16] ev;
 			//timespec tout = timespec(1, 0);
 			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, null/*&tout*/);
@@ -4722,6 +4879,10 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 					}
 				}
 			}
+
+			runLoopIterationDelegates();
+
+			return RunOnceResult.Possibilities.CarryOn;
 		}
 
 		// FIXME: idk how to make one event that multiple kqueues can listen to w/o being shared
@@ -4840,12 +5001,31 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		__gshared HANDLE iocpWorkers;
 
 		HANDLE[] handles;
+		CallbackHelper[] handlesCbs;
+
+		void unregisterHandle(HANDLE handle, CallbackHelper cb) {
+			foreach(idx, h; handles)
+				if(h is handle && handlesCbs[idx] is cb) {
+					handles[idx] = handles[$-1];
+					handles = handles[0 .. $-1].assumeSafeAppend;
+
+					handlesCbs[idx] = handlesCbs[$-1];
+					handlesCbs = handlesCbs[0 .. $-1].assumeSafeAppend;
+				}
+		}
+
+		UnregisterToken addCallbackOnHandleReady(HANDLE handle, CallbackHelper cb) {
+			handles ~= handle;
+			handlesCbs ~= cb;
+
+			return UnregisterToken(this, handle, cb);
+		}
 
 		// i think to terminate i just have to post the message at least once for every thread i know about, maybe a few more times for threads i don't know about.
 
 		bool isWorker; // if it is a worker we wait on the iocp, if not we wait on msg
 
-		void runOnce() {
+		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			if(isWorker) {
 				// this function is only supported on Windows Vista and up, so using this
 				// means dropping support for XP.
@@ -4863,7 +5043,8 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				enum WAIT_OBJECT_0 = 0;
 				if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
 					auto h = handles[waitResult - WAIT_OBJECT_0];
-					// FIXME: run the handle ready callback
+					auto cb = handlesCbs[waitResult - WAIT_OBJECT_0];
+					cb.call();
 				} else if(waitResult == handles.length + WAIT_OBJECT_0) {
 					// message ready
 					int count;
@@ -4880,9 +5061,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 							break; // take the opportunity to catch up on other events
 
 						if(ret == 0) { // WM_QUIT
-							// EventLoop.quitApplication();
-							assert(0); // FIXME
-							//break;
+							exitApplication();
 						}
 					}
 				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
@@ -4896,6 +5075,10 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 					// idk....
 				}
 			}
+
+			runLoopIterationDelegates();
+
+			return RunOnceResult.Possibilities.CarryOn;
 		}
 	}
 
@@ -5177,7 +5360,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		// the any thread poll is just registered in the this thread poll w/ exclusive. nobody actaully epoll_waits
 		// on the global one directly.
 
-		void runOnce() {
+		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			epoll_event[16] events;
 			auto ret = epoll_wait(epollfd, events.ptr, cast(int) events.length, -1); // FIXME: timeout
 			if(ret == -1) {
@@ -5200,6 +5383,10 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 					cbObject.call();
 				}
 			}
+
+			runLoopIterationDelegates();
+
+			return RunOnceResult.Possibilities.CarryOn;
 		}
 
 		// building blocks for low-level integration with the loop
