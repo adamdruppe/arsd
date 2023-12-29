@@ -2041,7 +2041,8 @@ interface ICoreEventLoop {
 		enum Possibilities {
 			CarryOn,
 			LocalExit,
-			GlobalExit
+			GlobalExit,
+			Interrupted
 
 		}
 		Possibilities result;
@@ -4829,7 +4830,7 @@ version(HasThread) struct ArsdCoreApplication {
 
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
-	version(EmptyEventLoop) RunOnceResult runOnce(Duration timeout = Duration.max) { return RunOnceResult.Possibilities.LocalExit; }
+	version(EmptyEventLoop) RunOnceResult runOnce(Duration timeout = Duration.max) { return RunOnceResult(RunOnceResult.Possibilities.LocalExit); }
 	version(EmptyCoreEvent)
 	{
 		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb){return typeof(return).init;}
@@ -4885,7 +4886,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			runLoopIterationDelegates();
 
-			return RunOnceResult.Possibilities.CarryOn;
+			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
 
 		// FIXME: idk how to make one event that multiple kqueues can listen to w/o being shared
@@ -5081,7 +5082,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			runLoopIterationDelegates();
 
-			return RunOnceResult.Possibilities.CarryOn;
+			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
 	}
 
@@ -5369,7 +5370,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			if(ret == -1) {
 				import core.stdc.errno;
 				if(errno == EINTR) {
-					return;
+					return RunOnceResult(RunOnceResult.Possibilities.Interrupted);
 				}
 				throw new ErrnoApiException("epoll_wait", errno);
 			} else if(ret == 0) {
@@ -5389,7 +5390,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			runLoopIterationDelegates();
 
-			return RunOnceResult.Possibilities.CarryOn;
+			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
 
 		// building blocks for low-level integration with the loop

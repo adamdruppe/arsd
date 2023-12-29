@@ -271,7 +271,7 @@ DirFlag dirFlag(Dir dir) {
 
 // this is public but like i don't want do document it since it can so easily fail the asserts.
 DirFlag dirFlag(Point dir) {
-	return dirFlag(cast(Dir) dir);
+	return dirFlag(*cast(Dir*) &dir);
 }
 
 /++
