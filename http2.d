@@ -2042,13 +2042,11 @@ class HttpRequest {
 								inactive[inactiveCount++] = sock;
 								sock.close();
 								loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-								continue;
 							}
 
 							if(!stillAlive || request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
 								//import std.stdio; writeln(cast(void*) sock, " ", stillAlive, " ", request.state);
 								inactive[inactiveCount++] = sock;
-								continue;
 							// reuse the socket for another pending request, if we can
 							}
 						}
