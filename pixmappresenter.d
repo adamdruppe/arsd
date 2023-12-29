@@ -11,13 +11,14 @@
 	Think of old-skool games, emulators etc.
 
 	This library builds upon [arsd.simpledisplay] and [arsd.color].
-	It wraps a [arsd.simpledisplay.SimpleWindow|SimpleWindow]) and displays the provided frame data.
+	It wraps a [arsd.simpledisplay.SimpleWindow|SimpleWindow] and displays the provided frame data.
 	Each frame is automatically centered on, and optionally scaled to, the carrier window.
 	This processing is done with hardware acceleration (OpenGL).
 	Later versions might add a software-mode.
 
 	Several $(B scaling) modes are supported.
-	Most notably `keepAspectRatio` that scales frames to the while preserving the original aspect ratio.
+	Most notably [pixmappresenter.Scaling.contain|contain] that scales pixmaps to the window’s current size
+	while preserving the original aspect ratio.
 	See [Scaling] for details.
 
 	$(PITFALL
@@ -56,11 +57,11 @@
 		// Run the eventloop.
 		// The callback delegate will get executed every ~16ms (≙ ~60FPS) and schedule a redraw.
 		presenter.eventLoop(16, delegate() {
-			// Update the frame(buffer) here…
+			// Update the pixmap (“framebuffer”) here…
 
 			// Construct an RGB color value.
 			auto color = Pixel(0x00, 0x00, blueChannel);
-			// For demo purposes, apply it to the whole framebuffer.
+			// For demo purposes, apply it to the whole pixmap.
 			presenter.framebuffer.clear(color);
 
 			// Increment the amount of blue to be used by the next frame.
@@ -90,7 +91,7 @@
 
 	int main() {
 		// Internal resolution of the images (“frames”) we will render.
-		// For further details, check out the previous example.
+		// For further details, check out the “Basic usage” example.
 		const resolution = Size(240, 120);
 
 		// Configure our presenter in advance.
@@ -148,7 +149,7 @@
 		}, delegate(MouseEvent ev) {
 			// toggle fullscreen mode on double-click
 			if (ev.doubleClick) {
-				presenter.isFullscreen = !presenter.isFullscreen;
+				presenter.toggleFullscreen();
 			}
 		});
 	}
@@ -162,14 +163,16 @@ import arsd.simpledisplay;
 /*
 	## TODO
 
-	- Complete documentation
+	- More comprehensive documentation
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
 		- a legacy OpenGL renderer (maybe)
-	- Is there something in arsd that serves a similar purpose to `PixelBuffer`?
+	- Is there something in arsd that serves a similar purpose to `Pixmap`?
+		- Can we convert to/from it?
 	- Minimum window size
-		- or something similar
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
+	- More control over timing
+		- that’s a simpledisplay thing, though
  */
 
 ///
@@ -210,7 +213,7 @@ auto ref T typeCast(T, S)(auto ref S v) {
 /++
 	Pixel data container
  +/
-struct PixelBuffer {
+struct Pixmap {
 
 	/// Pixel data
 	Pixel[] data;
@@ -243,7 +246,7 @@ struct PixelBuffer {
 
 	/// ditto
 	void size(int totalPixels, int width)
-	in (length % width == 0) {
+	in (totalPixels % width == 0) {
 		data.length = totalPixels;
 		this.width = width;
 	}
@@ -252,9 +255,11 @@ struct PixelBuffer {
 
 	/// Height of the buffer, i.e. the number of lines
 	int height() inout {
-		if (data.length == 0)
+		if (width == 0) {
 			return 0;
-		return (cast(int) data.length / width);
+		}
+
+		return typeCast!int(data.length / width);
 	}
 
 	/// Rectangular size of the buffer
@@ -264,7 +269,7 @@ struct PixelBuffer {
 
 	/// Length of the buffer, i.e. the number of pixels
 	int length() inout {
-		return cast(int) data.length;
+		return typeCast!int(data.length);
 	}
 
 	/++
@@ -324,27 +329,36 @@ private @safe pure nothrow @nogc {
 
 	Point offsetCenter(const Size drawing, const Size canvas) {
 		auto delta = canvas.deltaPerimeter(drawing);
-		return (cast(Point) delta) >> 1;
+		return (typeCast!Point(delta) >> 1);
 	}
 }
 
 /++
 	Scaling/Fit Modes
 
-	Each scaling modes has unique behavior for different window-size to frame-size ratios.
+	Each scaling modes has unique behavior for different window-size to pixmap-size ratios.
 
-	Unfortunately, there are no universally applicable naming conventions for these modes.
-	In fact, different implementations tend to contradict each other.
+	$(NOTE
+		Unfortunately, there are no universally applicable naming conventions for these modes.
+		In fact, different implementations tend to contradict each other.
+	)
 
 	$(SMALL_TABLE
 		Mode feature matrix
 		Mode        | Aspect Ratio | Pixel Ratio | Cropping | Border | Comment(s)
-		`none`      | preserved    | preserved   | yes      | 4      | Crops if the `window.size < frame.size`.
+		`none`      | preserved    | preserved   | yes      | 4      | Crops if the `window.size < pixmap.size`.
 		`stretch`   | no           | no          | no       | none   |
 		`contain`   | preserved    | no          | no       | 2      | Letterboxing/Pillarboxing
-		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= frame.size`.
-		`integerFP` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, floating-point downscaling
+		`integer`   | preserved    | preserved   | no       | 4      | Works only if `window.size >= pixmap.size`.
+		`intHybrid` | preserved    | when up     | no       | 4 or 2 | Hybrid: int upscaling, decimal downscaling
 		`cover`     | preserved    | no          | yes      | none   |
+	)
+
+	$(NOTE
+		Integer scaling – Note that the resulting integer ratio of a window smaller than a pixmap is `0`.
+
+		Use `intHybrid` to prevent the pixmap from disappearing on disproportionately small window sizes.
+		It uses $(I integer)-mode for upscaling and the regular $(I contain)-mode for downscaling.
 	)
 
 	$(SMALL_TABLE
@@ -364,7 +378,7 @@ enum Scaling {
 	stretch, ///
 	contain, ///
 	integer, ///
-	integerFP, ///
+	intHybrid, ///
 	cover, ///
 
 	// aliases
@@ -427,21 +441,32 @@ struct PresenterConfig {
 }
 
 // undocumented
-struct PresenterObjects {
-	PixelBuffer framebuffer;
+struct PresenterObjectsContainer {
+	Pixmap framebuffer;
 	SimpleWindow window;
 	PresenterConfig config;
 }
 
 ///
 struct WantsOpenGl {
-	bool wanted; /// Is OpenGL wanted?
-	ubyte vMaj; /// major version
-	ubyte vMin; /// minor version
+	ubyte vMaj; /// Major version
+	ubyte vMin; /// Minor version
+	bool compat; /// Compatibility profile? → true = Compatibility Profile; false = Core Profile
+
+@safe pure nothrow @nogc:
+
+	/// Is OpenGL wanted?
+	bool wanted() const {
+		return vMaj > 0;
+	}
 }
 
-///
-interface PixelRenderer {
+/++
+	Renderer abstraction
+
+	A renderer scales, centers and blits pixmaps to screen.
+ +/
+interface PixmapRenderer {
 	/++
 		Does this renderer use OpenGL?
 
@@ -463,15 +488,15 @@ interface PixelRenderer {
 		)
 
 		Params:
-			pro = Pointer to the [PresenterObjects] of the presenter. To be stored for later use.
+			container = Pointer to the [PresenterObjectsContainer] of the presenter. To be stored for later use.
 	 +/
-	public void setup(PresenterObjects* pro);
+	public void setup(PresenterObjectsContainer* container);
 
 	/++
 		Reconfigures the renderer
 
 		Called upon configuration changes.
-		The new config can be found in the [PresenterObjects] received during `setup()`.
+		The new config can be found in the [PresenterObjectsContainer] received during `setup()`.
 	 +/
 	public void reconfigure();
 
@@ -486,11 +511,13 @@ interface PixelRenderer {
 	public void redrawNow();
 }
 
-///
-final class OpenGL3PixelRenderer : PixelRenderer {
+/++
+	OpenGL 3.0 implementation of a [PixmapRenderer]
+ +/
+final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	private {
-		PresenterObjects* _pro;
+		PresenterObjectsContainer* _poc;
 
 		bool _clear = true;
 
@@ -507,19 +534,19 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 	}
 
 	public WantsOpenGl wantsOpenGl() @safe pure nothrow @nogc {
-		return WantsOpenGl(true, 3, 0);
+		return WantsOpenGl(3, 0, false);
 	}
 
 	// TODO: make this ctor?
-	public void setup(PresenterObjects* pro) {
-		_pro = pro;
-		_pro.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
-		_pro.window.redrawOpenGlScene = &this.redrawOpenGlScene;
+	public void setup(PresenterObjectsContainer* pro) {
+		_poc = pro;
+		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
+		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
 
 	private {
 		void visibleForTheFirstTime() {
-			_pro.window.setAsCurrentOpenGlContext();
+			_poc.window.setAsCurrentOpenGlContext();
 			gl3.loadDynamicLibrary();
 
 			this.compileLinkShader();
@@ -531,10 +558,10 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 		void redrawOpenGlScene() {
 			if (_clear) {
 				glClearColor(
-					_pro.config.renderer.background.r,
-					_pro.config.renderer.background.g,
-					_pro.config.renderer.background.b,
-					_pro.config.renderer.background.a
+					_poc.config.renderer.background.r,
+					_poc.config.renderer.background.g,
+					_poc.config.renderer.background.b,
+					_poc.config.renderer.background.a
 				);
 				glClear(GL_COLOR_BUFFER_BIT);
 				_clear = false;
@@ -546,9 +573,9 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 				GL_TEXTURE_2D,
 				0,
 				0, 0,
-				_pro.config.renderer.resolution.width, _pro.config.renderer.resolution.height,
+				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				GL_RGBA, GL_UNSIGNED_BYTE,
-				cast(void*) _pro.framebuffer.data.ptr
+				typeCast!(void*)(_poc.framebuffer.data.ptr)
 			);
 
 			glUseProgram(_shader.shaderProgram);
@@ -603,7 +630,7 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, null);
 			glEnableVertexAttribArray(0);
 
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, cast(void*)(2 * GLfloat.sizeof));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, typeCast!(void*)(2 * GLfloat.sizeof));
 			glEnableVertexAttribArray(1);
 		}
 
@@ -614,7 +641,7 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 
 			glBindTexture(GL_TEXTURE_2D, _texture);
 
-			final switch (_pro.config.renderer.filter) with (ScalingFilter) {
+			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
 			case nearest:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -631,7 +658,7 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 				GL_TEXTURE_2D,
 				0,
 				GL_RGBA8,
-				_pro.config.renderer.resolution.width, _pro.config.renderer.resolution.height,
+				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				0,
 				GL_RGBA, GL_UNSIGNED_BYTE,
 				null
@@ -644,56 +671,56 @@ final class OpenGL3PixelRenderer : PixelRenderer {
 	public void reconfigure() {
 		Size viewport;
 
-		final switch (_pro.config.renderer.scaling) {
+		final switch (_poc.config.renderer.scaling) {
 
 		case Scaling.none:
-			viewport = _pro.config.renderer.resolution;
+			viewport = _poc.config.renderer.resolution;
 			break;
 
 		case Scaling.stretch:
-			viewport = _pro.config.window.size;
+			viewport = _poc.config.window.size;
 			break;
 
 		case Scaling.contain:
-			const float scaleF = karContainScalingFactorF(_pro.config.renderer.resolution, _pro.config.window.size);
+			const float scaleF = karContainScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
 			viewport = Size(
-				typeCast!int(scaleF * _pro.config.renderer.resolution.width),
-				typeCast!int(scaleF * _pro.config.renderer.resolution.height),
+				typeCast!int(scaleF * _poc.config.renderer.resolution.width),
+				typeCast!int(scaleF * _poc.config.renderer.resolution.height),
 			);
 			break;
 
 		case Scaling.integer:
-			const int scaleI = karContainScalingFactorInt(_pro.config.renderer.resolution, _pro.config.window.size);
-			viewport = (_pro.config.renderer.resolution * scaleI);
+			const int scaleI = karContainScalingFactorInt(_poc.config.renderer.resolution, _poc.config.window.size);
+			viewport = (_poc.config.renderer.resolution * scaleI);
 			break;
 
 		case Scaling.integerFP:
-			if (karContainNeedsDownscaling(_pro.config.renderer.resolution, _pro.config.window.size)) {
+			if (karContainNeedsDownscaling(_poc.config.renderer.resolution, _poc.config.window.size)) {
 				goto case Scaling.contain;
 			}
 			goto case Scaling.integer;
 
 		case Scaling.cover:
-			const float fillF = karCoverScalingFactorF(_pro.config.renderer.resolution, _pro.config.window.size);
+			const float fillF = karCoverScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
 			viewport = Size(
-				typeCast!int(fillF * _pro.config.renderer.resolution.width),
-				typeCast!int(fillF * _pro.config.renderer.resolution.height),
+				typeCast!int(fillF * _poc.config.renderer.resolution.width),
+				typeCast!int(fillF * _poc.config.renderer.resolution.height),
 			);
 			break;
 		}
 
-		const Point viewportPos = offsetCenter(viewport, _pro.config.window.size);
+		const Point viewportPos = offsetCenter(viewport, _poc.config.window.size);
 		glViewport(viewportPos.x, viewportPos.y, viewport.width, viewport.height);
 		this.setupTexture();
 		_clear = true;
 	}
 
 	void redrawSchedule() {
-		_pro.window.redrawOpenGlSceneSoon();
+		_poc.window.redrawOpenGlSceneSoon();
 	}
 
 	void redrawNow() {
-		_pro.window.redrawOpenGlSceneNow();
+		_poc.window.redrawOpenGlSceneNow();
 	}
 
 	private {
@@ -743,12 +770,16 @@ struct LoopCtrl {
 }
 
 /++
+	Pixmap Presenter window
+
+	A high-level window class that displays fully-rendered frames in the form of [Pixmap|Pixmaps].
+	The pixmap will be centered and (optionally) scaled.
  +/
 final class PixmapPresenter {
 
 	private {
-		PresenterObjects* _pro;
-		PixelRenderer _renderer;
+		PresenterObjectsContainer* _poc;
+		PixmapRenderer _renderer;
 
 		static if (hasTimer) {
 			Timer _timer;
@@ -761,25 +792,25 @@ final class PixmapPresenter {
 		///
 		this(const PresenterConfig config, bool useOpenGl = true) {
 			if (useOpenGl) {
-				this(config, new OpenGL3PixelRenderer());
+				this(config, new OpenGl3PixmapRenderer());
 			} else {
 				assert(false, "Not implemented");
 			}
 		}
 
 		///
-		this(const PresenterConfig config, PixelRenderer renderer) {
+		this(const PresenterConfig config, PixmapRenderer renderer) {
 			_renderer = renderer;
 
 			// create software framebuffer
-			auto framebuffer = PixelBuffer(config.renderer.resolution);
+			auto framebuffer = Pixmap(config.renderer.resolution);
 
 			// OpenGL?
 			auto openGlOptions = OpenGlOptions.no;
 			const openGl = _renderer.wantsOpenGl;
 			if (openGl.wanted) {
 				setOpenGLContextVersion(openGl.vMaj, openGl.vMin);
-				openGLContextCompatible = false;
+				openGLContextCompatible = openGl.compat;
 
 				openGlOptions = OpenGlOptions.yes;
 			}
@@ -795,17 +826,17 @@ final class PixmapPresenter {
 			window.windowResized = &this.windowResized;
 
 			// alloc objects
-			_pro = new PresenterObjects(
+			_poc = new PresenterObjectsContainer(
 				framebuffer,
 				window,
 				config,
 			);
 
-			_renderer.setup(_pro);
+			_renderer.setup(_poc);
 		}
 	}
 
-	// additional convience ctors
+	// additional convenience ctors
 	public {
 
 		///
@@ -848,7 +879,7 @@ final class PixmapPresenter {
 		 +/
 		int eventLoop(T...)(long pulseTimeout, void delegate() onPulse, T eventHandlers) {
 			// run event-loop with pulse timer
-			return _pro.window.eventLoop(
+			return _poc.window.eventLoop(
 				pulseTimeout,
 				delegate() { onPulse(); this.scheduleRedraw(); },
 				eventHandlers,
@@ -864,7 +895,7 @@ final class PixmapPresenter {
 		int eventLoop(T...)(T eventHandlers) if (
 			(T.length == 0) || (is(T[0] == delegate) && !is(typeof(() { return T[0](); }()) == LoopCtrl))
 		) {
-			return _pro.window.eventLoop(eventHandlers);
+			return _poc.window.eventLoop(eventHandlers);
 		}
 		//dfmt on
 
@@ -899,39 +930,60 @@ final class PixmapPresenter {
 				}
 
 				// run event-loop
-				return _pro.window.eventLoop(0, eventHandlers);
+				return _poc.window.eventLoop(0, eventHandlers);
 			}
 		}
 
-		///
-		PixelBuffer framebuffer() @safe pure nothrow @nogc {
-			return _pro.framebuffer;
+		/++
+			The [Pixmap] to be presented.
+
+			Use this to “draw” on screen.
+		 +/
+		Pixmap pixmap() @safe pure nothrow @nogc {
+			return _poc.framebuffer;
 		}
 
-		///
+		/// ditto
+		alias framebuffer = pixmap;
+
+		/++
+			Updates the configuration of the presenter
+		 +/
 		void reconfigure(const PresenterConfig config) {
 			assert(false, "Not implemented");
-			//_framebuffer.size = config.internalResolution;
-			//_renderer.reconfigure(config);
 		}
 
-		///
+		/++
+			Schedules a redraw
+		 +/
 		void scheduleRedraw() {
 			_renderer.redrawSchedule();
 		}
 
-		///
+		/++
+			Fullscreen mode
+		 +/
 		bool isFullscreen() {
-			return _pro.window.fullscreen;
+			return _poc.window.fullscreen;
 		}
 
 		/// ditto
 		void isFullscreen(bool enabled) {
-			return _pro.window.fullscreen = enabled;
+			_poc.window.fullscreen = enabled;
 		}
 
 		/++
-			Returns the underlying `SimpleWindow`
+			Toggles the fullscreen state of the window.
+
+			Turns a non-fullscreen window into fullscreen mode.
+			Exits fullscreen mode for fullscreen-windows.
+		 +/
+		void toggleFullscreen() {
+			this.isFullscreen = !this.isFullscreen;
+		}
+
+		/++
+			Returns the underlying [arsd.simpledisplay.SimpleWindow|SimpleWindow]
 
 			$(WARNING
 				This is unsupported; use at your own risk.
@@ -940,15 +992,34 @@ final class PixmapPresenter {
 				that a presenter or renderer could possibly have set up.
 			)
 		 +/
-		SimpleWindow tinker() @safe pure nothrow @nogc {
-			return _pro.window;
+		SimpleWindow tinkerWindow() @safe pure nothrow @nogc {
+			return _poc.window;
+		}
+
+		/++
+			Returns the underlying [PixmapRenderer]
+
+			$(TIP
+				Type-cast the returned reference to the actual implementation type for further use.
+			)
+
+			$(WARNING
+				This is quasi unsupported; use at your own risk.
+
+				Using the result of this function is pratictically no different than
+				using a reference to the renderer further on after passing it the presenter’s constructor.
+				It can’t be prohibited but it resembles a footgun.
+			)
+		 +/
+		PixmapRenderer tinkerRenderer() @safe pure nothrow @nogc {
+			return _renderer;
 		}
 	}
 
 	// event handlers
 	private {
 		void windowResized(int width, int height) {
-			_pro.config.window.size = Size(width, height);
+			_poc.config.window.size = Size(width, height);
 			_renderer.reconfigure();
 		}
 	}
