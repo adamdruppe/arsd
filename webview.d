@@ -65,11 +65,12 @@ import core.atomic;
 
 private template InvokerArgFor(T, Context) {
 	alias invoker = typeof(&T.init.Invoke);
-	static if(is(invoker fntype == delegate))
-	static if(is(fntype Params == __parameters))
-		alias InvokerArgFor = HRESULT function(Params, Context);
-	else
-		static assert(0);
+	static if(is(invoker fntype == delegate)) {
+		static if(is(fntype Params == __parameters))
+			alias InvokerArgFor = HRESULT function(Params, Context);
+		else
+			static assert(0);
+	}
 }
 
 T callback(T, Context)(InvokerArgFor!(T, Context) dg, Context ctx) {
