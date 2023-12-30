@@ -187,6 +187,9 @@ alias Size = arsd.color.Size;
 ///
 alias Point = arsd.color.Point;
 
+///
+alias WindowResizedCallback = void delegate(Size);
+
 // verify assumption(s)
 static assert(Pixel.sizeof == uint.sizeof);
 
@@ -784,6 +787,8 @@ final class PixmapPresenter {
 		static if (hasTimer) {
 			Timer _timer;
 		}
+
+		WindowResizedCallback _onWindowResize;
 	}
 
 	// ctors
@@ -1016,11 +1021,28 @@ final class PixmapPresenter {
 		}
 	}
 
+	// event (handler) properties
+	public @safe pure nothrow @nogc {
+
+		/++
+			Event handler: window resize
+		 +/
+		void onWindowResize(WindowResizedCallback value) {
+			_onWindowResize = value;
+		}
+	}
+
 	// event handlers
 	private {
 		void windowResized(int width, int height) {
-			_poc.config.window.size = Size(width, height);
+			const newSize = Size(width, height);
+
+			_poc.config.window.size = newSize;
 			_renderer.reconfigure();
+
+			if (_onWindowResize !is null) {
+				_onWindowResize(newSize);
+			}
 		}
 	}
 }
