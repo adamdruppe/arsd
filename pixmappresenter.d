@@ -694,7 +694,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			viewport = (_poc.config.renderer.resolution * scaleI);
 			break;
 
-		case Scaling.integerFP:
+		case Scaling.intHybrid:
 			if (karContainNeedsDownscaling(_poc.config.renderer.resolution, _poc.config.window.size)) {
 				goto case Scaling.contain;
 			}
