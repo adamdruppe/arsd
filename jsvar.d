@@ -680,6 +680,7 @@ struct var {
 			@[scriptable] to expose them to the script.
 	+/
 	public var opAssign(T)(T t) if(!is(T == var)) {
+		import std.typecons;
 		static if(__traits(compiles, this = t.toArsdJsvar())) {
 			static if(__traits(compiles, t is null)) {
 				if(t is null)
@@ -693,6 +694,11 @@ struct var {
 			// so prewrapped stuff can be easily passed.
 			this._type = Type.Object;
 			this._payload._object = t;
+		} else static if(is(T == Nullable!N, N)) {
+			if(t.isNull())
+				this = null;
+			else
+				this = t.get();
 		} else static if(is(T == enum)) {
 			this._type = Type.String;
 			this._payload._string = to!string(t);
@@ -979,6 +985,7 @@ struct var {
 			Search function for the comment "property getter support" to see the impl.
 	+/
 	public T get(T)() if(!is(T == void)) {
+		import std.typecons;
 		static if(is(T == var)) {
 			return this;
 		} else static if(__traits(compiles, T.fromJsVar(var.init))) {
@@ -987,6 +994,11 @@ struct var {
 			return T(this);
 		} else static if(__traits(compiles, new T(this))) {
 			return new T(this);
+		} else static if(is(T == Nullable!N, N)) {
+			if(payloadType == Type.Object && this._payload._object is null)
+				return T.init;
+			else
+				return nullable(this.get!N);
 		} else
 		final switch(payloadType) {
 			case Type.Boolean:
