@@ -2871,6 +2871,22 @@ unittest {
         assert(g.foo()(new Object) == "generic");
 }
 
+unittest {
+	import std.typecons;
+
+	static struct A {
+		int a;
+		Nullable!int b;
+	}
+
+	var a = A(3);
+	assert(a.a == 3);
+	assert(a.b == null);
+	a = A(5, nullable(4));
+	assert(a.a == 5);
+	assert(a.b == 4);
+}
+
 bool appearsNumeric(string n) {
 	if(n.length == 0)
 		return false;
