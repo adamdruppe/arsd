@@ -585,8 +585,14 @@ template WebPresenterWithTemplateSupport(CTRP) {
 	import arsd.cgi;
 	class WebPresenterWithTemplateSupport : WebPresenter!(CTRP) {
 		override Element htmlContainer() {
-			auto skeleton = renderTemplate("generic.html", var.emptyObject, var.emptyObject, "skeleton.html", templateLoader());
-			return skeleton.requireSelector("main");
+			try {
+				auto skeleton = renderTemplate("generic.html", var.emptyObject, var.emptyObject, "skeleton.html", templateLoader());
+				return skeleton.requireSelector("main");
+			} catch(Exception e) {
+				auto document = new Document("<html><body><p>generic.html trouble: <span id=\"ghe\"></span></p> <main></main></body></html>");
+				document.requireSelector("#ghe").textContent = e.msg;
+				return document.requireSelector("main");
+			}
 		}
 
 		static struct Meta {
@@ -673,24 +679,48 @@ template WebPresenterWithTemplateSupport(CTRP) {
 /++
 	Serves up a directory of template files as html. This is meant to be used for some near-static html in the midst of an application, giving you a little bit of dynamic content and conveniences with the ease of editing files without recompiles.
 
+	Parameters:
+		urlPrefix = the url prefix to trigger this handler, relative to the current dispatcher base
+		directory = the directory, under the template directory, to find the template files
+		skeleton = the name of the skeleton file inside the template directory
+		extension = the file extension to add to the url name to get the template name
+
+	To get the filename of the template from the url, it will:
+
+	1) Strip the url prefixes off to get just the filename
+
+	2) Concatenate the directory with the template directory
+
+	3) Add the extension to the givenname
+
+	$(PITFALL
+		The `templateDirectory` parameter may be removed or changed in the near future.
+	)
+
 	History:
 		Added July 28, 2021 (documented dub v11.0)
 +/
-auto serveTemplateDirectory()(string urlPrefix, string directory = null, string skeleton = null, string extension = ".html") {
+auto serveTemplateDirectory()(string urlPrefix, string directory = null, string skeleton = null, string extension = ".html", string templateDirectory = "templates/") {
 	import arsd.cgi;
 	import std.file;
 
 	assert(urlPrefix[0] == '/');
 	assert(urlPrefix[$-1] == '/');
 
+	assert(templateDirectory[$-1] == '/');
+
 	static struct DispatcherDetails {
 		string directory;
 		string skeleton;
 		string extension;
+		string templateDirectory;
 	}
 
 	if(directory is null)
 		directory = urlPrefix[1 .. $];
+
+	if(directory.length == 0)
+		directory = "./";
 
 	assert(directory[$-1] == '/');
 
@@ -699,10 +729,10 @@ auto serveTemplateDirectory()(string urlPrefix, string directory = null, string 
 		if(file.indexOf("/") != -1 || file.indexOf("\\") != -1)
 			return false;
 
-		auto fn = "templates/" ~ details.directory ~ file ~ details.extension;
+		auto fn = details.templateDirectory ~ details.directory ~ file ~ details.extension;
 		if(std.file.exists(fn)) {
 			cgi.setCache(true);
-			auto doc = renderTemplate(fn["templates/".length.. $]);
+			auto doc = renderTemplate(fn[details.templateDirectory.length.. $], var.emptyObject, var.emptyObject, details.skeleton, TemplateLoader.forDirectory(details.templateDirectory));
 			cgi.gzipResponse = true;
 			cgi.write(doc.toString, true);
 			return true;
@@ -711,5 +741,5 @@ auto serveTemplateDirectory()(string urlPrefix, string directory = null, string 
 		}
 	}
 
-	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, false, DispatcherDetails(directory, skeleton, extension));
+	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, false, DispatcherDetails(directory, skeleton, extension, templateDirectory));
 }

@@ -11905,6 +11905,9 @@ auto serveStaticFileDirectory(string urlPrefix, string directory = null, bool re
 				return false;
 		}
 
+		if(file.length == 0)
+			return false;
+
 		auto contentType = contentTypeFromFileExtension(file);
 
 		auto fn = details.directory ~ file;
