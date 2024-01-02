@@ -1,3 +1,9 @@
+# IMPORTANT NOTE
+
+As of January 1, 2024, this repo is written in the [OpenD Programming Language](https://dpldocs.info/opend/). This is very similar to, but NOT the same as Walter Bright's version of the D Programming Language.
+
+There will be no further public updates with supported compatibility with WB's D Language. If you depend on this code, either [contact me](destructionator@gmail.com) to negotiate a commercial support contract or switch to the [OpenD Programming Language](https://dpldocs.info/opend/). If things keep working from here on out, it is purely coincidental.
+
 # About
 
 This is a collection of modules that I've released over the years (the oldest module in here was originally written in 2006, pre-D1!) for a wide variety of purposes. Most of them stand alone, or have just one or two dependencies in here, so you don't have to download this whole repo. Feel free to email me, destructionator@gmail.com or ping me as `adam_d_ruppe` on the #d IRC channel if you want to ask me anything.
