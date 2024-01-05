@@ -1,6 +1,6 @@
 /+
 	== pixmappresenter ==
-	Copyright Elias Batek (0xEAB) 2023.
+	Copyright Elias Batek (0xEAB) 2023 - 2024.
 	Distributed under the Boost Software License, Version 1.0.
  +/
 /++
@@ -291,6 +291,7 @@ struct Pixmap {
 	}
 }
 
+// viewport math
 private @safe pure nothrow @nogc {
 
 	// keep aspect ratio (contain)
@@ -334,6 +335,72 @@ private @safe pure nothrow @nogc {
 		auto delta = canvas.deltaPerimeter(drawing);
 		return (typeCast!Point(delta) >> 1);
 	}
+}
+
+///
+struct Viewport {
+	Size size; ///
+	Point offset; ///
+}
+
+/++
+	Calls `glViewport` with the data from the provided [Viewport].
+ +/
+void glViewportPMP(const ref Viewport vp) {
+	glViewport(vp.offset.x, vp.offset.y, vp.size.width, vp.size.height);
+}
+
+/++
+	Calculates the dimensions and position of the viewport for the provided config.
+
+	$(TIP
+		Primary use case for this is [PixmapRenderer] implementations.
+	)
+ +/
+Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow @nogc {
+	Size size;
+
+	final switch (config.renderer.scaling) {
+
+	case Scaling.none:
+		size = config.renderer.resolution;
+		break;
+
+	case Scaling.stretch:
+		size = config.window.size;
+		break;
+
+	case Scaling.contain:
+		const float scaleF = karContainScalingFactorF(config.renderer.resolution, config.window.size);
+		size = Size(
+			typeCast!int(scaleF * config.renderer.resolution.width),
+			typeCast!int(scaleF * config.renderer.resolution.height),
+		);
+		break;
+
+	case Scaling.integer:
+		const int scaleI = karContainScalingFactorInt(config.renderer.resolution, config.window.size);
+		size = (config.renderer.resolution * scaleI);
+		break;
+
+	case Scaling.intHybrid:
+		if (karContainNeedsDownscaling(config.renderer.resolution, config.window.size)) {
+			goto case Scaling.contain;
+		}
+		goto case Scaling.integer;
+
+	case Scaling.cover:
+		const float fillF = karCoverScalingFactorF(config.renderer.resolution, config.window.size);
+		size = Size(
+			typeCast!int(fillF * config.renderer.resolution.width),
+			typeCast!int(fillF * config.renderer.resolution.height),
+		);
+		break;
+	}
+
+	const Point offset = offsetCenter(size, config.window.size);
+
+	return Viewport(size, offset);
 }
 
 /++
@@ -540,7 +607,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		return WantsOpenGl(3, 0, false);
 	}
 
-	// TODO: make this ctor?
 	public void setup(PresenterObjectsContainer* pro) {
 		_poc = pro;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
@@ -672,48 +738,9 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	}
 
 	public void reconfigure() {
-		Size viewport;
+		const Viewport viewport = calculateViewport(_poc.config);
+		glViewportPMP(viewport);
 
-		final switch (_poc.config.renderer.scaling) {
-
-		case Scaling.none:
-			viewport = _poc.config.renderer.resolution;
-			break;
-
-		case Scaling.stretch:
-			viewport = _poc.config.window.size;
-			break;
-
-		case Scaling.contain:
-			const float scaleF = karContainScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = Size(
-				typeCast!int(scaleF * _poc.config.renderer.resolution.width),
-				typeCast!int(scaleF * _poc.config.renderer.resolution.height),
-			);
-			break;
-
-		case Scaling.integer:
-			const int scaleI = karContainScalingFactorInt(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = (_poc.config.renderer.resolution * scaleI);
-			break;
-
-		case Scaling.intHybrid:
-			if (karContainNeedsDownscaling(_poc.config.renderer.resolution, _poc.config.window.size)) {
-				goto case Scaling.contain;
-			}
-			goto case Scaling.integer;
-
-		case Scaling.cover:
-			const float fillF = karCoverScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = Size(
-				typeCast!int(fillF * _poc.config.renderer.resolution.width),
-				typeCast!int(fillF * _poc.config.renderer.resolution.height),
-			);
-			break;
-		}
-
-		const Point viewportPos = offsetCenter(viewport, _poc.config.window.size);
-		glViewport(viewportPos.x, viewportPos.y, viewport.width, viewport.height);
 		this.setupTexture();
 		_clear = true;
 	}
@@ -743,6 +770,158 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			1, 2, 3,
 			//dfmt on
 		];
+	}
+}
+
+/++
+	Legacy OpenGL (1.x) renderer implementation
+
+	Uses what is often called the $(I Fixed Function Pipeline).
+ +/
+final class OpenGl1PixmapRenderer : PixmapRenderer {
+
+	private {
+		PresenterObjectsContainer* _poc;
+		bool _clear = true;
+
+		GLuint _texture = 0;
+	}
+
+	public @safe pure nothrow @nogc {
+		///
+		this() {
+		}
+
+		WantsOpenGl wantsOpenGl() pure nothrow @nogc @safe {
+			return WantsOpenGl(1, 1, true);
+		}
+
+	}
+
+	public void setup(PresenterObjectsContainer* poc) {
+		_poc = poc;
+		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
+		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
+	}
+
+	private {
+
+		void visibleForTheFirstTime() {
+			//_poc.window.setAsCurrentOpenGlContext();
+			// ↑-- reconfigure() does this, too.
+			// |-- Uncomment if this functions does something else in the future.
+
+			this.reconfigure();
+		}
+
+		void setupTexture() {
+			if (_texture == 0) {
+				glGenTextures(1, &_texture);
+			}
+
+			glBindTexture(GL_TEXTURE_2D, _texture);
+
+			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
+			case nearest:
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				break;
+			case linear:
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+				break;
+			}
+
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexImage2D(
+				GL_TEXTURE_2D,
+				0,
+				GL_RGBA8,
+				_poc.config.renderer.resolution.width,
+				_poc.config.renderer.resolution.height,
+				0,
+				GL_RGBA, GL_UNSIGNED_BYTE,
+				null
+			);
+
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+
+		void setupMatrix() {
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(
+				0, _poc.config.renderer.resolution.width,
+				_poc.config.renderer.resolution.height, 0,
+				-1, 1
+			);
+			//glMatrixMode(GL_MODELVIEW);
+		}
+
+		void redrawOpenGlScene() {
+			if (_clear) {
+				glClearColor(
+					_poc.config.renderer.background.r,
+					_poc.config.renderer.background.g,
+					_poc.config.renderer.background.b,
+					_poc.config.renderer.background.a,
+				);
+				glClear(GL_COLOR_BUFFER_BIT);
+				_clear = false;
+			}
+
+			glBindTexture(GL_TEXTURE_2D, _texture);
+			glEnable(GL_TEXTURE_2D);
+			{
+				glTexSubImage2D(
+					GL_TEXTURE_2D,
+					0,
+					0, 0,
+					_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
+					GL_RGBA, GL_UNSIGNED_BYTE,
+					typeCast!(void*)(_poc.framebuffer.data.ptr)
+				);
+
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0, 0);
+					glVertex2i(0, 0);
+
+					glTexCoord2f(0, 1);
+					glVertex2i(0, _poc.config.renderer.resolution.height);
+
+					glTexCoord2f(1, 1);
+					glVertex2i(_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height);
+
+					glTexCoord2f(1, 0);
+					glVertex2i(_poc.config.renderer.resolution.width, 0);
+				}
+				glEnd();
+			}
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+	}
+
+	public void reconfigure() {
+		_poc.window.setAsCurrentOpenGlContext();
+
+		const Viewport viewport = calculateViewport(_poc.config);
+		glViewportPMP(viewport);
+
+		this.setupTexture();
+		this.setupMatrix();
+
+		_clear = true;
+	}
+
+	public void redrawSchedule() {
+		_poc.window.redrawOpenGlSceneSoon();
+	}
+
+	public void redrawNow() {
+		_poc.window.redrawOpenGlSceneNow();
 	}
 }
 
