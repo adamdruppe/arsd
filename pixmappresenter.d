@@ -291,6 +291,7 @@ struct Pixmap {
 	}
 }
 
+// viewport math
 private @safe pure nothrow @nogc {
 
 	// keep aspect ratio (contain)
@@ -334,6 +335,72 @@ private @safe pure nothrow @nogc {
 		auto delta = canvas.deltaPerimeter(drawing);
 		return (typeCast!Point(delta) >> 1);
 	}
+}
+
+///
+struct Viewport {
+	Size size; ///
+	Point offset; ///
+}
+
+/++
+	Calls `glViewport` with the data from the provided [Viewport].
+ +/
+void glViewportPMP(const ref Viewport vp) {
+	glViewport(vp.offset.x, vp.offset.y, vp.size.width, vp.size.height);
+}
+
+/++
+	Calculates the dimensions and position of the viewport for the provided config.
+
+	$(TIP
+		Primary use case for this is [PixmapRenderer] implementations.
+	)
+ +/
+Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow @nogc {
+	Size size;
+
+	final switch (config.renderer.scaling) {
+
+	case Scaling.none:
+		size = config.renderer.resolution;
+		break;
+
+	case Scaling.stretch:
+		size = config.window.size;
+		break;
+
+	case Scaling.contain:
+		const float scaleF = karContainScalingFactorF(config.renderer.resolution, config.window.size);
+		size = Size(
+			typeCast!int(scaleF * config.renderer.resolution.width),
+			typeCast!int(scaleF * config.renderer.resolution.height),
+		);
+		break;
+
+	case Scaling.integer:
+		const int scaleI = karContainScalingFactorInt(config.renderer.resolution, config.window.size);
+		size = (config.renderer.resolution * scaleI);
+		break;
+
+	case Scaling.intHybrid:
+		if (karContainNeedsDownscaling(config.renderer.resolution, config.window.size)) {
+			goto case Scaling.contain;
+		}
+		goto case Scaling.integer;
+
+	case Scaling.cover:
+		const float fillF = karCoverScalingFactorF(config.renderer.resolution, config.window.size);
+		size = Size(
+			typeCast!int(fillF * config.renderer.resolution.width),
+			typeCast!int(fillF * config.renderer.resolution.height),
+		);
+		break;
+	}
+
+	const Point offset = offsetCenter(size, config.window.size);
+
+	return Viewport(size, offset);
 }
 
 /++
@@ -540,7 +607,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		return WantsOpenGl(3, 0, false);
 	}
 
-	// TODO: make this ctor?
 	public void setup(PresenterObjectsContainer* pro) {
 		_poc = pro;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
@@ -672,48 +738,9 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	}
 
 	public void reconfigure() {
-		Size viewport;
+		const Viewport viewport = calculateViewport(_poc.config);
+		glViewportPMP(viewport);
 
-		final switch (_poc.config.renderer.scaling) {
-
-		case Scaling.none:
-			viewport = _poc.config.renderer.resolution;
-			break;
-
-		case Scaling.stretch:
-			viewport = _poc.config.window.size;
-			break;
-
-		case Scaling.contain:
-			const float scaleF = karContainScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = Size(
-				typeCast!int(scaleF * _poc.config.renderer.resolution.width),
-				typeCast!int(scaleF * _poc.config.renderer.resolution.height),
-			);
-			break;
-
-		case Scaling.integer:
-			const int scaleI = karContainScalingFactorInt(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = (_poc.config.renderer.resolution * scaleI);
-			break;
-
-		case Scaling.intHybrid:
-			if (karContainNeedsDownscaling(_poc.config.renderer.resolution, _poc.config.window.size)) {
-				goto case Scaling.contain;
-			}
-			goto case Scaling.integer;
-
-		case Scaling.cover:
-			const float fillF = karCoverScalingFactorF(_poc.config.renderer.resolution, _poc.config.window.size);
-			viewport = Size(
-				typeCast!int(fillF * _poc.config.renderer.resolution.width),
-				typeCast!int(fillF * _poc.config.renderer.resolution.height),
-			);
-			break;
-		}
-
-		const Point viewportPos = offsetCenter(viewport, _poc.config.window.size);
-		glViewport(viewportPos.x, viewportPos.y, viewport.width, viewport.height);
 		this.setupTexture();
 		_clear = true;
 	}
