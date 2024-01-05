@@ -1,6 +1,6 @@
 /+
 	== pixmappresenter ==
-	Copyright Elias Batek (0xEAB) 2023.
+	Copyright Elias Batek (0xEAB) 2023 - 2024.
 	Distributed under the Boost Software License, Version 1.0.
  +/
 /++
@@ -770,6 +770,158 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			1, 2, 3,
 			//dfmt on
 		];
+	}
+}
+
+/++
+	Legacy OpenGL (1.x) renderer implementation
+
+	Uses what is often called the $(I Fixed Function Pipeline).
+ +/
+final class OpenGl1PixmapRenderer : PixmapRenderer {
+
+	private {
+		PresenterObjectsContainer* _poc;
+		bool _clear = true;
+
+		GLuint _texture = 0;
+	}
+
+	public @safe pure nothrow @nogc {
+		///
+		this() {
+		}
+
+		WantsOpenGl wantsOpenGl() pure nothrow @nogc @safe {
+			return WantsOpenGl(1, 1, true);
+		}
+
+	}
+
+	public void setup(PresenterObjectsContainer* poc) {
+		_poc = poc;
+		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
+		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
+	}
+
+	private {
+
+		void visibleForTheFirstTime() {
+			//_poc.window.setAsCurrentOpenGlContext();
+			// ↑-- reconfigure() does this, too.
+			// |-- Uncomment if this functions does something else in the future.
+
+			this.reconfigure();
+		}
+
+		void setupTexture() {
+			if (_texture == 0) {
+				glGenTextures(1, &_texture);
+			}
+
+			glBindTexture(GL_TEXTURE_2D, _texture);
+
+			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
+			case nearest:
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				break;
+			case linear:
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+				break;
+			}
+
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexImage2D(
+				GL_TEXTURE_2D,
+				0,
+				GL_RGBA8,
+				_poc.config.renderer.resolution.width,
+				_poc.config.renderer.resolution.height,
+				0,
+				GL_RGBA, GL_UNSIGNED_BYTE,
+				null
+			);
+
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+
+		void setupMatrix() {
+			glMatrixMode(GL_PROJECTION);
+			glLoadIdentity();
+			glOrtho(
+				0, _poc.config.renderer.resolution.width,
+				_poc.config.renderer.resolution.height, 0,
+				-1, 1
+			);
+			glMatrixMode(GL_MODELVIEW);
+		}
+
+		void redrawOpenGlScene() {
+			if (_clear) {
+				glClearColor(
+					_poc.config.renderer.background.r,
+					_poc.config.renderer.background.g,
+					_poc.config.renderer.background.b,
+					_poc.config.renderer.background.a,
+				);
+				glClear(GL_COLOR_BUFFER_BIT);
+				_clear = false;
+			}
+
+			glBindTexture(GL_TEXTURE_2D, _texture);
+			glEnable(GL_TEXTURE_2D);
+			{
+				glTexSubImage2D(
+					GL_TEXTURE_2D,
+					0,
+					0, 0,
+					_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
+					GL_RGBA, GL_UNSIGNED_BYTE,
+					typeCast!(void*)(_poc.framebuffer.data.ptr)
+				);
+
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0, 0);
+					glVertex2i(0, 0);
+
+					glTexCoord2f(0, 1);
+					glVertex2i(0, _poc.config.renderer.resolution.height);
+
+					glTexCoord2f(1, 1);
+					glVertex2i(_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height);
+
+					glTexCoord2f(1, 0);
+					glVertex2i(_poc.config.renderer.resolution.width, 0);
+				}
+				glEnd();
+			}
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+	}
+
+	public void reconfigure() {
+		_poc.window.setAsCurrentOpenGlContext();
+
+		const Viewport viewport = calculateViewport(_poc.config);
+		glViewportPMP(viewport);
+
+		this.setupTexture();
+		this.setupMatrix();
+
+		_clear = true;
+	}
+
+	public void redrawSchedule() {
+		_poc.window.redrawOpenGlSceneSoon();
+	}
+
+	public void redrawNow() {
+		_poc.window.redrawOpenGlSceneNow();
 	}
 }
 
