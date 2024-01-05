@@ -856,7 +856,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 				_poc.config.renderer.resolution.height, 0,
 				-1, 1
 			);
-			glMatrixMode(GL_MODELVIEW);
+			//glMatrixMode(GL_MODELVIEW);
 		}
 
 		void redrawOpenGlScene() {
