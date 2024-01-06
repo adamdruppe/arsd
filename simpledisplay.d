@@ -10601,6 +10601,17 @@ enum MouseButton : int {
 	forwardButton = 64, /// often found on the thumb and used for forward in browsers
 }
 
+/// Corresponds to the values found in MouseEvent.buttonLinear, being equal to `core.bitop.bsf(button) + 1`
+enum MouseButtonLinear : ubyte {
+	left = 1, ///
+	right, ///
+	middle, ///
+	wheelUp, ///
+	wheelDown, ///
+	backButton, /// often found on the thumb and used for back in browsers
+	forwardButton, /// often found on the thumb and used for forward in browsers
+}
+
 version(X11) {
 	// FIXME: match ASCII whenever we can. Most of it is already there,
 	// but there's a few exceptions and mismatches with Windows
