@@ -1139,10 +1139,38 @@ final class PixmapPresenter {
 		alias framebuffer = pixmap;
 
 		/++
-			Updates the configuration of the presenter
+			Updates the configuration of the presenter.
+
+			Params:
+				resizeWindow = if false, `config.window.size` will be ignored.
 		 +/
-		void reconfigure(const PresenterConfig config) {
-			assert(false, "Not implemented");
+		void reconfigure(PresenterConfig config, const bool resizeWindow = false) {
+			// override requested window-size to current size if no resize requested
+			if (!resizeWindow) {
+				config.window.size = _poc.config.window.size;
+			}
+
+			this.reconfigureImpl(config);
+		}
+
+		private void reconfigureImpl(const ref PresenterConfig config) {
+			_poc.window.title = config.window.title;
+
+			if (config.renderer.resolution != _poc.config.renderer.resolution) {
+				_poc.framebuffer.size = config.renderer.resolution;
+			}
+
+			immutable resize = (config.window.size != _poc.config.window.size);
+
+			// update stored configuration
+			_poc.config = config;
+
+			if (resize) {
+				_poc.window.resize(config.window.size.width, config.window.size.height);
+				// resize-handler will call `_renderer.reconfigure()`
+			} else {
+				_renderer.reconfigure();
+			}
 		}
 
 		/++
@@ -1226,6 +1254,8 @@ final class PixmapPresenter {
 
 			_poc.config.window.size = newSize;
 			_renderer.reconfigure();
+			// ↑ In case this call gets removed, update `reconfigure()`.
+			//   Current implementation takes advantage of the `_renderer.reconfigure()` call here.
 
 			if (_onWindowResize !is null) {
 				_onWindowResize(newSize);
