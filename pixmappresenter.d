@@ -226,8 +226,16 @@ struct Pixmap {
 
 @safe pure nothrow:
 
+	///
 	this(Size size) {
 		this.size = size;
+	}
+
+	///
+	this(Pixel[] data, int width) @nogc
+	in (data.length % width == 0) {
+		this.data = data;
+		this.width = width;
 	}
 
 	// undocumented: really shouldn’t be used.
