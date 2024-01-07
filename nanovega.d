@@ -391,6 +391,28 @@ The following code illustrates the OpenGL state touched by the rendering code:
 
     At render time the font face can be set based on the font handles or name.
 
+    ----------------------
+       // in initialization:
+       auto font = ctx.createFont("Roboto", "fonts/Roboto.ttf");
+       enforce(font != -1, "Failed to load font!");
+       foreach (fallbackPath; ["fonts/NotoSans.ttf"]) {
+         auto fallback = ctx.createFont("fallback", fallbackPath);
+         if (fallback == -1) {
+           stderr.writeln("Failed to load fallback font ", fallbackPath);
+           continue;
+         }
+         ctx.addFallbackFont(font, fallback);
+       }
+
+       // rendering:
+       ctx.fontFaceId = font;
+       //ctx.fontBlur = 3;
+       //ctx.textAlign = NVGTextAlign.H.Center;
+       ctx.fontSize = 20;
+       ctx.fillColor = NVGColor.white;
+       ctx.text(0, height, text);
+    ----------------------
+
     Font measure functions return values in local space, the calculations are
     carried in the same resolution as the final rendering. This is done because
     the text glyph positions are snapped to the nearest pixels sharp rendering.
@@ -7830,6 +7852,16 @@ public void addFontsFrom (NVGContext ctx, NVGContext source) nothrow @trusted @n
   ctx.fs.addFontsFrom(source.fs);
 }
 
+/// Adds the font with id `fallback` onto the font with id `base` for characters
+/// that are not found in `base`'s character set. May be called multiple times,
+/// up to an internal maximum count per font.
+/// Group: text_api
+/// Returns: `true` if successful, `false` if not
+public bool addFallbackFont (NVGContext ctx, int base, int fallback) nothrow @trusted @nogc {
+  if (ctx is null) return false;
+  return ctx.fs.addFallbackFont(base, fallback);
+}
+
 /// Finds a loaded font of specified name, and returns handle to it, or FONS_INVALID (aka -1) if the font is not found.
 /// Group: text_api
 public int findFont (NVGContext ctx, const(char)[] name) nothrow @trusted @nogc {
@@ -10840,14 +10872,14 @@ private:
     if (font is null || font.fdata is null) return 0;
     auto g = fons__tt_getGlyphIndex(&font.font, cast(uint)dch);
     // try to find the glyph in fallback fonts
-    if (g == 0) {
+    if (g == 0 && renderfont !is null) {
       foreach (immutable i; 0..font.nfallbacks) {
         FONSfont* fallbackFont = fonts[font.fallbacks.ptr[i]];
         if (fallbackFont !is null) {
           int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, cast(uint)dch);
           if (fallbackIndex != 0) {
-            if (renderfont !is null) *renderfont = fallbackFont;
-            return g;
+            *renderfont = fallbackFont;
+            return fallbackIndex;
           }
         }
       }
@@ -10860,8 +10892,8 @@ private:
             if (fallbackFont !is null) {
               int fallbackIndex = fons__tt_getGlyphIndex(&fallbackFont.font, 0xFFFD);
               if (fallbackIndex != 0) {
-                if (renderfont !is null) *renderfont = fallbackFont;
-                return g;
+                *renderfont = fallbackFont;
+                return fallbackIndex;
               }
             }
           }
@@ -11820,7 +11852,7 @@ public:
 
     // Rasterize
     ubyte* dst = &texData[(glyph.x0+pad)+(glyph.y0+pad)*params.width];
-    fons__tt_renderGlyphBitmap(&font.font, dst, gw-pad*2, gh-pad*2, params.width, scale, scale, g);
+    fons__tt_renderGlyphBitmap(&renderFont.font, dst, gw-pad*2, gh-pad*2, params.width, scale, scale, g);
 
     // Make sure there is one pixel empty border.
     dst = &texData[glyph.x0+glyph.y0*params.width];
