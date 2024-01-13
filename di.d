@@ -261,3 +261,72 @@ final class DI {
 		}
 	}
 }
+
+unittest {
+	static struct Foo {
+		int i = 10;
+	}
+
+	static class Bar {
+		int i = 10;
+	}
+
+	auto c = new Container();
+	assert(c.has!Foo() == false);
+	assert(c.has!Bar() == false);
+	assert(c.get!Foo() is null);
+	assert(c.get!Bar() is null);
+
+	auto origFoo = new Foo();
+	origFoo.i = 2;
+	auto origBar = new Bar();
+	origBar.i = 3;
+
+	c.set(origFoo);
+	c.set(origBar);
+	assert(c.has!Foo());
+	assert(c.has!Bar());
+	assert(c.get!Foo() !is null);
+	assert(c.get!Bar() !is null);
+
+	auto cFoo = c.get!Foo();
+	auto cBar = c.get!Bar();
+	assert(cFoo.i == 2);
+	assert(cBar.i == 3);
+	assert(cFoo is origFoo);
+	assert(cBar is origBar);
+
+	cFoo.i = 4;
+	assert(origFoo.i == 4);
+
+	c.set!Foo(null);
+	assert(c.has!Foo() == false);
+
+	c.set!Bar(null);
+	assert(c.has!Bar() == false);
+}
+
+unittest {
+	static class Bar {
+		int i = 10;
+	}
+
+	static class Foo {
+		Bar bar;
+
+		this(Bar bar) {
+			this.bar = bar;
+		}
+	}
+
+	auto di = new DI();
+	Foo foo = di.resolve!Foo();
+	assert(foo !is null);
+	assert(foo.bar !is null);
+
+	// Test singleton behavior
+	assert(foo.bar.i == 10);
+	Bar bar = di.resolve!Bar();
+	bar.i = 2;
+	assert(foo.bar.i == 2);
+}
