@@ -21,7 +21,7 @@ private {
 		private static immutable string keyOf = T.mangleof;
 	}
 
-	template keyOf(T) if (is(T == struct)) {
+	template keyOf(T) if (isStruct!T) {
 		private static immutable string keyOf = (T*).mangleof;
 	}
 
@@ -78,7 +78,7 @@ final class Container {
 	/++
 		Returns a stored value by struct
 	 +/
-	T* get(T)() @nogc if (is(T == struct)) {
+	T* get(T)() @nogc if (isStruct!T) {
 		return getTImpl!(T*);
 	}
 
@@ -115,7 +115,7 @@ final class Container {
 	/++
 		Stores the provided pointer to a struct instance
 	 +/
-	void set(T)(T* value) if (is(T == struct)) {
+	void set(T)(T* value) if (isStruct!T) {
 		this.setTImpl!(T*)(value);
 	}
 
@@ -152,7 +152,7 @@ final class DI {
 	 +/
 	auto resolve(T)() if (false) {
 		static assert(
-			isClass!T || is(T == struct),
+			isClass!T || isStruct!T,
 			"Cannot resolve instance of type `" ~ T.stringof ~ "`. Not a class or struct."
 		);
 
@@ -180,7 +180,7 @@ final class DI {
 
 	/++
 	 +/
-	T* resolve(T)() if (is(T == struct)) {
+	T* resolve(T)() if (isStruct!T) {
 		void** ptrptr = _container.getPtr(keyOf!T);
 		if (ptrptr !is null) {
 			return ((void* ptr) @trusted => cast(T*) ptr)(*ptrptr);
@@ -214,7 +214,7 @@ final class DI {
 		_container.set(value);
 	}
 
-	private T* makeNew(T)() if (is(T == struct)) {
+	private T* makeNew(T)() if (isStruct!T) {
 		return new T();
 	}
 
@@ -236,7 +236,7 @@ final class DI {
 				static if (isClass!P || isStructPointer!P) {
 					mixin(`P param` ~ idx.to!string() ~ ';');
 					mixin(`param` ~ idx.to!string()) = this.resolve!P();
-				} else static if (is(P == struct)) {
+				} else static if (isStruct!P) {
 					pragma(
 						msg,
 						"DI Warning: Passing struct instance by value to parameter `"
