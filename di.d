@@ -5,11 +5,283 @@
  +/
 /++
 	Lightweight Dependency Injection (DI) framework
+
+		$(LIST
+		* Inversion of Control (IoC).
+		* Convention over configuration.
+		* Injects dependencies via constructor parameters.
+		* Supports structs as well (… as classes).
+		* No clutter – this library is a single, readily comprehensible file.
+		* No external dependencies. $(I Only the D standard library is used.)
+	)
+
+
+	## About Dependency Injection
+
+	$(SIDEBAR
+		Dependency Injection is commonly abbreviated as $(B DI).
+	)
+
+	$(BLOCKQUOTE
+		How does it work?
+	)
+
+	Dependency instances only need to be created once and can be used for all other dependent objects.
+	As there is only one object of each type, these instances can be called “singletons”.
+
+	They can be stored in one big repository, the [DIContainer|dependency container],
+	and retrieved later as needed.
+
+	### Declaration of dependencies
+
+	One of the most useful ways to specify the dependencies of a type (as in `class` or `struct`)
+	is to declare a constructor with them as parameters.
+
+	---
+	// Example: `LoginService` depends on `PasswordHashUtil`, `DatabaseClient` and `Logger`.
+	class LoginService {
+		public this(
+			PasswordHashUtil passwordHashUtil,
+			DatabaseClient databaseClient,
+			Logger logger,
+		) {
+			// …
+		}
+	}
+	---
+
+	### Retrieval of dependencies
+
+	Getting the dependencies from the container into the service object is where the DI framework comes in.
+	While the user could manually retrieve them from the container and pass them to the constructor
+	(i.e. `new LoginService(container.get!PasswordHashUtil(), container.get!Logger(), container.get!DatabaseClient())`,
+	this would get tedious quickly.
+	The framework comes to the resuce.
+
+	---
+	auto di = new DI();
+	// …
+
+	LoginService service = di.resolve!LoginService();
+	---
+
+	### Registration of dependencies
+
+	But where did the `PasswordHashUtil`, the `Logger` and the `DatabaseClient` come from?
+	How did they get into the DI container?
+
+	#### Standalone dependencies
+
+	Let’s assume the `PasswordHashUtil` has zero dependencies itself – it is a self-contained service class.
+	Its constructor has either no parameters
+	or isn’t declared explicitly (and it uses the implicit default constructor).
+
+	The DI framework can easily construct a singleton instance (of the dependency type) on the fly.
+	This happens automatically the first time one is needed.
+
+	---
+	class PasswordHashUtil {
+		public string hash(string password) { /* … */ }
+		public bool verify(string hash, string userPassword) { /* … */ }
+	}
+	---
+
+	##### Custom dependency registrations
+
+	In case a user-provided `PasswordHashUtil` instance has been registered in advance,
+	the framework will skip the construction and use that one instead.
+
+	#### Transitive dependencies
+
+	Aka “dependencies of a dependency”.
+
+	The 2nd dependency of the aforementioned `LoginService` is `Logger`.
+	For illustration purposes, we’ll assume the `Logger` class depends on `Formatter`,
+	a type that implements formatting facilities.
+	`Logger` is dependency-less class (like `PasswordHashUtil` was).
+
+	The DI framework will retrieve a `Formatter` before it can construct the `Logger`.
+	Since `Formatter` has not dependencies, the framework can construct it as mentioned in the previous chapter.
+	If it there is one in the dependency container already, it will be used instead
+	(and the construction will be skipped).
+
+	The next step is to construct a `Logger` which receives the `Formatter` through its constructor.
+
+	---
+	class Logger {
+		public this(Formatter formatter) {
+			// …
+		}
+		public void log(string message) { /* … */ }
+	}
+	---
+
+	##### Custom dependency registrations
+
+	In case a user-provided `Logger` instance has been registered in advance,
+	the framework will skip all construction steps and use that one instead.
+
+	$(NOTE
+		If the user-provided `Logger` uses a $(B different) `Formatter` than the one in the dependency container,
+		the `Logger` of the resulting `LoginService` will use said different `Formatter`,
+		not the one from the container.
+
+		This has no impact on a direct dependencies of `Logger`.
+		If `Logger` itself depended on `Formatter`, it would still receive the one from the dependency container.
+		Which in turn would lead to `LoginService.formatter` being different to `Logger.formatter`.
+
+		Logically, this distinction would be no longer relevant, if the user registered their `Formatter` instance
+		with the framework in addition to their custom `Logger` one.
+	)
+
+	#### Complex dependencies
+
+	Unlike the dependencies shown in the previous two chapters, however,
+	the `DatabaseClient` doesn’t depend on a bunch of other services.
+	Instead it is constructed from four strings (socket, username, password, database name).
+
+	While the injection of a `DatabaseClient` into dependent services principally works like before,
+	the framework cannot instantiate a new one by itself.
+	Hence it is that an instance has to be registered with the framework in advance.
+	A user-created `DatabaseClient` can provided by passing it to [oceandrift.di.DI.register|DI.register(…)].
+
+	The framework will pick up on it later, when it constructs `LoginService`
+	or, failing that, if no custom instance has been registered beforehand,
+	crash the program as soon as it falls back to instantiating one on its own.
+
+	---
+	class DatabaseClient {
+		public this(
+			string socket,
+			string username,
+			string password,
+			string databaseName,
+		) {
+			// …
+		}
+		public Statement prepare(string sql) { /* … */ }
+		public void disconnect() { /* … */ }
+	}
+
+	// Construct a DatabaseClient and register it with the DI framework.
+	auto databaseClient = new DatabaseClient(cfg.socket, cfg,username, cfg.password, cfg.dbName);
+	di.register(databaseClient);
+	---
+
+
+	## Unconventional use
+
+	This chapter deals with solutions to overcome the conventions of the framework.
+	(Malicious gossip has it that these are “design limitations”. Don’t listen to them…)
+
+	### Injecting non-singleton instances
+
+	Non-singleton objects are sometimes also called “transient” or “prototype”.
+
+	By default, the framework will instantiate a singleton instance for each dependency type
+	and use it for all dependent objects.
+
+	When this behavior is not desired, it’s recommended to instantiate a new object in the constructor.
+	Check out [oceandrift.di.DI.makeNew|makeNew!T()].
+
+	$(TIP
+		The DI framework can inject a reference to itself.
+		---
+		public this(
+			DI di,
+		) {
+			this.dependency = DI.makeNew!Dependency();
+		}
+		---
+	)
+
+	Alternatively, one could also create a factory type and use that as a dependency instead.
+
+	### Injecting dependencies that are primitive/unsupported types
+
+	The recommended way to inject primitives types (like integers, booleans, floating-point numbers, or enums)
+	or other unsupported types (e.g. strings, other arrays, associative arrays, class pointers or pointers in general)
+	is to wrap them in a struct.
+
+	For pointers, deferencing them might also be an option.
  +/
 module oceandrift.di;
 
 import std.conv : to;
 import std.traits : Parameters;
+
+/++
+	Extended version of the front-page example
+ +/
+@safe unittest {
+	static class Dependency {
+	}
+
+	static class Foo {
+		private Dependency d;
+
+		public this(Dependency d) {
+			this.d = d;
+		}
+	}
+
+	// Bootstrap the DI framework.
+	auto di = new DI();
+
+	// Then let it resolve the whole dependency tree
+	// and construct dependencies as needed.
+	Foo foo = di.resolve!Foo();
+
+	// The DI framework has constructed a new instance of `Dependency`
+	// and supplied it to the constructor of `Foo`.
+	assert(foo.d !is null);
+}
+
+/++
+	User-supplied dependency instances
+
+	$(BLOCKQUOTE
+		How about types the framework cannot construct on its own?
+
+		… or instaces that have been constructed in before and could be reused?
+	)
+ +/
+@safe unittest {
+	static class Dependency {
+		private int number;
+
+		public this(int number) {
+			this.number = number;
+		}
+	}
+
+	static class Foo {
+		private Dependency d;
+
+		public this(Dependency d) {
+			this.d = d;
+		}
+	}
+
+	// Bootstrap the DI framework.
+	auto di = new DI();
+
+	// Construct an instance of the dependency manually.
+	// Then register it with the framework.
+	auto dep = new Dependency(128);
+	di.register(dep);
+
+	// alternative syntax variants (They all come down to the same thing.):
+	di.register!Dependency(dep);
+	di.register!Dependency = dep;
+
+	// Resolve dependencies of `Foo` and create instance.
+	Foo foo = di.resolve!Foo();
+
+	// The DI framework constructed a new instance of `Dependency`
+	// and supplied it to the constructor of `Foo`.
+	assert(foo.d !is null);
+}
 
 private enum bool isClass(T) = (is(T == class));
 private enum bool isStruct(T) = (is(T == struct));
