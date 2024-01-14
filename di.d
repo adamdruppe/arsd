@@ -191,7 +191,7 @@
 		public this(
 			DI di,
 		) {
-			this.dependency = DI.makeNew!Dependency();
+			this.dependency = di.makeNew!Dependency();
 		}
 		---
 	)
