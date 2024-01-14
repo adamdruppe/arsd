@@ -212,13 +212,6 @@
 	---
 	auto di = new DI();
 	---
-
-	One can also supply a previously created dependency container:
-	---
-	auto container = new DIContainer();
-	// …
-	auto di = new DI(container);
-	---
  +/
 module oceandrift.di;
 
