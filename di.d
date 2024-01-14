@@ -308,6 +308,21 @@ private template getConstructors(T) if (hasConstructors!T) {
 	alias getConstructors = __traits(getOverloads, T, "__ctor");
 }
 
+private template callerParameterListString(params...) {
+	private string impl() {
+		string r = "";
+		foreach (idx, P; params) {
+			static if (isStruct!P) {
+				r ~= '*';
+			}
+			r ~= "param" ~ idx.to!string() ~ ',';
+		}
+		return r;
+	}
+
+	enum callerParameterListString = impl();
+}
+
 private {
 	template keyOf(T) if (isClass!T) {
 		private static immutable string keyOf = T.mangleof;
@@ -338,7 +353,7 @@ private {
 public enum bool isSupportedDependencyType(T) = (isClass!T || isStruct!T || isStructPointer!T);
 
 /++
-	Determines $(B why) a type `T` is not constructable by the DI framework.
+	Determines $(I why) a type `T` is not constructable by the DI framework.
 
 	Returns:
 		string = reason
@@ -353,7 +368,7 @@ public template determineWhyNotConstructableByDI(T) {
 		if (isSupportedDependencyType!T == false) {
 			return "DI cannot construct an instance of type `"
 				~ T.stringof
-				~ "` that is not a supported dependency type (struct/) in the first place.";
+				~ "` that is not a supported dependency type in the first place.";
 		}
 
 		static if (hasConstructors!T == false) {
@@ -379,7 +394,7 @@ public template determineWhyNotConstructableByDI(T) {
 						~ T.stringof
 						~ "` because its dependency #"
 						~ idx.to!string
-						~ " of type `"
+						~ " `"
 						~ P.stringof
 						~ "` is not a supported type.";
 				}
@@ -598,54 +613,62 @@ final class DI {
 		Dependencies will be assigned from the underlying container.
 	 +/
 	T makeNew(T)() if (isClass!T) {
-		// crash if not constructable
-		static if (determineWhyNotConstructableByDI!T !is null) {
+		static if (isConstructableByDI!T == false) {
+			// not constructable --> crash
 			assert(false, determineWhyNotConstructableByDI!T);
 		} else {
-			static if (hasConstructors!T == false) {
-				return new T();
-			} else {
-				alias ctors = getConstructors!T;
-				static assert(ctors.length == 1, "Seems like there's a bug in `determineWhyNotConstructableByDI`.");
+			// construct
+			return this.makeNewImpl!T();
+		}
+	}
 
-				alias params = Parameters!(ctors[0]);
+	private {
+		T makeNewImplWithDependencies(T)() {
+			pragma(inline, true);
 
-				static foreach (idx, P; params) {
-					static if (isClass!P || isStructPointer!P) {
-						mixin(`P param` ~ idx.to!string() ~ ';');
-						mixin(`param` ~ idx.to!string()) = this.resolve!P();
-					} else static if (isStruct!P) {
-						pragma(
-							msg,
-							"DI Warning: Passing struct instance by value to constructor parameter "
-								~ idx.to!string()
-								~ " (`"
-								~ P.stringof ~ "`) of type `"
-								~ T.stringof
-								~ "`."
-						);
-						mixin(`P param` ~ idx.to!string() ~ ';');
-						mixin(`param` ~ idx.to!string()) = *this.resolve!P();
-					} else {
-						static assert(ctors.length == 1, "Seems like there's a bug in `determineWhyNotConstructableByDI`.");
-					}
+			alias ctors = getConstructors!T;
+			static assert(ctors.length == 1, "Seems like there's a bug in `isConstructableByDI`.");
+			alias ctorParams = Parameters!(ctors[0]);
+
+			static foreach (idx, P; ctorParams) {
+				static if (isStruct!P) {
+					pragma(
+						msg,
+						"DI Warning: Passing dependency #"
+							~ idx.to!string()
+							~ " `"
+							~ P.stringof
+							~ "` by value (copy) to `"
+							~ T.stringof
+							~ "`.\n            Use a pointer (`"
+							~ P.stringof
+							~ "*`) instead."
+					);
+					mixin(`P* param` ~ idx.to!string() ~ ';');
+				} else {
+					mixin(`P param` ~ idx.to!string() ~ ';');
 				}
 
-				enum paramList = (function() {
-						string r = "";
-						foreach (idx, p; params) {
-							r ~= "param" ~ idx.to!string() ~ ',';
-						}
-						return r;
-					})();
+				mixin(`param` ~ idx.to!string()) = this.resolve!P();
+			}
 
-				return mixin(`new T(` ~ paramList ~ `)`);
+			return mixin(`new T(` ~ callerParameterListString!(ctorParams) ~ `)`);
+		}
+
+		T makeNewImpl(T)() {
+			pragma(inline, true);
+
+			static if (hasConstructors!T) {
+				return this.makeNewImplWithDependencies!T();
+			} else {
+				// There is no explicit ctor available, use default one.
+				return new T();
 			}
 		}
 	}
 }
 
-// Container Tests
+// == Container Tests
 
 @safe unittest {
 	static struct Foo {
@@ -691,7 +714,7 @@ final class DI {
 	assert(c.has!Bar() == false);
 }
 
-// DI Tests
+// == DI Tests
 
 @safe unittest {
 	static class Bar {
@@ -716,4 +739,61 @@ final class DI {
 	Bar bar = di.resolve!Bar();
 	bar.i = 2;
 	assert(foo.bar.i == 2);
+}
+
+@safe unittest {
+	static struct Bar {
+		int i = 10;
+	}
+
+	static class Foo {
+		Bar bar;
+
+		this(Bar bar) {
+			this.bar = bar;
+		}
+	}
+
+	auto di = new DI();
+	Bar* bar = di.resolve!Bar();
+	bar.i = 2;
+
+	pragma(msg, "The following DI Warning (\"Passing `Bar` by value\") is fine when running unittests:");
+	Foo foo = di.resolve!Foo(); // emits a DI Warning
+	bar.i = 3;
+	assert(foo.bar.i == 2);
+}
+
+@safe unittest {
+	static class H1 {
+	}
+
+	static class H2 {
+		this(H1 d) {
+		}
+	}
+
+	static class H3 {
+		this(H2 d) {
+		}
+	}
+
+	static class H4 {
+		this(H3 d) {
+		}
+	}
+
+	static class H5 {
+		this(H4 d, H1 d2) {
+		}
+	}
+
+	static class H6 {
+		this(H5 d) {
+		}
+	}
+
+	auto di = new DI();
+	H6 h6 = di.resolve!H6();
+	assert(h6 !is null);
 }
