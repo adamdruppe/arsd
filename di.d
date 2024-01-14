@@ -207,7 +207,11 @@
 	For pointers, deferencing them might also be an option.
 
 
+
+
 	Examples:
+
+	### Bootstrapping
 
 	Bootstrapping the framework is as simple as:
 
@@ -218,7 +222,7 @@
 module oceandrift.di;
 
 /++
-	Extended version of the front-page example
+	### Extended version of the front-page example
  +/
 @safe unittest {
 	static  // exclude from docs
@@ -247,7 +251,7 @@ module oceandrift.di;
 }
 
 /++
-	User-supplied dependency instances
+	### User-supplied dependency instances
 
 	$(BLOCKQUOTE
 		How about types the framework cannot construct on its own?
@@ -294,7 +298,7 @@ module oceandrift.di;
 }
 
 /++
-	Injecting dependencies that are $(I Interfaces)
+	### Injecting dependencies that are interfaces
 
 	It’s really straightforward:
 	Tell the framework which implementation type to use for dependencies of an interface type.
@@ -347,10 +351,10 @@ module oceandrift.di;
 }
 
 /++
-	Injecting dependencies that are $(I Interfaces) (Part II)
+	### Injecting dependencies that are interfaces (Part II)
 
-	// What if we had a type with a complex constructor,
-	// one that the framework cannot instantiate on its own?
+	What if we had a type with a complex constructor,
+	one that the framework cannot instantiate on its own?
  +/
 @system unittest {
 	static  // exclude from docs
