@@ -10,7 +10,7 @@
 		* Inversion of Control (IoC).
 		* Convention over configuration.
 		* Injects dependencies via constructor parameters.
-		* Supports structs as well (… as classes).
+		* Supports structs as well (… as classes and interfaces).
 		* No clutter – this library is a single, readily comprehensible file.
 		* No external dependencies. $(I Only the D standard library is used.)
 	)
@@ -54,7 +54,7 @@
 
 	Getting the dependencies from the container into the service object is where the DI framework comes in.
 	While the user could manually retrieve them from the container and pass them to the constructor
-	(i.e. `new LoginService(container.get!PasswordHashUtil(), container.get!Logger(), container.get!DatabaseClient())`,
+	(i.e. `new LoginService( container.get!PasswordHashUtil(), container.get!Logger(), container.get!DatabaseClient() )`,
 	this would get tedious quickly.
 	The framework comes to the resuce.
 
@@ -93,7 +93,7 @@
 
 	##### Transitive dependencies
 
-	Aka “dependencies of a dependency”.
+	Aka $(I dependencies of a dependency).
 
 	The 2nd dependency of the aforementioned `LoginService` is `Logger`.
 	For illustration purposes, we’ll assume the `Logger` class depends on `Formatter`,
@@ -143,7 +143,7 @@
 	While the injection of a `DatabaseClient` into dependent services principally works like before,
 	the framework cannot instantiate a new one by itself.
 	Hence it is that an instance has to be registered with the framework in advance.
-	A user-created `DatabaseClient` can provided by passing it to [oceandrift.di.DI.register|DI.register(…)].
+	A user-created `DatabaseClient` can provided by passing it to [oceandrift.di.DI.register|register()].
 
 	The framework will pick up on it later, when it constructs `LoginService`
 	or, failing that, if no custom instance has been registered beforehand,
@@ -182,10 +182,11 @@
 	and use it for all dependent objects.
 
 	When this behavior is not desired, it’s recommended to instantiate a new object in the constructor.
-	Check out [oceandrift.di.DI.makeNew|makeNew!T()].
+	Check out [oceandrift.di.DI.makeNew|makeNew!(T)].
 
 	$(TIP
 		The DI framework can inject a reference to itself.
+
 		---
 		public this(
 			DI di,
@@ -209,6 +210,7 @@
 	Examples:
 
 	Bootstrapping the framework is as simple as:
+
 	---
 	auto di = new DI();
 	---
@@ -222,10 +224,12 @@ import std.traits : Parameters;
 	Extended version of the front-page example
  +/
 @safe unittest {
-	static class Dependency {
+	static  // exclude from docs
+	class Dependency {
 	}
 
-	static class Foo {
+	static  // exclude from docs
+	class Foo {
 		private Dependency d;
 
 		public this(Dependency d) {
@@ -255,7 +259,8 @@ import std.traits : Parameters;
 	)
  +/
 @safe unittest {
-	static class Dependency {
+	static  // exclude from docs
+	class Dependency {
 		private int number;
 
 		public this(int number) {
@@ -263,7 +268,8 @@ import std.traits : Parameters;
 		}
 	}
 
-	static class Foo {
+	static  // exclude from docs
+	class Foo {
 		private Dependency d;
 
 		public this(Dependency d) {
@@ -271,8 +277,7 @@ import std.traits : Parameters;
 		}
 	}
 
-	// Bootstrap the DI framework.
-	auto di = new DI();
+	auto di = new DI(); // exclude from docs
 
 	// Construct an instance of the dependency manually.
 	// Then register it with the framework.
@@ -291,7 +296,120 @@ import std.traits : Parameters;
 	assert(foo.d !is null);
 }
 
+/++
+	Injecting dependencies that are $(I Interfaces)
+
+	It’s really straightforward:
+	Tell the framework which implementation type to use for dependencies of an interface type.
+ +/
+@system unittest {
+	static  // exclude from docs
+	interface Logger {
+		void log(string message);
+	}
+
+	static  // exclude from docs
+	class StdLogger : Logger {
+		private int lines = 0;
+
+		void log(string message) {
+			++lines;
+			// …writeln(message);…
+		}
+	}
+
+	static  // exclude from docs
+	class Service {
+		private Logger logger;
+
+		this(Logger logger) {
+			this.logger = logger;
+		}
+
+		void doSomething() {
+			this.logger.log("Did something.");
+		}
+
+	}
+
+	auto di = new DI(); // exclude from docs
+
+	// Register `StdLogger` as the implementation to construct for the
+	// `Logger` interface.
+	di.registerInterface!(Logger, StdLogger);
+
+	// Now the framework is set up to
+	// construct an instance of the `Service` class.
+	Service service1 = di.resolve!Service();
+
+	// Our service instance is using the `StdLogger` implementation
+	// that has been registered a few lines above.
+	service1.doSomething();
+	service1.doSomething();
+	assert(di.resolve!StdLogger().lines == 2);
+}
+
+/++
+	Injecting dependencies that are $(I Interfaces) (Part II)
+
+	// What if we had a type with a complex constructor,
+	// one that the framework cannot instantiate on its own?
+ +/
+@system unittest {
+	static  // exclude from docs
+	interface Logger {
+		void log(string message);
+	}
+
+	static  // exclude from docs
+	class FileLogger : Logger {
+		private int lines = 0;
+
+		this(string logFilePath) {
+			// …
+		}
+
+		void log(string message) {
+			++lines;
+			// …
+		}
+	}
+
+	static  // exclude from docs
+	class Service {
+		private Logger logger;
+
+		this(Logger logger) {
+			this.logger = logger;
+		}
+
+		void doSomething() {
+			this.logger.log("Did something.");
+		}
+
+	}
+
+	auto di = new DI(); // exclude from docs
+
+	// Easy. Construct one and register it with the framework.
+	auto fileLogger = new FileLogger("/dev/null");
+	di.registerInterface!Logger(fileLogger);
+
+	// Now the framework is set up to
+	// retrieve an instance of the `Service` class.
+	Service service2 = di.resolve!Service();
+
+	// Just for the record:
+	// The file logger starts with a line count of `0`.
+	assert(fileLogger.lines == 0);
+
+	// Let’s use the service and see whether the supplied logger is used.
+	service2.doSomething();
+	assert(fileLogger.lines == 1); // alright!
+}
+
 private enum bool isClass(T) = (is(T == class));
+private enum bool isInterface(T) = (is(T == interface));
 private enum bool isStruct(T) = (is(T == struct));
 private enum bool isStructPointer(T) = (is(typeof(*T) == struct));
 
@@ -317,16 +435,12 @@ private template callerParameterListString(params...) {
 }
 
 private {
-	template keyOf(T) if (isClass!T) {
+	template keyOf(T) if (isClass!T || isInterface!T || isStructPointer!T) {
 		private static immutable string keyOf = T.mangleof;
 	}
 
 	template keyOf(T) if (isStruct!T) {
-		private static immutable string keyOf = (T*).mangleof;
-	}
-
-	template keyOf(T) if (isStructPointer!T) {
-		private static immutable string keyOf = T.mangleof;
+		private static immutable string keyOf = keyOf!(T*);
 	}
 }
 
@@ -336,6 +450,7 @@ private {
 	Currently this includes:
 	$(LIST
 		* Classes – `class`
+		* Interfaces – `interface`
 		* Structs – `struct`
 		* Struct pointers – `struct*`
 	)
@@ -343,14 +458,16 @@ private {
 	See_Also:
 		[isConstructableByDI] that determines whether a type can be constructed by the framework on its own.
  +/
-public enum bool isSupportedDependencyType(T) = (isClass!T || isStruct!T || isStructPointer!T);
+public enum bool isSupportedDependencyType(T) = (isClass!T || isInterface!T || isStruct!T || isStructPointer!T);
 
 /++
 	Determines $(I why) a type `T` is not constructable by the DI framework.
 
 	Returns:
-		string = reason
-		null = is constructable, in fact
+	$(LIST
+		* `string` = reason
+		* `null` = is constructable, in fact
+	)
  +/
 public template determineWhyNotConstructableByDI(T) {
 
@@ -358,13 +475,15 @@ public template determineWhyNotConstructableByDI(T) {
 	public static immutable string determineWhyNotConstructableByDI = impl();
 
 	private string impl() {
-		if (isSupportedDependencyType!T == false) {
+		static if (isSupportedDependencyType!T == false) {
 			return "DI cannot construct an instance of type `"
 				~ T.stringof
 				~ "` that is not a supported dependency type in the first place.";
-		}
-
-		static if (hasConstructors!T == false) {
+		} else static if (isInterface!T) {
+			return "DI cannot construct an instance of type `"
+				~ T.stringof
+				~ "` that is an `interface`.";
+		} else static if (hasConstructors!T == false) {
 			return null;
 		} else {
 			alias ctors = getConstructors!T;
@@ -405,6 +524,30 @@ public template determineWhyNotConstructableByDI(T) {
 		[isSupportedDependencyType] that determines whether a type can be used as a dependency.
  +/
 public enum bool isConstructableByDI(T) = (determineWhyNotConstructableByDI!T is null);
+
+@safe unittest {
+	class Class {
+	}
+
+	class ClassWithIntegerParamCtor {
+		this(int) {
+		}
+	}
+
+	interface Interface {
+	}
+
+	struct Struct {
+	}
+
+	assert(isConstructableByDI!Class);
+	assert(isConstructableByDI!ClassWithIntegerParamCtor == false);
+	assert(isConstructableByDI!Interface == false);
+	assert(isConstructableByDI!Struct);
+	assert(isConstructableByDI!int == false);
+	assert(isConstructableByDI!string == false);
+	assert(isConstructableByDI!(int[]) == false);
+}
 
 /++
 	Dependency Container
@@ -487,7 +630,7 @@ private final class Container {
 	/++
 		Stores the provided class instance
 	 +/
-	void set(T)(T value) if (isClass!T && !is(T == Container) && !is(T == DI)) {
+	void set(T)(T value) if ((isClass!T && !is(T == Container) && !is(T == DI)) || isInterface!T) {
 		this.setTImpl!T(value);
 	}
 
@@ -537,14 +680,14 @@ final class DI {
 
 		Automatically constructs a new one if needed.
 	 +/
-	T resolve(T)() if (isClass!T) {
+	T resolve(T)() if (isClass!T || isInterface!T) {
 		void** ptrptr = _container.getPtr(keyOf!T);
 		if (ptrptr !is null) {
 			return (function(void* ptr) @trusted => cast(T) ptr)(*ptrptr);
 		}
 
 		T instance = this.makeNew!T();
-		this.store!T = instance;
+		this.register!T = instance;
 
 		return instance;
 	}
@@ -557,13 +700,14 @@ final class DI {
 		}
 
 		T* instance = this.makeNew!T();
-		this.store!(T*) = instance;
+		this.register!(T*) = instance;
 
 		return _container.get!T();
 	}
 
 	/++
 		Stores the provided instance of type `T` in the DI container.
+		This registered instance will be injected for dependencies of type `T`.
 
 		$(TIP
 			This function can be used to supply instances of types the DI framework cannot construct on its own
@@ -575,11 +719,15 @@ final class DI {
 		$(NOTE
 			Overrides a previously stored instance if applicable.
 		)
+
+		See_Also:
+			[registerInterface] to setup which implementation class (resp. instance)
+			to inject for dependencies that specify an $(I interface) instead of a concrete type.
 	 +/
 	void register(T)(T value) @safe pure nothrow {
 		static assert(
-			isClass!T || isStructPointer!T,
-			"Cannot store instance of type `" ~ T.stringof ~ "`. Not a class or struct-pointer."
+			isClass!T || isInterface!T || isStructPointer!T,
+			"Cannot store instance of type `" ~ T.stringof ~ "`. Not a class, interface or struct-pointer."
 		);
 		static assert(
 			!is(T == Container),
@@ -593,8 +741,21 @@ final class DI {
 		_container.set(value);
 	}
 
-	///
-	alias store = register;
+	/++
+		Stores the provided instance of type `TClass` in the DI container
+		to be injected for dependencies of both types `TInterface` and `TClass` later.
+	 +/
+	void registerInterface(TInterface, TClass)(TClass value) @safe pure nothrow {
+		this.register!TClass(value);
+		this.register!TInterface(value);
+	}
+
+	/// ditto
+	void registerInterface(TInterface, TClass)() {
+		this.registerInterface!(TInterface, TClass)(
+			this.resolve!TClass()
+		);
+	}
 
 	private T* makeNew(T)() if (isStruct!T) {
 		return new T();
@@ -605,7 +766,7 @@ final class DI {
 
 		Dependencies will be assigned from the underlying container.
 	 +/
-	T makeNew(T)() if (isClass!T) {
+	T makeNew(T)() if (isClass!T || isInterface!T) {
 		static if (isConstructableByDI!T == false) {
 			// not constructable --> crash
 			assert(false, determineWhyNotConstructableByDI!T);
