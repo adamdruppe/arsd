@@ -568,11 +568,6 @@ private final class Container {
 		this.setSelf();
 	}
 
-	// CAUTION: This function cannot be exposed publicly for @safe-ty guarantees
-	private void** getPtr(string key) @nogc {
-		return (key in _data);
-	}
-
 	/++
 		Returns a stored value by key
 	 +/
@@ -591,9 +586,9 @@ private final class Container {
 	}
 
 	/++
-		Returns a stored value by class
+		Returns a stored value by class, interface or struct-pointer type
 	 +/
-	T get(T)() @nogc if (isClass!T) {
+	T get(T)() @nogc if (isClass!T || isInterface!T || isStructPointer!T) {
 		return getTImpl!T();
 	}
 
@@ -601,7 +596,7 @@ private final class Container {
 		Returns a stored value by struct
 	 +/
 	T* get(T)() @nogc if (isStruct!T) {
-		return getTImpl!(T*);
+		return getTImpl!(T*)();
 	}
 
 	/++
@@ -675,34 +670,31 @@ final class DI {
 		this(new Container());
 	}
 
+	private auto resolveImpl(T)() if (isSupportedDependencyType!T) {
+		pragma(inline, true);
+
+		auto instance = _container.get!T();
+
+		if (instance is null) {
+			instance = this.makeNew!T();
+			this.register!T = instance;
+		}
+
+		return instance;
+	}
+
 	/++
 		Returns the singleton instance of the requested type.
 
 		Automatically constructs a new one if needed.
 	 +/
-	T resolve(T)() if (isClass!T || isInterface!T) {
-		void** ptrptr = _container.getPtr(keyOf!T);
-		if (ptrptr !is null) {
-			return (function(void* ptr) @trusted => cast(T) ptr)(*ptrptr);
-		}
-
-		T instance = this.makeNew!T();
-		this.register!T = instance;
-
-		return instance;
+	T resolve(T)() if (isClass!T || isInterface!T || isStructPointer!T) {
+		return this.resolveImpl!T();
 	}
 
 	/// ditto
 	T* resolve(T)() if (isStruct!T) {
-		void** ptrptr = _container.getPtr(keyOf!T);
-		if (ptrptr !is null) {
-			return ((void* ptr) @trusted => cast(T*) ptr)(*ptrptr);
-		}
-
-		T* instance = this.makeNew!T();
-		this.register!(T*) = instance;
-
-		return _container.get!T();
+		return this.resolveImpl!(T*)();
 	}
 
 	/++
@@ -759,6 +751,10 @@ final class DI {
 
 	private T* makeNew(T)() if (isStruct!T) {
 		return new T();
+	}
+
+	private T makeNew(T)() if (isStructPointer!T) {
+		return new typeof(*T)();
 	}
 
 	/++
