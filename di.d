@@ -16,7 +16,7 @@
 	)
 
 
-	## About Dependency Injection
+	### About Dependency Injection
 
 	$(SIDEBAR
 		Dependency Injection is commonly abbreviated as $(B DI).
@@ -32,7 +32,7 @@
 	They can be stored in one big repository, the [DIContainer|dependency container],
 	and retrieved later as needed.
 
-	### Declaration of dependencies
+	#### Declaration of dependencies
 
 	One of the most useful ways to specify the dependencies of a type (as in `class` or `struct`)
 	is to declare a constructor with them as parameters.
@@ -50,7 +50,7 @@
 	}
 	---
 
-	### Retrieval of dependencies
+	#### Retrieval of dependencies
 
 	Getting the dependencies from the container into the service object is where the DI framework comes in.
 	While the user could manually retrieve them from the container and pass them to the constructor
@@ -65,12 +65,12 @@
 	LoginService service = di.resolve!LoginService();
 	---
 
-	### Registration of dependencies
+	#### Registration of dependencies
 
 	But where did the `PasswordHashUtil`, the `Logger` and the `DatabaseClient` come from?
 	How did they get into the DI container?
 
-	#### Standalone dependencies
+	##### Standalone dependencies
 
 	Let’s assume the `PasswordHashUtil` has zero dependencies itself – it is a self-contained service class.
 	Its constructor has either no parameters
@@ -86,12 +86,12 @@
 	}
 	---
 
-	##### Custom dependency registrations
+	###### Custom dependency registrations
 
 	In case a user-provided `PasswordHashUtil` instance has been registered in advance,
 	the framework will skip the construction and use that one instead.
 
-	#### Transitive dependencies
+	##### Transitive dependencies
 
 	Aka “dependencies of a dependency”.
 
@@ -116,7 +116,7 @@
 	}
 	---
 
-	##### Custom dependency registrations
+	###### Custom dependency registrations
 
 	In case a user-provided `Logger` instance has been registered in advance,
 	the framework will skip all construction steps and use that one instead.
@@ -134,7 +134,7 @@
 		with the framework in addition to their custom `Logger` one.
 	)
 
-	#### Complex dependencies
+	##### Complex dependencies
 
 	Unlike the dependencies shown in the previous two chapters, however,
 	the `DatabaseClient` doesn’t depend on a bunch of other services.
@@ -169,12 +169,12 @@
 	---
 
 
-	## Unconventional use
+	### Unconventional use
 
 	This chapter deals with solutions to overcome the conventions of the framework.
 	(Malicious gossip has it that these are “design limitations”. Don’t listen to them…)
 
-	### Injecting non-singleton instances
+	#### Injecting non-singleton instances
 
 	Non-singleton objects are sometimes also called “transient” or “prototype”.
 
@@ -197,13 +197,28 @@
 
 	Alternatively, one could also create a factory type and use that as a dependency instead.
 
-	### Injecting dependencies that are primitive/unsupported types
+	#### Injecting dependencies that are primitive/unsupported types
 
 	The recommended way to inject primitives types (like integers, booleans, floating-point numbers, or enums)
 	or other unsupported types (e.g. strings, other arrays, associative arrays, class pointers or pointers in general)
 	is to wrap them in a struct.
 
 	For pointers, deferencing them might also be an option.
+
+
+	Examples:
+
+	Bootstrapping the framework is as simple as:
+	---
+	auto di = new DI();
+	---
+
+	One can also supply a previously created dependency container:
+	---
+	auto container = new DIContainer();
+	// …
+	auto di = new DI(container);
+	---
  +/
 module oceandrift.di;
 
@@ -489,6 +504,8 @@ public alias DIContainer = Container;
 
 /++
 	Dependency Injection
+
+	This is the flagship class of the framework.
  +/
 final class DI {
 	private {
@@ -600,8 +617,12 @@ final class DI {
 					} else static if (isStruct!P) {
 						pragma(
 							msg,
-							"DI Warning: Passing struct instance by value to constructor parameter " ~ idx.to!string() ~ " (`"
-								~ P.stringof ~ "`) of type `" ~ T.stringof ~ "`."
+							"DI Warning: Passing struct instance by value to constructor parameter "
+								~ idx.to!string()
+								~ " (`"
+								~ P.stringof ~ "`) of type `"
+								~ T.stringof
+								~ "`."
 						);
 						mixin(`P param` ~ idx.to!string() ~ ';');
 						mixin(`param` ~ idx.to!string()) = *this.resolve!P();
@@ -623,6 +644,8 @@ final class DI {
 		}
 	}
 }
+
+// Container Tests
 
 @safe unittest {
 	static struct Foo {
@@ -667,6 +690,8 @@ final class DI {
 	c.set!Bar(null);
 	assert(c.has!Bar() == false);
 }
+
+// DI Tests
 
 @safe unittest {
 	static class Bar {
