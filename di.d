@@ -36,9 +36,88 @@ private {
 }
 
 /++
-	Container for singleton instances
+	Determines whether a type `T` is supported to be used as dependency by the framework.
+
+	Currently this includes:
+	$(LIST
+		* Classes – `class`
+		* Structs – `struct`
+		* Struct pointers – `struct*`
+	)
+
+	See_Also:
+		[isConstructableByDI] that determines whether a type can be constructed by the framework on its own.
  +/
-final class Container {
+public enum bool isSupportedDependencyType(T) = (isClass!T || isStruct!T || isStructPointer!T);
+
+/++
+	Determines $(B why) a type `T` is not constructable by the DI framework.
+
+	Returns:
+		string = reason
+		null = is constructable, in fact
+ +/
+public template determineWhyNotConstructableByDI(T) {
+
+	/// ditto
+	public static immutable string determineWhyNotConstructableByDI = impl();
+
+	private string impl() {
+		if (isSupportedDependencyType!T == false) {
+			return "DI cannot construct an instance of type `"
+				~ T.stringof
+				~ "` that is not a supported dependency type (struct/) in the first place.";
+		}
+
+		static if (hasConstructors!T == false) {
+			return null;
+		} else {
+			alias ctors = getConstructors!T;
+			if (ctors.length > 1) {
+				return "DI cannot construct an instance of type `"
+					~ T.stringof
+					~ "` with multiple constructors.";
+			}
+
+			alias params = Parameters!(ctors[0]);
+			foreach (idx, P; params) {
+				if (isSupportedDependencyType!P == false) {
+					// Trick the detection of unreachable statements found in older compilers.
+					bool neverTrue = false;
+					if (neverTrue) {
+						break;
+					}
+
+					return "DI cannot construct an instance of type `"
+						~ T.stringof
+						~ "` because its dependency #"
+						~ idx.to!string
+						~ " of type `"
+						~ P.stringof
+						~ "` is not a supported type.";
+				}
+			}
+
+			return null;
+		}
+	}
+}
+
+/++
+	Determines whether a type `T` is constructable by the DI framework.
+
+	See_Also:
+		[isSupportedDependencyType] that determines whether a type can be used as a dependency.
+ +/
+public enum bool isConstructableByDI(T) = (determineWhyNotConstructableByDI!T is null);
+
+/++
+	Dependency Container
+
+	Used to store singleton instances of dependency types.
+	This is the underlying container implementation used by [DI].
+ +/
+private final class Container {
 @safe pure nothrow:
 
 	private {
@@ -133,6 +212,9 @@ final class Container {
 	}
 }
 
+/// ditto
+public alias DIContainer = Container;
+
 /++
 	Dependency Injection
  +/
@@ -142,7 +224,7 @@ final class DI {
 	}
 
 	///
-	this(Container container) @safe pure nothrow {
+	this(DIContainer container) @safe pure nothrow {
 		// main ctor
 		_container = container;
 		_container.setDI = this;
@@ -154,22 +236,9 @@ final class DI {
 	}
 
 	/++
-	 +/
-	auto resolve(T)() if (false) {
-		static assert(
-			isClass!T || isStruct!T,
-			"Cannot resolve instance of type `" ~ T.stringof ~ "`. Not a class or struct."
-		);
+		Returns the singleton instance of the requested type.
 
-		void** ptrptr = _container.getPtr(keyOf!T);
-		if (ptrptr !is null) {
-			return ((void* ptr) @trusted => cast(T)*ptr)(*ptrptr);
-		}
-
-		return _container.get!T();
-	}
-
-	/++
+		Automatically constructs a new one if needed.
 	 +/
 	T resolve(T)() if (isClass!T) {
 		void** ptrptr = _container.getPtr(keyOf!T);
@@ -183,8 +252,7 @@ final class DI {
 		return instance;
 	}
 
-	/++
-	 +/
+	/// ditto
 	T* resolve(T)() if (isStruct!T) {
 		void** ptrptr = _container.getPtr(keyOf!T);
 		if (ptrptr !is null) {
@@ -200,9 +268,18 @@ final class DI {
 	/++
 		Stores the provided instance of type `T` in the DI container.
 
-		Overrides the previously stored instance if applicable.
+		$(TIP
+			This function can be used to supply instances of types the DI framework cannot construct on its own
+			for further use by the DI.
+
+			Nonetheless, types must be [isSupportedDependencyType|supported dependency types].
+		)
+
+		$(NOTE
+			Overrides a previously stored instance if applicable.
+		)
 	 +/
-	void store(T)(T value) @safe pure nothrow {
+	void register(T)(T value) @safe pure nothrow {
 		static assert(
 			isClass!T || isStructPointer!T,
 			"Cannot store instance of type `" ~ T.stringof ~ "`. Not a class or struct-pointer."
@@ -219,55 +296,63 @@ final class DI {
 		_container.set(value);
 	}
 
+	///
+	alias store = register;
+
 	private T* makeNew(T)() if (isStruct!T) {
 		return new T();
 	}
 
-	/++ 
+	/++
+		Instantiates a new instance of the specified type `T`.
+
+		Dependencies will be assigned from the underlying container.
 	 +/
 	T makeNew(T)() if (isClass!T) {
-		static if (!hasConstructors!(T)) {
-			return new T();
+		// crash if not constructable
+		static if (determineWhyNotConstructableByDI!T !is null) {
+			assert(false, determineWhyNotConstructableByDI!T);
 		} else {
-			alias ctors = getConstructors!T;
-			static assert(
-				ctors.length <= 1,
-				"DI cannot instantiate object of class `" ~ T.stringof ~ "` which has multiple constructors."
-			);
+			static if (hasConstructors!T == false) {
+				return new T();
+			} else {
+				alias ctors = getConstructors!T;
+				static assert(ctors.length == 1, "Seems like there's a bug in `determineWhyNotConstructableByDI`.");
 
-			alias params = Parameters!(ctors[0]);
+				alias params = Parameters!(ctors[0]);
 
-			static foreach (idx, P; params) {
-				static if (isClass!P || isStructPointer!P) {
-					mixin(`P param` ~ idx.to!string() ~ ';');
-					mixin(`param` ~ idx.to!string()) = this.resolve!P();
-				} else static if (isStruct!P) {
-					pragma(
-						msg,
-						"DI Warning: Passing struct instance by value to parameter `"
-							~ P.stringof ~ "` of type `" ~ T.stringof ~ "`."
-					);
-					mixin(`P param` ~ idx.to!string() ~ ';');
-					mixin(`param` ~ idx.to!string()) = *this.resolve!P();
-				} else {
-					static assert(false, "Cannot resolve a value for constructor parameter " ~ idx ~ "");
-				}
-			}
-
-			enum paramList = (function() {
-					string r = "";
-					foreach (idx, p; params) {
-						r ~= "param" ~ idx.to!string() ~ ',';
+				static foreach (idx, P; params) {
+					static if (isClass!P || isStructPointer!P) {
+						mixin(`P param` ~ idx.to!string() ~ ';');
+						mixin(`param` ~ idx.to!string()) = this.resolve!P();
+					} else static if (isStruct!P) {
+						pragma(
+							msg,
+							"DI Warning: Passing struct instance by value to constructor parameter " ~ idx.to!string() ~ " (`"
+								~ P.stringof ~ "`) of type `" ~ T.stringof ~ "`."
+						);
+						mixin(`P param` ~ idx.to!string() ~ ';');
+						mixin(`param` ~ idx.to!string()) = *this.resolve!P();
+					} else {
+						static assert(ctors.length == 1, "Seems like there's a bug in `determineWhyNotConstructableByDI`.");
 					}
-					return r;
-				})();
+				}
 
-			return mixin(`new T(` ~ paramList ~ `)`);
+				enum paramList = (function() {
+						string r = "";
+						foreach (idx, p; params) {
+							r ~= "param" ~ idx.to!string() ~ ',';
+						}
+						return r;
+					})();
+
+				return mixin(`new T(` ~ paramList ~ `)`);
+			}
 		}
 	}
 }
 
-unittest {
+@safe unittest {
 	static struct Foo {
 		int i = 10;
 	}
@@ -311,7 +396,7 @@ unittest {
 	assert(c.has!Bar() == false);
 }
 
-unittest {
+@safe unittest {
 	static class Bar {
 		int i = 10;
 	}
