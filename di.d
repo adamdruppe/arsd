@@ -786,18 +786,20 @@ final class DI {
 
 			static foreach (idx, P; ctorParams) {
 				static if (isStruct!P) {
-					pragma(
-						msg,
-						"DI Warning: Passing dependency #"
-							~ idx.to!string()
-							~ " `"
-							~ P.stringof
-							~ "` by value (copy) to `"
-							~ T.stringof
-							~ "`.\n            Use a pointer (`"
-							~ P.stringof
-							~ "*`) instead."
-					);
+					version (diNoPassByValue) {
+						static assert(
+							false,
+							"Passing dependency #"
+								~ idx.to!string()
+								~ " `"
+								~ P.stringof
+								~ "` by value (copy) to `"
+								~ T.stringof
+								~ "`.\n            Use a pointer (`"
+								~ P.stringof
+								~ "*`) instead. [`-version=diNoPassByValue`]"
+						);
+					}
 					mixin(`P* param` ~ idx.to!string() ~ ';');
 				} else {
 					mixin(`P param` ~ idx.to!string() ~ ';');
@@ -912,8 +914,7 @@ final class DI {
 	Bar* bar = di.resolve!Bar();
 	bar.i = 2;
 
-	pragma(msg, "The following DI Warning (\"Passing `Bar` by value\") is fine when running unittests:");
-	Foo foo = di.resolve!Foo(); // emits a DI Warning
+	Foo foo = di.resolve!Foo();
 	bar.i = 3;
 	assert(foo.bar.i == 2);
 }
