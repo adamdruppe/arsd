@@ -217,9 +217,6 @@
  +/
 module oceandrift.di;
 
-import std.conv : to;
-import std.traits : Parameters;
-
 /++
 	Extended version of the front-page example
  +/
@@ -407,6 +404,9 @@ import std.traits : Parameters;
 	service2.doSomething();
 	assert(fileLogger.lines == 1); // alright!
 }
+
+import std.conv : to;
+import std.traits : Parameters;
 
 private enum bool isClass(T) = (is(T == class));
 private enum bool isInterface(T) = (is(T == interface));
