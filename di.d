@@ -465,6 +465,16 @@ private {
 public enum bool isSupportedDependencyType(T) = (isClass!T || isInterface!T || isStruct!T || isStructPointer!T);
 
 /++
+	Determines whether a type `T` is denied for user registration.
+ +/
+public enum bool isForbiddenType(T) = is(T == Container) || is(T == DI);
+
+/++
+	Determines whether a type `T` is applicable for user registration.
+ +/
+public enum bool isntForbiddenType(T) = !(isForbiddenType!T);
+
+/++
 	Determines $(I why) a type `T` is not constructable by the DI framework.
 
 	Returns:
@@ -629,7 +639,7 @@ private final class Container {
 	/++
 		Stores the provided class instance
 	 +/
-	void set(T)(T value) if ((isClass!T && !is(T == Container) && !is(T == DI)) || isInterface!T) {
+	void set(T)(T value) if ((isClass!T || isInterface!T) && (isntForbiddenType!T)) {
 		this.setTImpl!T(value);
 	}
 
@@ -726,12 +736,8 @@ final class DI {
 			"Cannot store instance of type `" ~ T.stringof ~ "`. Not a class, interface or struct-pointer."
 		);
 		static assert(
-			!is(T == Container),
-			"Cannot override the referenced Container instance."
-		);
-		static assert(
-			!is(T == DI),
-			"Cannot override the referenced DI instance."
+			isntForbiddenType!T,
+			"Cannot override the referenced framework instance of type `" ~ T.stringof ~ "`."
 		);
 
 		_container.set(value);
