@@ -12516,6 +12516,7 @@ struct GLNVGcontext {
   int freetexid; // -1: none
   int ntextures;
   int ctextures;
+  GLuint vaoBuf;
   GLuint vertBuf;
   int fragSize;
   int flags;
@@ -13273,6 +13274,8 @@ bool glnvg__renderCreate (void* uptr) nothrow @trusted @nogc {
   glnvg__getUniforms(&gl.shaderFillFBO);
   glnvg__getUniforms(&gl.shaderCopyFBO);
 
+  // Create VAO (required for modern OpenGL compatibility)
+  glGenVertexArrays(1, &gl.vaoBuf);
   // Create dynamic vertex array
   glGenBuffers(1, &gl.vertBuf);
 
@@ -14006,6 +14009,7 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
     }
     glnvg__checkError(gl, "OpenGL setup");
 
+    glBindVertexArray(gl.vaoBuf);
     // Upload vertex data
     glBindBuffer(GL_ARRAY_BUFFER, gl.vertBuf);
     // ensure that there's space for at least 4 vertices in case we need to draw a quad (e. g. framebuffer copy)
@@ -14129,6 +14133,7 @@ void glnvg__renderFlush (void* uptr) nothrow @trusted @nogc {
     glDisableVertexAttribArray(1);
     glDisable(GL_CULL_FACE);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
     glUseProgram(0);
     glnvg__bindTexture(gl, 0);
   }
@@ -14407,6 +14412,7 @@ void glnvg__renderDelete (void* uptr) nothrow @trusted @nogc {
   glnvg__deleteShader(&gl.shaderFillFBO);
   glnvg__deleteShader(&gl.shaderCopyFBO);
 
+  if (gl.vaoBuf != 0) glDeleteVertexArrays(1, &gl.vaoBuf);
   if (gl.vertBuf != 0) glDeleteBuffers(1, &gl.vertBuf);
 
   foreach (ref GLNVGtexture tex; gl.textures[0..gl.ntextures]) {
