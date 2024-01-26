@@ -186,6 +186,8 @@ struct DatabaseDatum {
 		Converts the datum to a string in a format specified by the database.
 	+/
 	string toString() {
+		if(isNull())
+			return null;
 		return storage.toString();
 	}
 	/++
