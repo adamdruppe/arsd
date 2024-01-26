@@ -1151,6 +1151,7 @@ class Cgi {
 		this.pathInfo = pathInfo;
 		this.queryString = queryString;
 		this.postBody = null;
+		this.requestContentType = null;
 	}
 
 	private {
@@ -1374,6 +1375,7 @@ class Cgi {
 				files = keepLastOf(filesArray);
 				post = keepLastOf(postArray);
 				this.postBody = pps.postBody;
+				this.requestContentType = contentType;
 				cleanUpPostDataState();
 			}
 
@@ -2201,6 +2203,8 @@ class Cgi {
 			files = keepLastOf(filesArray);
 			post = keepLastOf(postArray);
 			postBody = pps.postBody;
+			this.requestContentType = contentType;
+
 			cleanUpPostDataState();
 		}
 
@@ -2873,6 +2877,14 @@ class Cgi {
 	+/
 	public immutable string postBody;
 	alias postJson = postBody; // old name
+
+	/++
+		The content type header of the request. The [postBody] member may hold the actual data (see [postBody] for details).
+
+		History:
+			Added January 26, 2024 (dub v11.4)
+	+/
+	public immutable string requestContentType;
 
 	/* Internal state flags */
 	private bool outputtedResponseData;
@@ -3686,6 +3698,11 @@ mixin template CustomCgiDispatcherMain(CustomCgi, size_t maxContentLength, Prese
 		auto presenter = new Presenter;
 		activePresenter = presenter;
 		scope(exit) activePresenter = null;
+
+		if(cgi.pathInfo.length == 0) {
+			cgi.setResponseLocation(cgi.scriptName ~ "/");
+			return;
+		}
 
 		if(cgi.dispatcher!DispatcherArgs(presenter))
 			return;
