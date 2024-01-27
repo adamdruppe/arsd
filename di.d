@@ -423,6 +423,76 @@ private template getConstructors(T) if (hasConstructors!T) {
 	alias getConstructors = __traits(getOverloads, T, "__ctor");
 }
 
+private template hasParentClass(T) if (isClass!T) {
+	static if (is(T Parents == super) && Parents.length)
+		enum hasParentClass = true;
+	else
+		enum hasParentClass = false;
+}
+
+private template ParentClass(T) if (isClass!T) {
+	static if (is(T Parents == super) && Parents.length)
+		alias ParentClass = Parents[0];
+	else
+		static assert(0, "No parent class for type `" ~ T.stringof ~ "`.");
+}
+
+unittest {
+	static class Parent {
+	}
+
+	static class Child : Parent {
+	}
+
+	static class GrandChild : Child {
+	}
+
+	static assert(hasParentClass!Parent);
+	static assert(hasParentClass!Child);
+	static assert(hasParentClass!GrandChild);
+
+	static assert(is(ParentClass!Parent == Object));
+	static assert(is(ParentClass!Child == Parent));
+	static assert(is(ParentClass!GrandChild == Child));
+}
+
+private template MemberSymbols(alias T, args...) {
+	import std.meta;
+
+	alias MemberSymbols = AliasSeq!();
+	static foreach (arg; args) {
+		MemberSymbols = AliasSeq!(MemberSymbols, __traits(getMember, T, arg));
+	}
+}
+
+unittest {
+	static class Dings {
+		int x;
+		string y;
+	}
+
+	alias mSyms = MemberSymbols!(Dings, "x", "y");
+	assert(mSyms.length == 2);
+	assert(is(typeof(mSyms[0]) == int));
+	assert(is(typeof(mSyms[1]) == string));
+}
+
+private template DerivedMemberSymbols(T, args...) {
+	alias DerivedMemberSymbols = MemberSymbols!(T, __traits(derivedMembers, T));
+}
+
+unittest {
+	static class Dings {
+		int x;
+		string y;
+	}
+
+	alias mSyms = DerivedMemberSymbols!(Dings);
+	assert(mSyms.length == 2);
+	assert(is(typeof(mSyms[0]) == int));
+	assert(is(typeof(mSyms[1]) == string));
+}
+
 private template callerParameterListString(params...) {
 	private string impl() {
 		string r = "";
@@ -828,6 +898,205 @@ final class DI {
 			}
 		}
 	}
+}
+
+/++
+	UDA to mark fields as dependency for $(I Field Assignment Constructor Application).
+ +/
+enum dependency;
+
+private template hasDependencyUDA(alias T) {
+	import std.traits : hasUDA;
+
+	enum hasDependencyUDA = hasUDA!(T, dependency);
+}
+
+// undocumented
+enum _diConstructorUDA;
+
+/++
+	Generates a constructor with a parameter for each [dependency|@dependency] field
+	and assigns the passed value to the corresponding field.
+ +/
+mixin template DIConstructor() {
+	import oceandrift.di : dependency, diConstructorString, _diConstructorUDA;
+
+	mixin(diConstructorString!(typeof(this)));
+}
+
+/++
+	Generates code for a constructor with a parameter for each [dependency|@dependency] field
+	and assigns the passed value to the corresponding field.
+
+	---
+	class MyType {
+		mixin(diConstructorString!(typeof(this)));
+	}
+	---
+
+	See_Also: [DIConstructor]
+ +/
+template diConstructorString(T) {
+	private string impl() {
+		import std.meta;
+		import std.traits;
+
+		alias deps = Filter!(hasDependencyUDA, DerivedMemberSymbols!T);
+
+		static if (isStruct!T && (deps.length == 0)) {
+			return "";
+		} else {
+			string r = "public this(";
+
+			// determine parent dependencies
+			static if (isClass!T && hasParentClass!T) {
+				alias parentCtor = getSymbolsByUDA!(ParentClass!T, _diConstructorUDA);
+				static assert(parentCtor.length <= 1, "Misuse of @_diConstructorUDA detected.");
+
+				static if (parentCtor.length == 1) {
+					alias depsParent = ParameterIdentifierTuple!parentCtor;
+				} else {
+					enum depsParent = [];
+				}
+			} else {
+				enum depsParent = [];
+			}
+
+			// parent ctor params
+			static foreach (d; depsParent) {
+				r ~= "typeof(super." ~ d ~ ")" ~ d ~ ",";
+			}
+
+			// params
+			static foreach (d; deps) {
+				r ~= "typeof(this." ~ __traits(identifier, d) ~ ")" ~ __traits(identifier, d) ~ ",";
+			}
+
+			r ~= ")@_diConstructorUDA @safe pure nothrow @nogc{";
+
+			// parent ctor
+			static if (depsParent.length > 0) {
+				r ~= "super(";
+				static foreach (d; depsParent) {
+					r ~= d ~ ',';
+				}
+				r ~= ");";
+			}
+
+			// assignments
+			static foreach (d; deps) {
+				r ~= "this." ~ __traits(identifier, d) ~ '=' ~ __traits(identifier, d) ~ ';';
+			}
+
+			r ~= '}';
+
+			return r;
+		}
+	}
+
+	// undocumented
+	enum string diConstructorString = impl();
+}
+
+@safe unittest {
+	static class Point {
+		mixin DIConstructor;
+	@dependency:
+		int x;
+		int y;
+	}
+
+	const p = new Point(12, 24);
+	assert(p.x == 12);
+	assert(p.y == 24);
+}
+
+@safe unittest {
+	static class Point {
+		mixin DIConstructor;
+		int x;
+		int y;
+	}
+
+	const p = new Point();
+}
+
+@safe unittest {
+	static struct Point {
+		mixin DIConstructor;
+	private @dependency:
+		int x;
+		int y;
+	}
+
+	const p = Point(12, 24);
+	assert(p.x == 12);
+	assert(p.y == 24);
+}
+
+@safe unittest {
+	static struct Point {
+		mixin DIConstructor;
+		int x;
+		int y;
+	}
+
+	const p = Point();
+}
+
+@safe unittest {
+	static class Point {
+		mixin DIConstructor;
+		int x;
+		int y;
+	}
+
+	const p = new Point();
+}
+
+@safe unittest {
+	static class Point {
+		mixin DIConstructor;
+	@dependency:
+		const int x;
+		const int y;
+	}
+
+	const p = new Point(1, 2);
+	assert(p.x == 1);
+	assert(p.y == 2);
+}
+
+@safe unittest {
+	static class Dimension1 {
+		mixin DIConstructor;
+	@dependency:
+		int x;
+	}
+
+	static class Dimension2 : Dimension1 {
+		mixin DIConstructor;
+	@dependency:
+		int y;
+	}
+
+	static class Dimension3 : Dimension2 {
+		mixin DIConstructor;
+	@dependency:
+		int z;
+	}
+
+	const d1 = new Dimension1(8);
+	assert(d1.x == 8);
+
+	const d2 = new Dimension2(12, 24);
+	assert(d2.x == 12);
+	assert(d2.y == 24);
+
+	const d3 = new Dimension3(1, 5, 9);
+	assert(d3.x == 1);
+	assert(d3.y == 5);
+	assert(d3.z == 9);
 }
 
 // == Container Tests
