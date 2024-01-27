@@ -409,6 +409,50 @@ module oceandrift.di;
 	assert(fileLogger.lines == 1); // alright!
 }
 
+/++
+	### DI-constructor generator
+
+	> All that typing gets tedious quickly, doesn’t it?
+
+	The framework can generate all the constructor boilerplate.
+	It’s as easy as:
+
+	$(NUMBERED_LIST
+		* Annotate all dependency fields with [dependency|@dependency].
+		* Add `mixin` [DIConstructor] to your type.
+		  This generates a constructor with a parameter for each `@dependency` field
+		  and a body that assigns the values to the corresponding fields.
+	)
+ +/
+@system unittest {
+	static  // exclude from docs
+	class Dependency1 {
+	}
+
+	static  // exclude from docs
+	class Dependency2 {
+	}
+
+	static  // exclude from docs
+	class Foo {
+		// Mark dependencies with the attribute `@dependency`:
+		private @dependency {
+			Dependency1 d1;
+			Dependency2 d2;
+		}
+
+		// Let the framework generate the constructor:
+		mixin DIConstructor;
+	}
+
+	auto di = new DI();
+	Foo foo = di.resolve!Foo();
+
+	// It works:
+	assert(foo.d1 !is null);
+	assert(foo.d2 !is null);
+}
+
 import std.conv : to;
 import std.traits : Parameters;
 
