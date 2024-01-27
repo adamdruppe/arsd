@@ -424,7 +424,7 @@ module oceandrift.di;
 		  and a body that assigns the values to the corresponding fields.
 	)
  +/
-@system unittest {
+@safe unittest {
 	static  // exclude from docs
 	class Dependency1 {
 	}
