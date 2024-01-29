@@ -731,7 +731,7 @@ auto serveTemplateDirectory()(string urlPrefix, string directory = null, string 
 
 		auto fn = details.templateDirectory ~ details.directory ~ file ~ details.extension;
 		if(std.file.exists(fn)) {
-			cgi.setCache(true);
+			cgi.setResponseExpiresRelative(600, true); // 10 minute cache expiration by default, FIXME it should be configurable
 			auto doc = renderTemplate(fn[details.templateDirectory.length.. $], var.emptyObject, var.emptyObject, details.skeleton, TemplateLoader.forDirectory(details.templateDirectory));
 			cgi.gzipResponse = true;
 			cgi.write(doc.toString, true);
