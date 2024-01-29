@@ -29,7 +29,7 @@
 	Authors:
 		Originally written in C by Alexey Khokholov, ported to D by ketmar, very slightly modified by me.
 +/
-module arsd.nukedopl3 /*is aliced*/;
+module arsd.nukedopl3;
 nothrow @trusted @nogc:
 
 public:

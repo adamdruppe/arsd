@@ -2990,8 +2990,11 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels,
 
 	/* Open PCM and initialize hardware */
 
+	// import arsd.core;
+	// writeln("before");
 	if (auto err = snd_pcm_open(&handle, cardName.toStringz, direction, 0))
 		throw new AlsaException("open device", err);
+	// writeln("after");
 	scope(failure)
 		snd_pcm_close(handle);
 
@@ -3055,8 +3058,10 @@ snd_pcm_t* openAlsaPcm(snd_pcm_stream_t direction, int SampleRate, int channels,
 
 	/* finish setup */
 
+	// writeln("prepare");
 	if (auto err = snd_pcm_prepare(handle))
 		throw new AlsaException("prepare", err);
+	// writeln("done");
 
 	assert(handle !is null);
 	return handle;
