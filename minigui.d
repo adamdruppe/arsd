@@ -15947,7 +15947,9 @@ mixin template DefaultLightTheme() {
 	override OperatingSystemFont defaultFont(int dpi) {
 		version(Windows)
 			return new OperatingSystemFont("Segoe UI");
-		else {
+		else static if(UsingSimpledisplayCocoa) {
+			return (new OperatingSystemFont()).loadDefault;
+		} else {
 			// FIXME: undo xft's scaling so we don't end up double scaled
 			return new OperatingSystemFont("DejaVu Sans", 9 * dpi / 96);
 		}
@@ -15966,8 +15968,11 @@ mixin template DefaultDarkTheme() {
 	override OperatingSystemFont defaultFont(int dpi) {
 		version(Windows)
 			return new OperatingSystemFont("Segoe UI", 12);
-		else
+		else static if(UsingSimpledisplayCocoa) {
+			return (new OperatingSystemFont()).loadDefault;
+		} else {
 			return new OperatingSystemFont("DejaVu Sans", 9 * dpi / 96);
+		}
 	}
 }
 

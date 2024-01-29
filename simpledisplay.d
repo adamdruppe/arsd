@@ -1960,6 +1960,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 					// best guess... respect the custom scaling user command to some extent at least though
 					useFallbackDpi = true;
 				}
+			} else version(OSXCocoa) {
+				actualDpi_ = cast(int)(96 * customScalingFactorForMonitor(0)); // FIXME
 			}
 			actualDpiLoadAttempted = true;
 		} else version(X11) if(MonitorInfo.info.length == 0) {
@@ -8948,7 +8950,7 @@ class OperatingSystemFont : MeasurableFont {
 		} else version(OSXCocoa) {
 			if(font is null)
 				return 0;
-			return cast(int) font.capHeight;
+			return cast(int) (font.ascender + font.descender + 0.9 /* to round up */); // font.capHeight
 		}
 		else assert(0);
 	}
@@ -9012,9 +9014,11 @@ class OperatingSystemFont : MeasurableFont {
 			prepareFontInfo();
 			return this;
 		} else version(OSXCocoa) {
-			this.font = NSFont.systemFontOfSize(12);
+			this.font = NSFont.systemFontOfSize(15);
 
 			prepareFontInfo();
+
+			// import std.stdio; writeln("Load default: ", this.height());
 			return this;
 		} else throw new NotYetImplementedException();
 	}
@@ -18080,6 +18084,7 @@ private:
 		void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image);
 		void CGContextShowTextAtPoint(CGContextRef c, double x, double y, const(char)* str, size_t length);
 		void CGContextStrokeLineSegments(CGContextRef c, const(CGPoint)* points, size_t count);
+		void CGContextSetLineDash(CGContextRef c, CGFloat phase, const CGFloat *lengths, size_t count);
 
 		void CGContextBeginPath(CGContextRef c);
 		void CGContextDrawPath(CGContextRef c, CGPathDrawingMode mode);
@@ -18201,6 +18206,24 @@ version(OSXCocoa) {
 		ubyte[4] _outlineComponents;
 		NSView view;
 
+		Pen _activePen;
+		Color _fillColor;
+		Rectangle _clipRectangle;
+		OperatingSystemFont _font;
+
+		OperatingSystemFont getFont() {
+			if(_font is null) {
+				static OperatingSystemFont _defaultFont;
+				if(_defaultFont is null) {
+					_defaultFont = new OperatingSystemFont();
+					_defaultFont.loadDefault();
+				}
+				_font = _defaultFont;
+			}
+
+			return _font;
+		}
+
 		void create(PaintingHandle window) {
 			// this.destiny = window;
 			if(auto sw = cast(SimpleWindow) this.window) {
@@ -18219,20 +18242,22 @@ version(OSXCocoa) {
 		void invalidateRect(Rectangle invalidRect) { }
 
 		// NotYetImplementedException
-		Size textSize(in char[] txt) {
-			return Size(32, 16); /*throw new NotYetImplementedException();*/
-		}
 		void rasterOp(RasterOp op) {
 		}
-		Pen _activePen;
-		Color _fillColor;
-		Rectangle _clipRectangle;
 		void setClipRectangle(int, int, int, int) {
 		}
-		void setFont(OperatingSystemFont) {
+		Size textSize(in char[] txt) {
+			auto font = getFont();
+			return Size(font.stringWidth(txt), font.height());
+		}
+
+		void setFont(OperatingSystemFont font) {
+			_font = font;
+			//font.font.setInContext(context);
 		}
 		int fontHeight() {
-			return 14;
+			auto font = getFont();
+			return font.height;
 		}
 
 		// end
@@ -18242,6 +18267,26 @@ version(OSXCocoa) {
 			auto color = pen.color; // FIXME
 			double alphaComponent = color.a/255.0f;
 			CGContextSetRGBStrokeColor(context, color.r/255.0f, color.g/255.0f, color.b/255.0f, alphaComponent);
+
+			double[2] patternBuffer;
+			double[] pattern;
+			final switch(pen.style) {
+				case Pen.Style.Solid:
+					pattern = null;
+				break;
+				case Pen.Style.Dashed:
+					patternBuffer[0] = 4;
+					patternBuffer[1] = 1;
+					pattern = patternBuffer[];
+				break;
+				case Pen.Style.Dotted:
+					patternBuffer[0] = 1;
+					patternBuffer[1] = 1;
+					pattern = patternBuffer[];
+				break;
+			}
+
+			CGContextSetLineDash(context, 0, pattern.ptr, pattern.length);
 
 			if (color.a != 255) {
 				_outlineComponents[0] = cast(ubyte)(color.r*color.a/255);
@@ -18286,7 +18331,62 @@ version(OSXCocoa) {
 												  _outlineComponents[1]*invAlpha,
 												  _outlineComponents[2]*invAlpha,
 												  _outlineComponents[3]/255.0f);
-				CGContextShowTextAtPoint(context, x, y + 12 /* this is cuz this picks baseline but i want bounding box */, text.ptr, text.length);
+
+
+
+				// FIXME: should we clip it to the bounding box?
+				int textHeight = fontHeight;
+
+				auto lines = text.split('\n');
+
+				const lineHeight = textHeight;
+				textHeight *= lines.length;
+
+				int cy = y;
+
+				if(alignment & TextAlignment.VerticalBottom) {
+					if(y2 <= 0)
+						return;
+					auto h = y2 - y;
+					if(h > textHeight) {
+						cy += h - textHeight;
+						cy -= lineHeight / 2;
+					}
+				} else if(alignment & TextAlignment.VerticalCenter) {
+					if(y2 <= 0)
+						return;
+					auto h = y2 - y;
+					if(textHeight < h) {
+						cy += (h - textHeight) / 2;
+						//cy -= lineHeight / 4;
+					}
+				}
+
+				foreach(line; text.split('\n')) {
+					int textWidth = this.textSize(line).width;
+
+					int px = x, py = cy;
+
+					if(alignment & TextAlignment.Center) {
+						if(x2 <= 0)
+							return;
+						auto w = x2 - x;
+						if(w > textWidth)
+							px += (w - textWidth) / 2;
+					} else if(alignment & TextAlignment.Right) {
+						if(x2 <= 0)
+							return;
+						auto pos = x2 - textWidth;
+						if(pos > x)
+							px = pos;
+					}
+
+					CGContextShowTextAtPoint(context, px, py + getFont.ascent /* this is cuz this picks baseline but i want bounding box */, line.ptr, line.length);
+
+					carry_on:
+					cy += lineHeight + 4;
+				}
+
 // auto cfstr = cast(NSid)createCFString(text);
 // objc_msgSend(cfstr, sel_registerName("drawAtPoint:withAttributes:"),
 // NSPoint(x, y), null);
@@ -22389,7 +22489,7 @@ private struct CleanupQueue {
 }
 private __gshared CleanupQueue cleanupQueue;
 
-version(X11)
+// version(X11)
 /++
 	Returns the custom scaling factor read out of environment["ARSD_SCALING_FACTOR"].
 
