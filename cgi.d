@@ -7080,8 +7080,10 @@ version(cgi_with_websocket) {
 				return false;
 			if(!isDataPending())
 				return true;
-			while(isDataPending())
-				lowLevelReceive();
+			while(isDataPending()) {
+				if(lowLevelReceive() == false)
+					throw new ConnectionClosedException("Connection closed in middle of message");
+			}
 			goto checkAgain;
 		}
 
