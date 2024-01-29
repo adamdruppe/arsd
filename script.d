@@ -819,7 +819,37 @@ class TokenStream(TextStream) {
 					copy.reserve(pos + 4);
 
 					escaped = false;
+					int readingUnicode;
+					dchar uniChar = 0;
+
+					int hexCharToInt(dchar ch) {
+						if(ch >= '0' && ch <= '9')
+							return ch - '0';
+						if(ch >= 'a' && ch <= 'f')
+							return ch - 'a' + 10;
+						if(ch >= 'A' && ch <= 'F')
+							return ch - 'A' + 10;
+						throw new ScriptCompileException("Invalid hex char in \\u unicode section: " ~ cast(char) ch, token.scriptFilename, token.lineNumber);
+					}
+
 					foreach(idx, dchar ch; text[started .. pos]) {
+						if(readingUnicode) {
+							if(readingUnicode == 4 && ch == '{') {
+								readingUnicode = 5;
+								continue;
+							}
+							if(readingUnicode == 5 && ch == '}') {
+								readingUnicode = 1;
+							} else {
+								uniChar <<= 4;
+								uniChar |= hexCharToInt(ch);
+							}
+							if(readingUnicode != 5)
+								readingUnicode--;
+							if(readingUnicode == 0)
+								copy ~= uniChar;
+							continue;
+						}
 						if(escaped) {
 							escaped = false;
 							switch(ch) {
@@ -830,6 +860,7 @@ class TokenStream(TextStream) {
 								case 't': copy ~= "\t"; break;
 								case '#': copy ~= "#"; break;
 								case '"': copy ~= "\""; break;
+								case 'u': readingUnicode = 4; uniChar = 0; break;
 								case '\'': copy ~= "'"; break;
 								default:
 									throw new ScriptCompileException("Unknown escape char " ~ cast(char) ch, token.scriptFilename, token.lineNumber);
