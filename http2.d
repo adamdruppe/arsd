@@ -4618,6 +4618,7 @@ class WebSocket {
 			socket = new Socket(family(uri.unixSocketPath), SocketType.STREAM);
 
 		socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+		cookies = config.cookies;
 	}
 
 	/++
@@ -4704,6 +4705,23 @@ class WebSocket {
 
 		// FIXME: randomize this
 		append("Sec-WebSocket-Key: x3JEHMbDL1EzLkh9GBhXDw==\r\n");
+
+		append("cookie: ");
+		bool first=true;
+		foreach(k,v;cookies) {
+			if(first) first = false;
+			else append(" ");
+			append(k);
+			append("=");
+			append(v);
+		}
+		append("\r\n");
+		/*
+		//This is equivalent but has dependencies
+		import std.format;
+		import std.algorithm : map;
+		append(format("cookie: %-(%s %)\r\n",cookies.byKeyValue.map!(t=>format("%s=%s",t.key,t.value))));
+		*/
 
 		if(config.protocol.length)
 			append("Sec-WebSocket-Protocol: ", config.protocol, "\r\n");
