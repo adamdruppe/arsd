@@ -4705,17 +4705,18 @@ class WebSocket {
 
 		// FIXME: randomize this
 		append("Sec-WebSocket-Key: x3JEHMbDL1EzLkh9GBhXDw==\r\n");
-
-		append("cookie: ");
-		bool first=true;
-		foreach(k,v;cookies) {
-			if(first) first = false;
-			else append(" ");
-			append(k);
-			append("=");
-			append(v);
+		if(cookies.length > 0) {
+			append("Cookie: ");
+			bool first=true;
+			foreach(k,v;cookies) {
+				if(first) first = false;
+				else append("; ");
+				append(k);
+				append("=");
+				append(v);
+			}
+			append("\r\n");
 		}
-		append("\r\n");
 		/*
 		//This is equivalent but has dependencies
 		import std.format;
