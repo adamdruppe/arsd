@@ -134,7 +134,7 @@ void main() {
 		* `embedded_httpd` for the embedded httpd version (built-in web server). This is the default for dub builds. You can run the program then connect directly to it from your browser. Note: prior to version 11, this would be embedded_httpd_processes on Linux and embedded_httpd_threads everywhere else. It now means embedded_httpd_hybrid everywhere supported and embedded_httpd_threads everywhere else.
 		* `cgi` for traditional cgi binaries. These are run by an outside web server as-needed to handle requests.
 		* `fastcgi` for FastCGI builds. FastCGI is managed from an outside helper, there's one built into Microsoft IIS, Apache httpd, and Lighttpd, and a generic program you can use with nginx called `spawn-fcgi`. If you don't already know how to use it, I suggest you use one of the other modes.
-		* `scgi` for SCGI builds. SCGI is a simplified form of FastCGI, where you run the server as an application service which is proxied by your outside webserver.
+		* `scgi` for SCGI builds. SCGI is a simplified form of FastCGI, where you run the server as an application service which is proxied by your outside webserver. Please note: on nginx make sure you add `scgi_param  PATH_INFO          $document_uri;` to the config!
 		* `stdio_http` for speaking raw http over stdin and stdout. This is made for systemd services. See [RequestServer.serveSingleHttpConnectionOnStdio] for more information.
 	)
 
