@@ -367,7 +367,6 @@ interface->SetProgressValue(hwnd, 40, 100);
 		This example program shows how you can set up a shader to draw a rectangle:
 
 		---
-		module opengl3test;
 		import arsd.simpledisplay;
 
 		// based on https://learnopengl.com/Getting-started/Hello-Triangle
