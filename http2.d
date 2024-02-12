@@ -5528,7 +5528,13 @@ template addToSimpledisplayEventLoop() {
 	import arsd.simpledisplay;
 	void addToSimpledisplayEventLoop(WebSocket ws, imported!"arsd.simpledisplay".SimpleWindow window) {
 
+		version(Windows)
+		auto event = WSACreateEvent();
+		// FIXME: supposed to close event too
+
 		void midprocess() {
+			version(Windows)
+				ResetEvent(event);
 			if(!ws.lowLevelReceive()) {
 				ws.readyState_ = WebSocket.CLOSED;
 				WebSocket.unregisterActiveSocket(ws);
@@ -5565,7 +5571,6 @@ template addToSimpledisplayEventLoop() {
 		} else version(Windows) {
 			ws.socket.blocking = false; // the WSAEventSelect does this anyway and doing it here lets phobos know about it.
 			//CreateEvent(null, 0, 0, null);
-			auto event = WSACreateEvent();
 			if(!event) {
 				throw new Exception("WSACreateEvent");
 			}

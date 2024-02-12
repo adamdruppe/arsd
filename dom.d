@@ -122,6 +122,8 @@ bool isConvenientAttribute(string name) {
 		document.parseUtf8("<example></example>", true, true); // changes the trues to false to switch from xml to html mode
 	---
 
+	You can also modify things like [selfClosedElements] and [rawSourceElements] before calling the `parse` family of functions to do further advanced tasks.
+
 	However you parse it, it will put a few things into special variables.
 
 	[root] contains the root document.
@@ -432,8 +434,25 @@ class Document : FileResource, DomParent {
 
 		History:
 			Added February 8, 2021 (included in dub release 9.2)
+
+			Changed from `string[]` to `immutable(string)[]` on
+			February 4, 2024 (dub v11.5) to plug a hole discovered
+			by the OpenD compiler's diagnostics.
 	+/
-	string[] selfClosedElements = htmlSelfClosedElements;
+	immutable(string)[] selfClosedElements = htmlSelfClosedElements;
+
+	/++
+		List of elements that contain raw CDATA content for this
+		document, e.g. `<script>` and `<style>` for HTML. The parser
+		will read until the closing string and put everything else
+		in a [RawSource] object for future processing, not trying to
+		do any further child nodes or attributes, etc.
+
+		History:
+			Added February 4, 2024 (dub v11.5)
+
+	+/
+	immutable(string)[] rawSourceElements = htmlRawSourceElements;
 
 	/++
 		List of elements that are considered inline for pretty printing.
@@ -443,8 +462,12 @@ class Document : FileResource, DomParent {
 
 		History:
 			Added June 21, 2021 (included in dub release 10.1)
+
+			Changed from `string[]` to `immutable(string)[]` on
+			February 4, 2024 (dub v11.5) to plug a hole discovered
+			by the OpenD compiler's diagnostics.
 	+/
-	string[] inlineElements = htmlInlineElements;
+	immutable(string)[] inlineElements = htmlInlineElements;
 
 	/**
 		Take XMLish data and try to make the DOM tree out of it.
@@ -978,7 +1001,7 @@ class Document : FileResource, DomParent {
 
 
 						// HACK to handle script and style as a raw data section as it is in HTML browsers
-						if(!pureXmlMode && (tagName == "script" || tagName == "style")) {
+						if(!pureXmlMode && tagName.isInArray(rawSourceElements)) {
 							if(!selfClosed) {
 								string closer = "</" ~ tagName ~ ">";
 								ptrdiff_t ending;
@@ -1557,6 +1580,189 @@ class Document : FileResource, DomParent {
 		foreach(o; eventObservers)
 			o(e);
 	}
+}
+
+/++
+	Basic parsing of HTML tag soup
+
+	If you simply make a `new Document("some string")` or use [Document.fromUrl] to automatically
+	download a page (that's function is shorthand for `new Document(arsd.http2.get(your_given_url).contentText)`),
+	the Document parser will assume it is broken HTML. It will try to fix up things like charset messes, missing
+	closing tags, flipped tags, inconsistent letter cases, and other forms of commonly found HTML on the web.
+
+	It isn't exactly the same as what a HTML5 web browser does in all cases, but it usually it, and where it
+	disagrees, it is still usually good enough (but sometimes a bug).
++/
+unittest {
+	auto document = new Document(`<html><body><p>hello <P>there`);
+	// this will automatically try to normalize the html and fix up broken tags, etc
+	// so notice how it added the missing closing tags here and made them all lower case
+	assert(document.toString() == "<!DOCTYPE html>\n<html><body><p>hello </p><p>there</p></body></html>", document.toString());
+}
+
+/++
+	Stricter parsing of HTML
+
+	When you are writing the HTML yourself, you can remove most ambiguity by making it throw exceptions instead
+	of trying to automatically fix up things basic parsing tries to do. Using strict mode accomplishes this.
+
+	This will help guarantee that you have well-formed HTML, which means it is going to parse a lot more reliably
+	by all users - browsers, dom.d, other libraries, all behave better with well-formed input... people too!
+
+	(note it is not a full *validator*, just a well-formedness checker. Full validation is a lot more work for very
+	little benefit in my experience, so I stopped here.)
++/
+unittest {
+	try {
+		auto document = new Document(`<html><body><p>hello <P>there`, true, true); // turns on strict and case sensitive mode to ctor
+		assert(0); // never reached, the constructor will throw because strict mode is turned on
+	} catch(Exception e) {
+
+	}
+
+	// you can also create the object first, then use the [parseStrict] method
+	auto document = new Document;
+	document.parseStrict(`<foo></foo>`); // this is invalid html - no such foo tag - but it is well-formed, since it is opened and closed properly, so it passes
+
+}
+
+/++
+	Custom HTML extensions
+
+	dom.d is a custom HTML parser, which means you can add custom HTML extensions to it too. It normally reads
+	and discards things like ASP style `<% ... %>` code as well as XML processing instruction / PHP style embeds `<? ... ?>`
+	but you can keep this data if you call a function to opt into it in before parsing.
+
+	Additionally, you can add special tags to be read like `<script>` to preserve its insides for future processing
+	via the `.innerRawSource` member.
++/
+unittest {
+	auto document = new Document; // construct an empty thing first
+	document.enableAddingSpecialTagsToDom(); // add the special tags like <% ... %> etc
+	document.rawSourceElements ~= "embedded-plaintext"; // tell it we want a custom
+
+	document.parseStrict(`<html>
+		<% some asp code %>
+		<script>embedded && javascript</script>
+		<embedded-plaintext>my <custom> plaintext & stuff</embedded-plaintext>
+	</html>`);
+
+	// please note that if we did `document.toString()` right now, the original source - almost your same
+	// string you passed to parseStrict - would be spit back out. Meaning the embedded-plaintext still has its
+	// special text inside it. Another parser won't understand how to use this! So if you want to pass this
+	// document somewhere else, you need to do some transformations.
+	//
+	// This differs from cases like CDATA sections, which dom.d will automatically convert into plain html entities
+	// on the output that can be read by anyone.
+
+	assert(document.root.tagName == "html"); // the root element is normal
+
+	int foundCount;
+	// now let's loop through the whole tree
+	foreach(element; document.root.tree) {
+		// the asp thing will be in
+		if(auto asp = cast(AspCode) element) {
+			// you use the `asp.source` member to get the code for these
+			assert(asp.source == "% some asp code %");
+			foundCount++;
+		} else if(element.tagName == "script") {
+			// and for raw source elements - script, style, or the ones you add,
+			// you use the innerHTML method to get the code inside
+			assert(element.innerHTML == "embedded && javascript");
+			foundCount++;
+		} else if(element.tagName == "embedded-plaintext") {
+			// and innerHTML again
+			assert(element.innerHTML == "my <custom> plaintext & stuff");
+			foundCount++;
+		}
+
+	}
+
+	assert(foundCount == 3);
+
+	// writeln(document.toString());
+}
+
+// FIXME: <textarea> contents are treated kinda special in html5 as well...
+
+/++
+	Demoing CDATA, entities, and non-ascii characters.
+
+	The previous example mentioned CDATA, let's show you what that does too. These are all read in as plain strings accessible in the DOM - there is no CDATA, no entities once you get inside the object model - but when you convert back into a string, it will normalize them in a particular way.
+
+	This is not exactly standards compliant completely in and out thanks to it doing some transformations... but I find it more useful - it reads the data in consistently and writes it out consistently, both in ways that work well for interop. Take a look:
++/
+unittest {
+	auto document = new Document(`<html>
+		<p>¤ is a non-ascii character. It will be converted to a numbered entity in string output.</p>
+		<p>&curren; is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.</p>
+		<p><![CDATA[xml cdata segments, which can contain <tag> looking things, are converted to encode the embedded special-to-xml characters to entities too.]]></p>
+	</html>`, true, true); // strict mode turned on
+
+	// Inside the object model, things are simplified to D strings.
+	auto paragraphs = document.querySelectorAll("p");
+	// no surprise on the first paragraph, we wrote it with the character, and it is still there in the D string
+	assert(paragraphs[0].textContent == "¤ is a non-ascii character. It will be converted to a numbered entity in string output.");
+	// but note on the second paragraph, the entity has been converted to the appropriate *character* in the object
+	assert(paragraphs[1].textContent == "¤ is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.");
+	// and the CDATA bit is completely gone from the DOM; it just read it in as a text node. The txt content shows the text as a plain string:
+	assert(paragraphs[2].textContent == "xml cdata segments, which can contain <tag> looking things, are converted to encode the embedded special-to-xml characters to entities too.");
+	// and the dom node beneath it is just a single text node; no trace of the original CDATA detail is left after parsing.
+	assert(paragraphs[2].childNodes.length == 1 && paragraphs[2].childNodes[0].nodeType == NodeType.Text);
+
+	// And now, in the output string, we can see they are normalized thusly:
+	assert(document.toString() == "<!DOCTYPE html>\n<html>
+		<p>&#164; is a non-ascii character. It will be converted to a numbered entity in string output.</p>
+		<p>&#164; is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.</p>
+		<p>xml cdata segments, which can contain &lt;tag&gt; looking things, are converted to encode the embedded special-to-xml characters to entities too.</p>
+	</html>");
+}
+
+/++
+	Streaming parsing
+
+	dom.d normally takes a big string and returns a big DOM object tree - hence its name. This is usually the simplest
+	code to read and write, so I prefer to stick to that, but if you wanna jump through a few hoops, you can still make
+	dom.d work with streams.
+
+	It is awkward - again, dom.d's whole design is based on building the dom tree, but you can do it if you're willing to
+	subclass a little and trust the garbage collector. Here's how.
++/
+unittest {
+	bool encountered;
+	class StreamDocument : Document {
+		// the normal behavior for this function is to `parent.appendChild(child)`
+		// but we can override to read it as it is processed and not append it
+		override void processNodeWhileParsing(Element parent, Element child) {
+			if(child.tagName == "bar")
+				encountered = true;
+			// note that each element's object is created but then discarded as garbage.
+			// the GC will take care of it, even with a large document, whereas the normal
+			// object tree could become quite large.
+		}
+
+		this() {
+			super("<foo><bar></bar></foo>");
+		}
+	}
+
+	auto test = new StreamDocument();
+	assert(encountered); // it should have been seen
+	assert(test.querySelector("bar") is null); // but not appended to the dom node, since we didn't append it
+}
+
+/++
+	Basic parsing of XML.
+
+	dom.d is not technically a standards-compliant xml parser and doesn't implement all xml features,
+	but its stricter parse options together with turning off HTML's special tag handling (e.g. treating
+	`<script>` and `<style>` the same as any other tag) gets close enough to work fine for a great many
+	use cases.
+
+	For more information, see [XmlDocument].
++/
+unittest {
+	auto xml = new XmlDocument(`<my-stuff>hello</my-stuff>`);
 }
 
 interface DomParent {
@@ -3934,6 +4140,7 @@ class XmlDocument : Document {
 	this(string data, bool enableHtmlHacks = false) {
 		selfClosedElements = null;
 		inlineElements = null;
+		rawSourceElements = null;
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
@@ -5900,6 +6107,10 @@ private immutable static string[] htmlSelfClosedElements = [
 
 	// html 5
 	"embed","source","track","wbr"
+];
+
+private immutable static string[] htmlRawSourceElements = [
+	"script", "style"
 ];
 
 private immutable static string[] htmlInlineElements = [
@@ -8549,24 +8760,6 @@ unittest {
 	auto document = new Document("broken"); // just ensuring it doesn't crash
 }
 
-unittest {
-	bool encountered;
-	class StreamDocument : Document {
-		override void processNodeWhileParsing(Element parent, Element child) {
-			// import std.stdio; writeln("Processing: ", child);
-			if(child.tagName == "bar")
-				encountered = true;
-		}
-
-		this() {
-			super("<foo><bar></bar></foo>");
-		}
-	}
-
-	auto test = new StreamDocument();
-	assert(encountered); // it should have been seen
-	assert(test.querySelector("bar") is null); // but not appended to the dom node
-}
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2023

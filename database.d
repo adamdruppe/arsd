@@ -105,6 +105,25 @@ interface Database {
 		return queryImpl(sql, args);
 	}
 
+	final ResultSet query(Args...)(arsd.core.InterpolationHeader header, Args args, arsd.core.InterpolationFooter footer) {
+		import arsd.core;
+		Variant[] vargs;
+		string sql;
+		foreach(arg; args) {
+			static if(is(typeof(arg) == InterpolatedLiteral!str, string str)) {
+				sql ~= str;
+			} else static if(is(typeof(arg) == InterpolatedExpression!str, string str)) {
+				// intentionally blank
+			} else static if(is(typeof(arg) == InterpolationHeader) || is(typeof(arg) == InterpolationFooter)) {
+				static assert(0, "Nested interpolations not allowed at this time");
+			} else {
+				sql ~= "?";
+				vargs ~= Variant(arg);
+			}
+		}
+		return queryImpl(sql, vargs);
+	}
+
 	/// turns a systime into a value understandable by the target database as a timestamp to be concated into a query. so it should be quoted and escaped etc as necessary
 	string sysTimeToValue(SysTime);
 

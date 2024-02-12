@@ -290,7 +290,7 @@ struct Statement {
 
 		this.db = db;
 		if(sqlite3_prepare_v2(db.db, toStringz(sql), cast(int) sql.length, &s, null) != SQLITE_OK)
-			throw new DatabaseException(db.error());
+			throw new DatabaseException(db.error() ~ " " ~ sql);
 	}
 
 	version(sqlite_extended_metadata_available)

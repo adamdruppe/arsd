@@ -1302,6 +1302,8 @@ struct Terminal {
 				if(!integratedTerminalEmulatorConfiguration.fallbackToDegradedTerminal)
 					throw e;
 			}
+		} else {
+			usingDirectEmulator = true;
 		}
 
 		if(integratedTerminalEmulatorConfiguration.preferDegradedTerminal)
