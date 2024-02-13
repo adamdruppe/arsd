@@ -719,6 +719,7 @@ struct Terminal {
 			return false;
 
 		// we're not writing to a terminal at all!
+		if(!usingDirectEmulator)
 		if(!stdoutIsTerminal || !stdinIsTerminal)
 			return false;
 
@@ -899,7 +900,7 @@ struct Terminal {
 
 	// Looks up a termcap item and tries to execute it. Returns false on failure
 	bool doTermcap(T...)(string key, T t) {
-		if(!stdoutIsTerminal)
+		if(!usingDirectEmulator && !stdoutIsTerminal)
 			return false;
 
 		import std.conv;
@@ -1260,8 +1261,8 @@ struct Terminal {
 			}
 		}
 
-		bool usingDirectEmulator;
 	}
+	bool usingDirectEmulator;
 
 	version(TerminalDirectToEmulator)
 	/++
@@ -1474,7 +1475,7 @@ struct Terminal {
 	}
 
 	private void goCellular() {
-		if(!Terminal.stdoutIsTerminal)
+		if(!usingDirectEmulator && !Terminal.stdoutIsTerminal)
 			throw new Exception("Cannot go to cellular mode with redirected output");
 
 		if(UseVtSequences) {
@@ -1731,12 +1732,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				cast(ushort)((setTob << 4) | setTof));
 			return false;
 		}
-		assert(0);
+		return false;
 	}
 
 	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
-		if(!stdoutIsTerminal)
+		if(!usingDirectEmulator && !stdoutIsTerminal)
 			return;
 		if(force != ForceOption.neverSend) {
 			if(UseVtSequences) {
@@ -1966,7 +1967,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		if(stdoutIsTerminal) {
+		if(!usingDirectEmulator && stdoutIsTerminal) {
 			if(UseVtSequences)
 				writeStringRaw("\033[0m");
 			else version(Win32Console) if(UseWin32Console) {
@@ -2120,7 +2121,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			if(windowGone)
 				return;
 		version(TerminalDirectToEmulator)
-			if(pipeThroughStdOut) {
+			if(usingDirectEmulator && pipeThroughStdOut) {
 				fflush(stdout);
 				fflush(stderr);
 				return;
@@ -2199,7 +2200,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	private int[] getSizeInternal() {
-		if(!stdoutIsTerminal)
+		if(!usingDirectEmulator && !stdoutIsTerminal)
 			throw new Exception("unable to get size of non-terminal");
 		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
@@ -2385,7 +2386,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	// you really, really shouldn't use this unless you know what you are doing
 	/*private*/ void writeStringRaw(in char[] s) {
 		version(TerminalDirectToEmulator)
-		if(pipeThroughStdOut) {
+		if(pipeThroughStdOut && usingDirectEmulator) {
 			fwrite(s.ptr, 1, s.length, stdout);
 			return;
 		}
@@ -2477,6 +2478,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			On November 7, 2023 (dub v11.3), this function started returning stdin.readln in the event that the instance is not connected to a terminal.
 	+/
 	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
+		if(!usingDirectEmulator)
 		if(!stdoutIsTerminal || !stdinIsTerminal) {
 			import std.stdio;
 			import std.string;
@@ -2558,6 +2560,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                }
 	}
 	private void updateCursorPosition_impl() {
+		if(!usingDirectEmulator)
 		if(!stdinIsTerminal || !stdoutIsTerminal)
 			throw new Exception("cannot update cursor position on non-terminal");
 		auto terminal = &this;
