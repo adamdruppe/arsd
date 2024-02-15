@@ -128,23 +128,64 @@ struct Color {
 	}
 
 @safe:
-	/++
-		The color components are available as a static array, individual bytes, and a uint inside this union.
 
-		Since it is anonymous, you can use the inner members' names directly.
-	+/
-	union {
-		ubyte[4] components; /// [r, g, b, a]
+	ubyte[4] components; /// [r, g, b, a]
 
-		/// Holder for rgba individual components.
-		struct {
-			ubyte r; /// red
-			ubyte g; /// green
-			ubyte b; /// blue
-			ubyte a; /// alpha. 255 == opaque
+	// The color components are available as individual bytes and a uint through this property functions.
+	// Unlike an anonymous union, this works with CTFE as well.
+	@safe pure nothrow @nogc {
+		// individual rgb components
+		pragma(inline, true) ref inout(ubyte) r() inout scope return { return components[0]; } /// red
+		pragma(inline, true) ref inout(ubyte) g() inout scope return { return components[1]; } /// green
+		pragma(inline, true) ref inout(ubyte) b() inout scope return { return components[2]; } /// blue
+		pragma(inline, true) ref inout(ubyte) a() inout scope return { return components[3]; } /// alpha. 255 == opaque
+
+		/*
+		pragma(inline, true) void r(ubyte value) { components[0] = value; } /// red
+		pragma(inline, true) void g(ubyte value) { components[1] = value; } /// green
+		pragma(inline, true) void b(ubyte value) { components[2] = value; } /// blue
+		pragma(inline, true) void a(ubyte value) { components[3] = value; } /// alpha. 255 == opaque
+		*/
+
+		/// The components as a single 32 bit value (beware of endian issues!)
+		uint asUint() inout {
+			if (__ctfe) {
+				version (LittleEndian)
+					return (r) | (g << 8) | (b << 16) | (a << 24);
+				else version (BigEndian)
+					return (r << 24) | (g << 16) | (b << 8) | (a);
+				else
+					static assert(false, "Unsupported endianness");
+			} else {
+				return (cast(inout(uint)[1]) components)[0];
+			}
 		}
 
-		uint asUint; /// The components as a single 32 bit value (beware of endian issues!)
+		/// ditto
+		void asUint(uint value) {
+			if (__ctfe) {
+				version (LittleEndian) {
+					r = (value & 0xFF);
+					g = ((value & 0xFF_00) >> 8);
+					b = ((value & 0xFF_00_00) >> 16);
+					a = ((value & 0xFF_00_00_00) >> 24);
+				} else version (BigEndian) {
+					r = ((value & 0xFF_00_00_00) >> 24);
+					g = ((value & 0xFF_00_00) >> 16);
+					b = ((value & 0xFF_00) >> 8);
+					a = (value & 0xFF);
+				} else {
+					static assert(false, "Unsupported endianness");
+				}
+			} else {
+				components = function(uint value) @trusted {
+					return *(cast(ubyte[4]*) cast(void*) &value);
+				}(value);
+			}
+		}
+
+		/// ditto
+		uint opCast(T : uint)() inout { return this.asUint; }
 	}
 
 	/++
