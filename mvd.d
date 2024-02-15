@@ -72,7 +72,9 @@ CommonReturnOfOverloads!fn mvdObj(alias fn, This, T...)(This this_, T args) {
 		foreach(idx, parg; pargs) {
 			alias t = typeof(parg);
 			static if(is(t == interface) || is(t == class)) {
-				pargs[idx] = cast(typeof(parg)) args[idx];
+				t value = cast(t) args[idx];
+				// HACK: cast to Object* so we can set the value even if it's an immutable class
+				*cast(Object*) &pargs[idx] = cast(Object) value;
 				if(args[idx] !is null && pargs[idx] is null)
 					continue ov; // failed cast, forget it
 				else
@@ -172,5 +174,41 @@ unittest {
 	with(Wrapper) {
 		mvd!foo(new MyClass);
 		assert(success);
+	}
+}
+
+///
+unittest {
+	immutable class Foo {}
+
+	immutable class Bar : Foo {
+		int x;
+
+		this(int x) {
+			this.x = x;
+		}
+	}
+
+	immutable class Baz : Foo {
+		int x, y;
+
+		this(int x, int y) {
+			this.x = x;
+			this.y = y;
+		}
+	}
+
+	static struct Wrapper {
+		static:
+
+		int foo(Bar b) { return b.x; }
+		int foo(Baz b) { return b.x + b.y; }
+	}
+
+	with(Wrapper) {
+		Foo x = new Bar(3);
+		Foo y = new Baz(5, 7);
+		assert(mvd!foo(x) == 3);
+		assert(mvd!foo(y) == 12);
 	}
 }
