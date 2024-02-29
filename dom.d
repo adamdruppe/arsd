@@ -1407,10 +1407,18 @@ class Document : FileResource, DomParent {
 		return findFirst(&doesItMatch);
 	}
 
-	/// This returns the <body> element, if there is one. (It different than Javascript, where it is called 'body', because body is a keyword in D.)
+	/++
+		This returns the <body> element, if there is one. (It different than Javascript, where it is called 'body', because body used to be a keyword in D.)
+
+		History:
+			`body` alias added February 26, 2024
+	+/
 	Element mainBody() {
 		return getFirstElementByTagName("body");
 	}
+
+	/// ditto
+	alias body = mainBody;
 
 	/// this uses a weird thing... it's [name=] if no colon and
 	/// [property=] if colon
