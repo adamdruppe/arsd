@@ -205,10 +205,37 @@ string toGC(scope StringMethod dg) {
 
 	string s;
 
-	// FIXME: encode properly in UTF-8
 	while(*t) {
-		s ~= *t;
+		import std.utf;
+		char[4] buffer;
+		wchar item = *t;
 		t++;
+		if(item >= 0xD800 && item <= 0xDFFF) {
+			wchar second = *t;
+			t++;
+			wchar low, high;
+			if(item >= 0xD800 && item <= 0xDBFF) {
+				high = item;
+				low = second;
+			} else {
+				high = second;
+				low = item;
+			}
+
+			if(
+				high >= 0xD800 && high <= 0xDBFF
+				&&
+				low >= 0xDC00 && low <= 0xDCFF
+			 ) {
+				dchar d = (high - 0xD800) * 0x400 + (low - 0xDC00) + 0x10000;
+
+				s ~= buffer[0 .. encode(buffer, d)];
+			} else {
+				// we could probably throw something tbh
+			}
+		} else {
+			s ~= buffer[0 .. encode(buffer, item)];
+		}
 	}
 
 	auto ret = s;
