@@ -1572,7 +1572,7 @@ void sdpyWindowClass (const(char)[] v) {
 /**
 	Get current window class name.
 */
-string sdpyWindowClass () {
+string sdpyWindowClass () @trusted {
 	if (sdpyWindowClassStr is null) return null;
 	foreach (immutable idx; 0..size_t.max-1) {
 		if (sdpyWindowClassStr[idx] == 0) return sdpyWindowClassStr[0..idx].idup;
@@ -3668,7 +3668,7 @@ private:
 
 	// process queued events and call custom event handlers
 	// this will not process events posted from called handlers (such events are postponed for the next iteration)
-	void processCustomEvents () {
+	void processCustomEvents () @system {
 		bool hasSomethingToDo = false;
 		uint ecount;
 		bool ocep;
@@ -4137,7 +4137,7 @@ struct EventLoopImpl {
 	version(with_eventloop)
 	void initialize(long pulseTimeout) {}
 	else
-	void initialize(long pulseTimeout) {
+	void initialize(long pulseTimeout) @system {
 		version(Windows) {
 			if(pulseTimeout && handlePulse !is null)
 				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
@@ -4260,7 +4260,7 @@ struct EventLoopImpl {
 	version(with_eventloop)
 	void dispose() {}
 	else
-	void dispose() {
+	void dispose() @system {
 		disposed = true;
 		version(X11) {
 			if(pulseFd != -1) {
@@ -5578,7 +5578,7 @@ class Timer {
 	// the ticks thing given, on Linux it is just available) and
 	// maybe one that takes an instance of the Timer itself too
 	/// Create a timer with a callback when it triggers.
-	this(int intervalInMilliseconds, void delegate() onPulse) {
+	this(int intervalInMilliseconds, void delegate() onPulse) @trusted {
 		assert(onPulse !is null);
 
 		this.intervalInMilliseconds = intervalInMilliseconds;
@@ -5655,7 +5655,7 @@ class Timer {
 		}
 	}
 	else version(linux)
-	static void staticDestroy(int fd) {
+	static void staticDestroy(int fd) @system {
 		if(fd != -1) {
 			import unix = core.sys.posix.unistd;
 			static import ep = core.sys.linux.epoll;
@@ -5859,7 +5859,7 @@ class PosixFdReader {
 
 	version(with_eventloop) {} else
 	///
-	void enable() {
+	void enable() @system {
 		prepareEventLoop();
 
 		enabled = true;
@@ -5878,7 +5878,7 @@ class PosixFdReader {
 
 	version(with_eventloop) {} else
 	///
-	void disable() {
+	void disable() @system {
 		prepareEventLoop();
 
 		enabled = false;
@@ -14484,7 +14484,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 		}
 
-		Color getPixel(int x, int y) {
+		Color getPixel(int x, int y) @system {
 			auto offset = (y * width + x) * 4;
 			Color c;
 			c.a = enableAlpha ? rawData[offset + 3] : 255;
@@ -14496,7 +14496,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			return c;
 		}
 
-		void setPixel(int x, int y, Color c) {
+		void setPixel(int x, int y, Color c) @system {
 			if(enableAlpha && premultiply)
 				c.premultiply();
 			auto offset = (y * width + x) * 4;
@@ -14507,7 +14507,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				rawData[offset + 3] = c.a;
 		}
 
-		void convertToRgbaBytes(ubyte[] where) {
+		void convertToRgbaBytes(ubyte[] where) @system {
 			assert(where.length == this.width * this.height * 4);
 
 			// if rawData had a length....
@@ -14523,7 +14523,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 		}
 
-		void setFromRgbaBytes(in ubyte[] where) {
+		void setFromRgbaBytes(in ubyte[] where) @system {
 			assert(where.length == this.width * this.height * 4);
 
 			// if rawData had a length....
@@ -14751,7 +14751,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 					XA_CARDINAL, 32, PropModeReplace, &o, 1);
 		}
 
-		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) {
+		void createWindow(int width, int height, string title, in OpenGlOptions opengl, SimpleWindow parent) @trusted {
 			version(without_opengl) {} else if(opengl == OpenGlOptions.yes && !openGlLibrariesSuccessfullyLoaded) throw new Exception("OpenGL libraries did not load");
 			display = XDisplayConnection.get();
 			auto screen = DefaultScreen(display);
@@ -17514,7 +17514,7 @@ struct Visual
 
 	alias Display* _XPrivDisplay;
 
-	extern(D) Screen* ScreenOfDisplay(Display* dpy, int scr) {
+	extern(D) Screen* ScreenOfDisplay(Display* dpy, int scr) @system {
 		assert(dpy !is null);
 		return &dpy.screens[scr];
 	}
@@ -19466,7 +19466,7 @@ version(X11) {
 	// later.
 
 	// NOTE: IT IS VERY IMPORTANT THAT THIS BE THE LAST STATIC CTOR OF THE FILE since it tests librariesSuccessfullyLoaded
-	shared static this () {
+	shared static this () @system {
 		if(!librariesSuccessfullyLoaded)
 			return;
 
@@ -22496,7 +22496,7 @@ private __gshared CleanupQueue cleanupQueue;
 		This function is exempted from stability guarantees.
 	)
 +/
-float customScalingFactorForMonitor(int monitorNumber) {
+float customScalingFactorForMonitor(int monitorNumber) @system {
 	import core.stdc.stdlib;
 	auto val = getenv("ARSD_SCALING_FACTOR");
 

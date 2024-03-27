@@ -5844,7 +5844,7 @@ class BufferedInputRange {
 		return view;
 	}
 
-	invariant() {
+	@system invariant() {
 		assert(view.ptr >= underlyingBuffer.ptr);
 		// it should never be equal, since if that happens view ought to be empty, and thus reusing the buffer
 		assert(view.ptr < underlyingBuffer.ptr + underlyingBuffer.length);

@@ -3258,7 +3258,7 @@ extern(C):
 	int snd_lib_error_set_handler (snd_lib_error_handler_t handler);
 
 	import core.stdc.stdarg;
-	private void alsa_message_silencer (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...) {}
+	private void alsa_message_silencer (const(char)* file, int line, const(char)* function_, int err, const(char)* fmt, ...) @system {}
 	//k8: ALSAlib loves to trash stderr; shut it up
 	void silence_alsa_messages () { snd_lib_error_set_handler(&alsa_message_silencer); }
 	extern(D) shared static this () { silence_alsa_messages(); }

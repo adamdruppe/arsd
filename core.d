@@ -201,7 +201,7 @@ struct stringz {
 	/++
 		Borrows a slice of the pointer up to (but not including) the zero terminator.
 	+/
-	const(char)[] borrow() const {
+	const(char)[] borrow() const @system {
 		if(raw is null)
 			return null;
 
@@ -1710,7 +1710,7 @@ struct SystemErrorCode {
 	/++
 		A text explanation of the code. See [codeAsString] for a string representation of the numeric representation.
 	+/
-	string errorString() const {
+	string errorString() const @trusted {
 		final switch(type) {
 			case Type.errno:
 				import core.stdc.string;
