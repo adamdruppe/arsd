@@ -206,7 +206,7 @@ class PostgresResult : ResultSet {
 		return row;
 	}
 
-	int affectedRows() {
+	int affectedRows() @system {
 		auto g = PQcmdTuples(res);
 		if(g is null)
 			return 0;
@@ -305,7 +305,7 @@ class PostgresResult : ResultSet {
 		}
 }
 
-string copyCString(const char* c, int actualLength = -1) {
+string copyCString(const char* c, int actualLength = -1) @system {
 	const(char)* a = c;
 	if(a is null)
 		return null;

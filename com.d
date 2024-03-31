@@ -93,6 +93,8 @@ module arsd.com;
 
 import arsd.core;
 
+version(Windows):
+
 // for arrays to/from IDispatch use SAFEARRAY
 // see https://stackoverflow.com/questions/295067/passing-an-array-using-com
 

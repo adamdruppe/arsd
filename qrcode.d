@@ -66,6 +66,8 @@ unittest {
 	main; // exclude from docs
 }
 
+@system:
+
 import core.stdc.stddef;
 import core.stdc.stdint;
 import core.stdc.string;

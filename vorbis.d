@@ -64,6 +64,8 @@ import core.stdc.stdio : FILE;
 version(Windows)
 	extern(C) int lrintf(float f) { return cast(int) f; }
 
+@system:
+
 nothrow /*@trusted*/:
 @nogc { // code block, as c macro helper is not @nogc; yet it's CTFE-only
 // import it here, as druntime has no `@nogc` on it (for a reason)

@@ -69,6 +69,8 @@ import arsd.color;
 // float or double
 private:
 
+@system:
+
 //version = iresample_debug;
 
 

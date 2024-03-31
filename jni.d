@@ -2361,7 +2361,7 @@ final class JavaBridge(Class) {
 		static if(is(typeof(__traits(getMember, Class, memberName).offsetof)))
 			static assert(1, "Data members in D on Java classes are not reliable because they cannot be consistently associated back to their corresponding Java classes through JNI without major runtime expense."); // FIXME
 		else static if(memberName == "__ctor")
-			static assert("JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
+			static assert(1, "JavaClasses can only be constructed by Java. Try making a constructor in Java, then make an @Import this(args); here.");
 
 		// implementations
 		static foreach(oi, overload; __traits(getOverloads, Class, memberName))

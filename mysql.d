@@ -75,7 +75,7 @@ class MySqlResult : ResultSet {
 	}
 
 
-	MYSQL_FIELD[] fields() {
+	MYSQL_FIELD[] fields() @system {
 		int numFields = mysql_num_fields(result);
 		auto fields = mysql_fetch_fields(result);
 
@@ -124,7 +124,7 @@ class MySqlResult : ResultSet {
 		return mapping[field];
 	}
 
-	private void makeFieldMapping() {
+	private void makeFieldMapping() @system {
 		int numFields = mysql_num_fields(result);
 		auto fields = mysql_fetch_fields(result);
 
@@ -137,7 +137,7 @@ class MySqlResult : ResultSet {
 		}
 	}
 
-	private void fetchNext() {
+	private void fetchNext() @system {
 		assert(result);
 		auto r = mysql_fetch_row(result);
 		if(r is null)
@@ -163,7 +163,7 @@ class MySqlResult : ResultSet {
 	}
 
 
-	override string[] fieldNames() {
+	override string[] fieldNames() @system {
 		int numFields = mysql_num_fields(result);
 		auto fields = mysql_fetch_fields(result);
 
@@ -1042,7 +1042,7 @@ cstring toCstring(string c) {
 }
 
 import std.array;
-string fromCstring(cstring c, size_t len = size_t.max) {
+string fromCstring(cstring c, size_t len = size_t.max) @system {
 	string ret;
 	if(c is null)
 		return null;

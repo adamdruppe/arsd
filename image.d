@@ -80,7 +80,7 @@ enum ImageFileFormat {
 
 
 /// Try to guess image format from file extension.
-public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
+public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) @system {
   if (filename.length < 2) return ImageFileFormat.Unknown;
   size_t extpos = filename.length;
   version(Windows) {
@@ -103,7 +103,7 @@ public ImageFileFormat guessImageFormatFromExtension (const(char)[] filename) {
 
 
 /// Try to guess image format by first data bytes.
-public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) {
+public ImageFileFormat guessImageFormatFromMemory (const(void)[] membuf) @system {
   enum TargaSign = "TRUEVISION-XFILE.\x00";
   auto buf = cast(const(ubyte)[])membuf;
   if (buf.length == 0) return ImageFileFormat.Unknown;

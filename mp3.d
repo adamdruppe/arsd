@@ -194,7 +194,7 @@ class MP3Decoder {
 		Returns `true` if the object is in a valid state. May be
 		false if the stream was corrupted or reached end-of-file.
 	+/
-	@property bool valid () const pure nothrow @safe @nogc {
+	@property bool valid () const pure nothrow @trusted @nogc {
 		return isOpen;
 	}
 	/++
@@ -206,7 +206,7 @@ class MP3Decoder {
 		See_Also:
 			[channels]
 	+/
-	@property uint sampleRate () const pure nothrow @safe @nogc {
+	@property uint sampleRate () const pure nothrow @trusted @nogc {
 		return valid ? dec.info.hz : 0;
 	}
 	/++
@@ -218,7 +218,7 @@ class MP3Decoder {
 		See_Also:
 			[sampleRate]
 	+/
-	@property ubyte channels () const pure nothrow @safe @nogc {
+	@property ubyte channels () const pure nothrow @trusted @nogc {
 		return (valid ? cast(ubyte) dec.info.channels : 0);
 	}
 	/++
@@ -230,7 +230,7 @@ class MP3Decoder {
 		History:
 			Added November 21, 2022 (dub v10.10)
 	+/
-	@property int bitrate() const pure nothrow @safe @nogc {
+	@property int bitrate() const pure nothrow @trusted @nogc {
 		return (valid ? dec.info.bitrate_kbps : 0);
 	}
 
@@ -241,7 +241,7 @@ class MP3Decoder {
 		History:
 			Added November 26, 2022 (dub v10.10)
 	+/
-	@property float duration() const pure nothrow @safe @nogc {
+	@property float duration() const pure nothrow @trusted @nogc {
 		return (valid ? (cast(float) dec.samples / sampleRate / channels) : float.nan);
 	}
 
@@ -253,7 +253,7 @@ class MP3Decoder {
 		See_Also:
 			[frameSamplesFloat], [frameSamples], [decodeNextFrame], [channels]
 	+/
-	@property int samplesInFrame () const pure nothrow @safe @nogc {
+	@property int samplesInFrame () const pure nothrow @trusted @nogc {
 		if(valid)
 			return cast(int) (decodedFramesUsed / channels);
 		else
@@ -323,7 +323,7 @@ class MP3Decoder {
 
 
 
-
+@system:
 
 import core.stdc.stdlib;
 import core.stdc.string;

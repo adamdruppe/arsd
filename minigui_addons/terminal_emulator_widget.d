@@ -79,7 +79,10 @@ class TerminalEmulatorWidget : Widget {
 		terminalEmulator.attentionReceived();
 	}
 
-	override MouseCursor cursor() { return GenericCursor.Text; }
+	class Style : Widget.Style {
+		override MouseCursor cursor() { return GenericCursor.Text; }
+	}
+	mixin OverrideStyle!Style;
 
 	override void paint(WidgetPainter painter) {
 		terminalEmulator.redrawPainter(painter, true);
@@ -189,7 +192,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 
 		bool skipNextChar = false;
 
-		widget.addEventListener("mousedown", (Event ev) {
+		widget.addEventListener((MouseDownEvent ev) {
 			int termX = (ev.clientX - paddingLeft) / fontWidth;
 			int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -203,7 +206,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 				redraw();
 		});
 
-		widget.addEventListener("mouseup", (Event ev) {
+		widget.addEventListener((MouseUpEvent ev) {
 			int termX = (ev.clientX - paddingLeft) / fontWidth;
 			int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -217,7 +220,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 				redraw();
 		});
 
-		widget.addEventListener("mousemove", (Event ev) {
+		widget.addEventListener((MouseMoveEvent ev) {
 			int termX = (ev.clientX - paddingLeft) / fontWidth;
 			int termY = (ev.clientY - paddingTop) / fontHeight;
 
@@ -231,7 +234,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 				redraw();
 		});
 
-		widget.addEventListener("keydown", (Event ev) {
+		widget.addEventListener((KeyDownEvent ev) {
 			if(ev.key == Key.ScrollLock) {
 				toggleScrollbackWrap();
 			}
@@ -275,7 +278,7 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 			return; // the character event handler will do others
 		});
 
-		widget.addEventListener("char", (Event ev) {
+		widget.addEventListener((CharEvent ev) {
 			dchar c = ev.character;
 			if(skipNextChar) {
 				skipNextChar = false;

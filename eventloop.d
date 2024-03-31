@@ -458,7 +458,7 @@ version(linux) {
 
 	int epoll = -1;
 
-	private void addFileToLoopImplementation(int fd, int events, bool edgeTriggered = true) {
+	private void addFileToLoopImplementation(int fd, int events, bool edgeTriggered = true) @system {
 		epoll_event ev = void;
 
 		ev.events = 0;
@@ -501,14 +501,14 @@ version(linux) {
 		epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &ev);
 	}
 
-	private void removeFileFromLoopImplementation(int fd) {
+	private void removeFileFromLoopImplementation(int fd) @system {
 		epoll_event ev = void;
 		ev.data.fd = fd;
 		epoll_ctl(epoll, EPOLL_CTL_DEL, fd, &ev);
 	}
 
 
-	private void loopImplementation() {
+	private void loopImplementation() @system {
 		insideLoop = true;
 		scope(exit)
 			insideLoop = false;

@@ -3688,7 +3688,7 @@ public void kill (NSVG* image) {
 
 
 ///
-public NSVG* nsvgParseFromFile (const(char)[] filename, const(char)[] units="px", float dpi=96, int canvaswdt=-1, int canvashgt=-1) nothrow {
+public NSVG* nsvgParseFromFile (const(char)[] filename, const(char)[] units="px", float dpi=96, int canvaswdt=-1, int canvashgt=-1) nothrow @system {
   import core.stdc.stdlib : malloc, free;
   enum AddedBytes = 8;
 

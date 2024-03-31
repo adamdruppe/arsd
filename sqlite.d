@@ -132,7 +132,7 @@ class Sqlite : Database {
 		return s.execute();
 	}
 
-	override string escape(string sql) {
+	override string escape(string sql) @system {
 		if(sql is null)
 			return null;
 		char* got = sqlite3_mprintf("%q", toStringz(sql)); // FIXME: might have to be %Q, need to check this, but I think the other impls do the same as %q
@@ -152,7 +152,7 @@ class Sqlite : Database {
 		return tohexsql(b);
 	}
 
-	string error(){
+	string error() @system {
 		import core.stdc.string : strlen;
 		char* mesg = sqlite3_errmsg(db);
 		char[] m;
@@ -175,7 +175,7 @@ class Sqlite : Database {
 	}
 
 
-	int exec(string sql, void delegate (char[][char[]]) onEach = null) {
+	int exec(string sql, void delegate (char[][char[]]) onEach = null) @system {
 		char* mesg;
 		if(sqlite3_exec(db, toStringz(sql), &callback, &onEach, &mesg) != SQLITE_OK) {
 			import core.stdc.string : strlen;
@@ -296,7 +296,7 @@ struct Statement {
 	version(sqlite_extended_metadata_available)
 		Tuple!(string, string)[string] extendedMetadata;
 
-	ResultSet execute(bool fetchExtendedMetadata = false) {
+	ResultSet execute(bool fetchExtendedMetadata = false) @system {
 		bool first = true;
 		int count;
 		int numRows = 0;
@@ -659,7 +659,7 @@ struct ResultByDataObject {
 
 
 
-extern(C) int callback(void* cb, int howmany, char** text, char** columns){
+extern(C) int callback(void* cb, int howmany, char** text, char** columns) @system {
 	if(cb is null)
 		return 0;
 

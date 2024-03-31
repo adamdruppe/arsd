@@ -829,7 +829,7 @@ extern(C) {
 	alias void* MHASH;
 }
 
-ubyte[] mhashSign(string data, string signWith, hashid algorithm) {
+ubyte[] mhashSign(string data, string signWith, hashid algorithm) @trusted {
         auto td = mhash_hmac_init(algorithm, signWith.ptr, cast(int) signWith.length,
                             mhash_get_hash_pblock(algorithm));
 

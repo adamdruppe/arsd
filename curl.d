@@ -192,7 +192,7 @@ string curlAuth(string url, string data = null, string username = null, string p
 }
 
 class CurlException : Exception {
-	this(CURLcode code, string msg = null, string file = __FILE__, int line = __LINE__) {
+	this(CURLcode code, string msg = null, string file = __FILE__, int line = __LINE__) @system {
 		string message = file ~ ":" ~ to!string(line) ~ " (" ~ to!string(code) ~ ") ";
 
 		auto strerror = curl_easy_strerror(code);

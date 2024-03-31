@@ -651,7 +651,7 @@ class IncomingEmailMessage {
 	}
 
 	///
-	this(ref immutable(ubyte)[][] mboxLines, bool asmbox=true) {
+	this(ref immutable(ubyte)[][] mboxLines, bool asmbox=true) @trusted {
 
 		enum ParseState {
 			lookingForFrom,

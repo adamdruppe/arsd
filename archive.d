@@ -254,7 +254,7 @@ ulong readVla(ref const(ubyte)[] data) {
 		Added March 24, 2023 (dub v11.0)
 +/
 version(WithLzmaDecoder)
-void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) {
+void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) @trusted {
 	if(chunkBuffer is null)
 		chunkBuffer = new ubyte[](1024 * 32);
 	if(inputBuffer is null)
@@ -296,7 +296,7 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 }
 
 /// ditto
-void decompressGzip(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) {
+void decompressGzip(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) @trusted {
 
 	import etc.c.zlib;
 
@@ -1221,7 +1221,7 @@ private:
       }
     }
 
-    void unpackNextChunk () {
+    void unpackNextChunk () @system {
       if (nfop == 0) assert(0, "wtf?!");
       //scope(failure) if (chunkData !is null) { xfree(chunkData); chunkData = null; }
       debug(arcz_unp) { import core.stdc.stdio : printf; printf("unpacking chunk %u\n", nextchunk); }
@@ -1312,7 +1312,7 @@ private:
       curcpos += skip;
     }
 
-    int read (void* buf, uint count) {
+    int read (void* buf, uint count) @system {
       if (buf is null) return -1;
       if (count == 0 || totalsize == 0) return 0;
       if (totalsize >= 0 && pos >= totalsize) return 0; // EOF

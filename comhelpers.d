@@ -24,6 +24,8 @@ module arsd.comhelpers;
 	and then fully dynamic can be done with opDispatch for teh lulz.
 +/
 
+version(Windows):
+
 import core.sys.windows.windows;
 import core.sys.windows.com;
 import core.sys.windows.oaidl;

@@ -38,7 +38,7 @@ public MemoryImage loadTgaMem (const(void)[] buf, const(char)[] filename=null) {
       }
     }
 
-    ptrdiff_t read (void* buf, size_t count) {
+    ptrdiff_t read (void* buf, size_t count) @system {
       if (pos >= data.length) return 0;
       if (count > 0) {
         import core.stdc.string : memcpy;

@@ -43,6 +43,8 @@
  */
 module arsd.jpeg;
 
+@system:
+
 // Set to 1 to enable freq. domain chroma upsampling on images using H2V2 subsampling (0=faster nearest neighbor sampling).
 // This is slower, but results in higher quality on images with highly saturated colors.
 version = JPGD_SUPPORT_FREQ_DOMAIN_UPSAMPLING;
@@ -556,7 +558,7 @@ public:
     return JPGD_FAILED;
   }
 
-  @property const pure nothrow @safe @nogc {
+  @property const pure nothrow @trusted @nogc {
     jpgd_status error_code () { pragma(inline, true); return m_error_code; }
 
     int width () { pragma(inline, true); return m_image_x_size; }
@@ -3605,7 +3607,7 @@ public struct JpegParams {
   bool twoPass = true;
 
   ///
-  bool check () const pure nothrow @safe @nogc {
+  bool check () const pure nothrow @trusted @nogc {
     if (quality < 1 || quality > 100) return false;
     if (cast(uint)subsampling > cast(uint)JpegSubsampling.H2V2) return false;
     return true;
@@ -4547,7 +4549,7 @@ public:
 
   bool setup() (WriteFunc pStream, int width, int height, int src_channels) { return setup(pStream, width, height, src_channels, JpegParams()); }
 
-  @property ref inout(JpegParams) params () return inout pure nothrow @safe @nogc { pragma(inline, true); return m_params; }
+  @property ref inout(JpegParams) params () return inout pure nothrow @trusted @nogc { pragma(inline, true); return m_params; }
 
   // Deinitializes the compressor, freeing any allocated memory. May be called at any time.
   void deinit () {
@@ -4555,8 +4557,8 @@ public:
     clear();
   }
 
-  @property uint total_passes () const pure nothrow @safe @nogc { pragma(inline, true); return (m_params.twoPass ? 2 : 1); }
-  @property uint cur_pass () const pure nothrow @safe @nogc { pragma(inline, true); return m_pass_num; }
+  @property uint total_passes () const pure nothrow @trusted @nogc { pragma(inline, true); return (m_params.twoPass ? 2 : 1); }
+  @property uint cur_pass () const pure nothrow @trusted @nogc { pragma(inline, true); return m_pass_num; }
 
   // Call this method with each source scanline.
   // width*src_channels bytes per scanline is expected (RGB or Y format).

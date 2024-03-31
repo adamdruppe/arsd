@@ -12333,7 +12333,7 @@ version(bindbc){
       assert(0, "OpenGL initialization failed: a context needs to be created prior to initialization");
   }
 } else { // OpenGL API missing from simpledisplay
-    private void nanovgInitOpenGL () @nogc nothrow {
+    private void nanovgInitOpenGL () @nogc nothrow @system {
       __gshared bool initialized = false;
       if (initialized) return;
 
