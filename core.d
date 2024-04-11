@@ -129,6 +129,11 @@ version(Windows) {
 	version=Arsd_core_kqueue;
 
 	import core.sys.freebsd.sys.event;
+
+	extern(D) void EV_SET(kevent_t* kevp, typeof(kevent_t.tupleof) args = kevent_t.tupleof.init)
+	{
+	    *kevp = kevent_t(args);
+	}
 } else version(DragonFlyBSD) {
 	// NOT ACTUALLY TESTED
 	version=Arsd_core_kqueue;
