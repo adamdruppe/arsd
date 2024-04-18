@@ -8,6 +8,7 @@ pragma(lib, "curl");
 
 import std.base64;
 import std.string;
+import std.range;
 
 import arsd.characterencodings;
 
@@ -211,7 +212,7 @@ class EmailMessage {
 						auto mimeAttachment = new MimeContainer(attachment.type ~ "; name=\""~attachment.filename~"\"");
 						mimeAttachment.headers ~= "Content-Transfer-Encoding: base64";
 						mimeAttachment.headers ~= "Content-ID: <" ~ attachment.id ~ ">";
-						mimeAttachment.content = Base64.encode(cast(const(ubyte)[]) attachment.content);
+						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content);
 
 						mimeRelated.stuff ~= mimeAttachment;
 					}
@@ -233,7 +234,7 @@ class EmailMessage {
 						if(attachment.id.length)
 							mimeAttachment.headers ~= "Content-ID: <" ~ attachment.id ~ ">";
 
-						mimeAttachment.content = Base64.encode(cast(const(ubyte)[]) attachment.content);
+						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content);
 
 						mimeMixed.stuff ~= mimeAttachment;
 					}
@@ -1150,6 +1151,19 @@ immutable(ubyte)[] decodeQuotedPrintable(string text) {
 	}
 
 	return ret;
+}
+
+
+/// Base64 range encoder UFCS helper.
+alias base64encode = Base64.encoder;
+
+/// Base64 encoded data with line length of 76 as mandated by RFC 2045 Section 6.8
+string encodeBase64Mime(const(ubyte[]) content, string LINESEP = "\r\n") {
+	enum LINE_LENGTH = 76;
+	/// Only 6 bit of every byte are used; log2(64) = 6
+	enum int SOURCE_CHUNK_LENGTH = LINE_LENGTH * 6/8;
+
+	return cast(immutable(char[]))content.chunks(SOURCE_CHUNK_LENGTH).base64encode.join(LINESEP);
 }
 
 /+
