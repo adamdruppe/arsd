@@ -189,13 +189,14 @@ class EmailMessage {
 
 			{
 				MimeContainer mimeMessage;
+				enum NO_TRANSFER_ENCODING = "Content-Transfer-Encoding: 8bit";
 				if(isHtml) {
 					auto alternative = new MimeContainer("multipart/alternative");
-					alternative.stuff ~= new MimeContainer("text/plain; charset=UTF-8", textBody);
-					alternative.stuff ~= new MimeContainer("text/html; charset=UTF-8", htmlBody);
+					alternative.stuff ~= new MimeContainer("text/plain; charset=UTF-8", textBody).with_header(NO_TRANSFER_ENCODING);
+					alternative.stuff ~= new MimeContainer("text/html; charset=UTF-8", htmlBody).with_header(NO_TRANSFER_ENCODING);
 					mimeMessage = alternative;
 				} else {
-					mimeMessage = new MimeContainer("text/plain; charset=UTF-8", textBody);
+					mimeMessage = new MimeContainer("text/plain; charset=UTF-8", textBody).with_header(NO_TRANSFER_ENCODING);
 				}
 				top = mimeMessage;
 			}
@@ -1153,6 +1154,11 @@ immutable(ubyte)[] decodeQuotedPrintable(string text) {
 	return ret;
 }
 
+/// Add header UFCS helper
+auto with_header(MimeContainer container, string header){
+	container.headers ~= header;
+	return container;
+}
 
 /// Base64 range encoder UFCS helper.
 alias base64encode = Base64.encoder;
