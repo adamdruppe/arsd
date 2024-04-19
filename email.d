@@ -9,6 +9,7 @@ pragma(lib, "curl");
 import std.base64;
 import std.string;
 import std.range;
+import std.utf;
 
 import arsd.characterencodings;
 
@@ -1179,6 +1180,37 @@ string encodeBase64Mime(const(ubyte[]) content, string LINESEP = "\r\n") {
 	enum int SOURCE_CHUNK_LENGTH = LINE_LENGTH * 6/8;
 
 	return cast(immutable(char[]))content.chunks(SOURCE_CHUNK_LENGTH).base64encode.join(LINESEP);
+}
+
+unittest {
+	import std.algorithm;
+	import std.string;
+	// Mime message roundtrip
+	auto mail = new EmailMessage();
+	mail.to = ["recipient@example.org"];
+	mail.from = "sender@example.org";
+	mail.subject = "Subject";
+
+	auto text = cast(string) chain(
+			repeat('n', 1200),
+			"\r\n",
+			"äöü\r\n",
+			"ඞ\r\nlast",
+			).byChar.array;
+	mail.setTextBody(text);
+	mail.addAttachment("text/plain", "attachment.txt", text.representation);
+	// In case binary and plaintext get handled differently one day
+	mail.addAttachment("application/octet-stream", "attachment.bin", text.representation); 
+
+	auto result = new IncomingEmailMessage(mail.toString().split("\r\n"));
+
+	assert(result.subject.equal(mail.subject));
+	assert(mail.to.canFind(result.to));
+	assert(result.from.equal(mail.from));
+
+	// This roundtrip works modulo trailing newline on the parsed message and LF vs CRLF
+	assert(result.textMessageBody.replace("\n", "\r\n").stripRight().equal(mail.textBody));
+	assert(result.attachments.equal(mail.attachments));
 }
 
 /+
