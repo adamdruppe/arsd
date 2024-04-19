@@ -78,6 +78,15 @@ class EmailMessage {
 
 	string[] headers;
 
+	/** If you use the send method with an SMTP server, you don't want to change this.
+	 * 
+	 * While RFC 2045 mandates CRLF as a lineseperator, there are some edge-cases where this won't work.
+	 * When passing the E-Mail string to a unix program which handles communication with the SMTP server, some (i.e. qmail) 
+	 * expect the system lineseperator (LF) instead.
+	 * Notably, the google mail REST API will choke on CRLF lineseps and produce strange emails (as of 2024).
+	 */
+	string linesep = "\r\n";
+
 	private bool isMime = false;
 	private bool isHtml = false;
 
@@ -216,7 +225,7 @@ class EmailMessage {
 						auto mimeAttachment = new MimeContainer(attachment.type ~ "; name=\""~attachment.filename~"\"");
 						mimeAttachment.headers ~= "Content-Transfer-Encoding: base64";
 						mimeAttachment.headers ~= "Content-ID: <" ~ attachment.id ~ ">";
-						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content);
+						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content, this.linesep);
 
 						mimeRelated.stuff ~= mimeAttachment;
 					}
@@ -238,7 +247,7 @@ class EmailMessage {
 						if(attachment.id.length)
 							mimeAttachment.headers ~= "Content-ID: <" ~ attachment.id ~ ">";
 
-						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content);
+						mimeAttachment.content = encodeBase64Mime(cast(const(ubyte)[]) attachment.content, this.linesep);
 
 						mimeMixed.stuff ~= mimeAttachment;
 					}
@@ -246,7 +255,7 @@ class EmailMessage {
 			}
 
 			headers ~= top.contentType;
-			msgContent = top.toMimeString(true);
+			msgContent = top.toMimeString(true, this.linesep);
 		} else {
 			headers ~= "Content-Type: text/plain; charset=UTF-8";
 			msgContent = textBody;
@@ -257,9 +266,9 @@ class EmailMessage {
 		msg.reserve(htmlBody.length + textBody.length + 1024);
 
 		foreach(header; headers)
-			msg ~= header ~ "\r\n";
+			msg ~= header ~ this.linesep;
 		if(msg.length) // has headers
-			msg ~= "\r\n";
+			msg ~= this.linesep;
 
 		msg ~= msgContent;
 
@@ -619,28 +628,28 @@ class MimeContainer {
 	}
 
 
-	string toMimeString(bool isRoot = false) {
+	string toMimeString(bool isRoot = false, string linesep="\r\n") {
 		string ret;
 
 		if(!isRoot) {
 			ret ~= contentType;
 			foreach(header; headers) {
-				ret ~= "\r\n";
+				ret ~= linesep;
 				ret ~= header;
 			}
-			ret ~= "\r\n\r\n";
+			ret ~= linesep ~ linesep;
 		}
 
 		ret ~= content;
 
 		foreach(idx, thing; stuff) {
 			assert(boundary.length);
-			ret ~= "\r\n--" ~ boundary ~ "\r\n";
-			ret ~= thing.toMimeString(false);
+			ret ~= linesep ~ "--" ~ boundary ~ linesep;
+			ret ~= thing.toMimeString(false, linesep);
 		}
 
 		if(boundary.length)
-			ret ~= "\r\n--" ~ boundary ~ "--";
+			ret ~= linesep ~ "--" ~ boundary ~ "--";
 
 		return ret;
 	}
@@ -1167,6 +1176,7 @@ string encodeBase64Mime(const(ubyte[]) content, string LINESEP = "\r\n") {
 	return cast(immutable(char[]))content.chunks(SOURCE_CHUNK_LENGTH).base64encode.join(LINESEP);
 }
 
+
 /// Base64 range decoder UFCS helper.
 alias base64decode = Base64.decoder;
 
@@ -1189,6 +1199,37 @@ unittest {
 		"ඞ\rn",
 		).byChar.array;
 	assert( source.representation.encodeBase64Mime.decodeBase64Mime.equal(source));
+}
+
+unittest {
+	import std.algorithm;
+	import std.string;
+	// Mime message roundtrip
+	auto mail = new EmailMessage();
+	mail.to = ["recipient@example.org"];
+	mail.from = "sender@example.org";
+	mail.subject = "Subject";
+
+	auto text = cast(string) chain(
+			repeat('n', 1200),
+			"\r\n",
+			"äöü\r\n",
+			"ඞ\r\nlast",
+			).byChar.array;
+	mail.setTextBody(text);
+	mail.addAttachment("text/plain", "attachment.txt", text.representation);
+	// In case binary and plaintext get handled differently one day
+	mail.addAttachment("application/octet-stream", "attachment.bin", text.representation); 
+
+	auto result = new IncomingEmailMessage(mail.toString().split("\r\n"));
+
+	assert(result.subject.equal(mail.subject));
+	assert(mail.to.canFind(result.to));
+	assert(result.from.equal(mail.from));
+
+	// This roundtrip works modulo trailing newline on the parsed message and LF vs CRLF
+	assert(result.textMessageBody.replace("\n", "\r\n").stripRight().equal(mail.textBody));
+	assert(result.attachments.equal(mail.attachments));
 }
 
 /+
