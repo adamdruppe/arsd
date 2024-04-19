@@ -10,6 +10,8 @@ import std.base64;
 import std.string;
 import std.range;
 import std.utf;
+import std.array;
+import std.algorithm.iteration;
 
 import arsd.characterencodings;
 
@@ -876,18 +878,10 @@ class IncomingEmailMessage {
 				break;
 				case "base64":
 					if(textMessageBody.length) {
-						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
-						char[] mmb;
-						mmb.reserve(textMessageBody.length);
-						foreach (char ch; textMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
-						textMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+						textMessageBody = textMessageBody.decodeBase64Mime.convertToUtf8Lossy(charset);
 					}
 					if(htmlMessageBody.length) {
-						// alas, phobos' base64 decoder cannot accept ranges, so we have to allocate here
-						char[] mmb;
-						mmb.reserve(htmlMessageBody.length);
-						foreach (char ch; htmlMessageBody) if (ch > ' ' && ch < 127) mmb ~= ch;
-						htmlMessageBody = convertToUtf8Lossy(Base64.decode(mmb), charset);
+						htmlMessageBody = htmlMessageBody.decodeBase64Mime.convertToUtf8Lossy(charset);
 					}
 
 				break;
@@ -1180,6 +1174,31 @@ string encodeBase64Mime(const(ubyte[]) content, string LINESEP = "\r\n") {
 	enum int SOURCE_CHUNK_LENGTH = LINE_LENGTH * 6/8;
 
 	return cast(immutable(char[]))content.chunks(SOURCE_CHUNK_LENGTH).base64encode.join(LINESEP);
+}
+
+
+/// Base64 range decoder UFCS helper.
+alias base64decode = Base64.decoder;
+
+/// Base64 decoder, ignoring linebreaks which are mandated by RFC2045
+immutable(ubyte[]) decodeBase64Mime(string encodedPart) {
+	return cast(immutable(ubyte[])) encodedPart
+		.byChar // prevent Autodecoding, which will break Base64 decoder. Since its base64, it's guarenteed to be 7bit ascii
+		.filter!((c) => (c != '\r') & (c != '\n'))
+		.base64decode
+		.array;
+}
+
+unittest {
+	// Mime base64 roundtrip
+	import std.algorithm.comparison;
+	string source = chain(
+		repeat('n', 1200), //long line
+		"\r\n",
+		"äöü\r\n",
+		"ඞ\rn",
+		).byChar.array;
+	assert( source.representation.encodeBase64Mime.decodeBase64Mime.equal(source));
 }
 
 unittest {
