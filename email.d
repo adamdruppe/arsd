@@ -1174,9 +1174,7 @@ alias base64decode = Base64.decoder;
 immutable(ubyte[]) decodeBase64Mime(string encodedPart) {
 	return cast(immutable(ubyte[])) encodedPart
 		.byChar // prevent Autodecoding, which will break Base64 decoder. Since its base64, it's guarenteed to be 7bit ascii
-		.filter!((c) => c != '\r')
-		.splitter!((c) => c == '\n')
-		.joiner
+		.filter!((c) => (c != '\r') & (c != '\n'))
 		.base64decode
 		.array;
 }
