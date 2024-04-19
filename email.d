@@ -1179,6 +1179,18 @@ immutable(ubyte[]) decodeBase64Mime(string encodedPart) {
 		.array;
 }
 
+unittest {
+	// Mime base64 roundtrip
+	import std.algorithm.comparison;
+	string source = chain(
+		repeat('n', 1200), //long line
+		"\r\n",
+		"äöü\r\n",
+		"ඞ\rn",
+		).byChar.array;
+	assert( source.representation.encodeBase64Mime.decodeBase64Mime.equal(source));
+}
+
 /+
 void main() {
 	import std.file;
