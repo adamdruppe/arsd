@@ -130,6 +130,8 @@ version(Windows) {
 
 	import core.sys.freebsd.sys.event;
 
+	// the version in druntime doesn't have the default arg making it a pain to use when the freebsd
+	// version adds a new field
 	extern(D) void EV_SET(kevent_t* kevp, typeof(kevent_t.tupleof) args = kevent_t.tupleof.init)
 	{
 	    *kevp = kevent_t(args);

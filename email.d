@@ -78,13 +78,13 @@ class EmailMessage {
 
 	string[] headers;
 
-	/** If you use the send method with an SMTP server, you don't want to change this.
-	 * 
-	 * While RFC 2045 mandates CRLF as a lineseperator, there are some edge-cases where this won't work.
-	 * When passing the E-Mail string to a unix program which handles communication with the SMTP server, some (i.e. qmail) 
-	 * expect the system lineseperator (LF) instead.
-	 * Notably, the google mail REST API will choke on CRLF lineseps and produce strange emails (as of 2024).
-	 */
+	/++
+		If you use the send method with an SMTP server, you don't want to change this.
+		While RFC 2045 mandates CRLF as a lineseperator, there are some edge-cases where this won't work.
+		When passing the E-Mail string to a unix program which handles communication with the SMTP server, some (i.e. qmail)
+		expect the system lineseperator (LF) instead.
+		Notably, the google mail REST API will choke on CRLF lineseps and produce strange emails (as of 2024).
+	+/
 	string linesep = "\r\n";
 
 	private bool isMime = false;
@@ -1219,7 +1219,7 @@ unittest {
 	mail.setTextBody(text);
 	mail.addAttachment("text/plain", "attachment.txt", text.representation);
 	// In case binary and plaintext get handled differently one day
-	mail.addAttachment("application/octet-stream", "attachment.bin", text.representation); 
+	mail.addAttachment("application/octet-stream", "attachment.bin", text.representation);
 
 	auto result = new IncomingEmailMessage(mail.toString().split("\r\n"));
 

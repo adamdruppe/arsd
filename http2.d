@@ -4954,7 +4954,7 @@ class WebSocket {
 			return true;
 		if(r <= 0) {
 			//import std.stdio; writeln(WSAGetLastError());
-			throw new Exception("Socket receive failed");
+			throw new Exception("Socket receive failed " ~ lastSocketError());
 		}
 		receiveBufferUsedLength += r;
 		return true;

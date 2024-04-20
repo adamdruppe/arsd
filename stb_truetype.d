@@ -13,6 +13,8 @@
 // here's some D convenience functions
 module stb_truetype;
 
+@system:
+
 struct TtfFont {
 	stbtt_fontinfo font;
 	this(in ubyte[] data) {
