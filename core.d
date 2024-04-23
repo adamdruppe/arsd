@@ -181,6 +181,17 @@ version(Posix) {
 	=========================
 +/
 
+/++
+	Casts value `v` to type `T`.
+
+	$(TIP
+		This is a helper function for readability purposes.
+	)
+ +/
+auto ref T typeCast(T, S)(auto ref S v) {
+	return cast(T) v;
+}
+
 // enum stringz : const(char)* { init = null }
 
 /++
