@@ -169,7 +169,6 @@ public import arsd.pixmappaint;
 	- More comprehensive documentation
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
-		- a legacy OpenGL renderer (maybe)
 	- Is there something in arsd that serves a similar purpose to `Pixmap`?
 		- Can we convert to/from it?
 	- Minimum window size
