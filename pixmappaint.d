@@ -219,191 +219,188 @@ private struct OriginRectangle {
 	}
 }
 
-private {
-
 @safe pure nothrow @nogc:
+
+// misc
+private {
 	Point pos(Rectangle r) => r.upperLeft;
 }
 
-// Alpha-blending functions
-@safe pure nothrow @nogc {
+// ==== Alpha-blending functions ====
 
-	///
-	public void alphaBlend(scope Pixel[] target, scope const Pixel[] source) @trusted
-	in (source.length == target.length) {
-		foreach (immutable idx, ref pxtarget; target) {
-			alphaBlend(pxtarget, source.ptr[idx]);
-		}
-	}
-
-	///
-	public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @trusted {
-		pragma(inline, true);
-
-		immutable alphaSource = (pxSource.a | (pxSource.a << 8));
-		immutable alphaTarget = (0xFFFF - alphaSource);
-
-		foreach (immutable ib, ref px; pxTarget.components) {
-			immutable d = cast(ubyte)(((px * alphaTarget) + 0x8080) >> 16);
-			immutable s = cast(ubyte)(((pxSource.components.ptr[ib] * alphaSource) + 0x8080) >> 16);
-			px = cast(ubyte)(d + s);
-		}
+///
+public void alphaBlend(scope Pixel[] target, scope const Pixel[] source) @trusted
+in (source.length == target.length) {
+	foreach (immutable idx, ref pxtarget; target) {
+		alphaBlend(pxtarget, source.ptr[idx]);
 	}
 }
 
-// Drawing functions
-@safe pure nothrow @nogc {
+///
+public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @trusted {
+	pragma(inline, true);
 
-	/++
-		Draws a single pixel
-	 +/
-	void drawPixel(Pixmap target, Point pos, Pixel color) {
-		immutable size_t offset = linearOffset(target.width, pos);
+	immutable alphaSource = (pxSource.a | (pxSource.a << 8));
+	immutable alphaTarget = (0xFFFF - alphaSource);
+
+	foreach (immutable ib, ref px; pxTarget.components) {
+		immutable d = cast(ubyte)(((px * alphaTarget) + 0x8080) >> 16);
+		immutable s = cast(ubyte)(((pxSource.components.ptr[ib] * alphaSource) + 0x8080) >> 16);
+		px = cast(ubyte)(d + s);
+	}
+}
+
+// ==== Drawing functions ====
+
+/++
+	Draws a single pixel
+ +/
+void drawPixel(Pixmap target, Point pos, Pixel color) {
+	immutable size_t offset = linearOffset(target.width, pos);
+	target.data[offset] = color;
+}
+
+/++
+	Draws a rectangle
+ +/
+void drawRectangle(Pixmap target, Rectangle rectangle, Pixel color) {
+	alias r = rectangle;
+
+	immutable tRect = OriginRectangle(
+		Size(target.width, target.height),
+	);
+
+	// out of bounds?
+	if (!tRect.intersect(r)) {
+		return;
+	}
+
+	immutable drawingTarget = Point(
+		(r.pos.x >= 0) ? r.pos.x : 0,
+		(r.pos.y >= 0) ? r.pos.y : 0,
+	);
+
+	immutable drawingEnd = Point(
+		(r.right < tRect.right) ? r.right : tRect.right,
+		(r.bottom < tRect.bottom) ? r.bottom : tRect.bottom,
+	);
+
+	immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
+
+	foreach (y; drawingTarget.y .. drawingEnd.y) {
+		target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] = color;
+	}
+}
+
+/++
+	Draws a line
+ +/
+void drawLine(Pixmap target, Point a, Point b, Pixel color) {
+	import std.math : round, sqrt;
+
+	// TODO: line width
+	// TODO: anti-aliasing (looks awful without it!)
+
+	float deltaX = b.x - a.x;
+	float deltaY = b.y - a.y;
+	int steps = sqrt(deltaX * deltaX + deltaY * deltaY).typeCast!int;
+
+	float[2] step = [
+		(deltaX / steps),
+		(deltaY / steps),
+	];
+
+	foreach (i; 0 .. steps) {
+		// dfmt off
+		immutable Point p = a + Point(
+			round(step[0] * i).typeCast!int,
+			round(step[1] * i).typeCast!int,
+		);
+		// dfmt on
+
+		immutable offset = linearOffset(p, target.width);
 		target.data[offset] = color;
 	}
 
-	/++
-		Draws a rectangle
-	 +/
-	void drawRectangle(Pixmap target, Rectangle rectangle, Pixel color) {
-		alias r = rectangle;
+	immutable offsetEnd = linearOffset(b, target.width);
+	target.data[offsetEnd] = color;
+}
 
-		immutable tRect = OriginRectangle(
-			Size(target.width, target.height),
-		);
+/++
+	Draws an image (a source pixmap) on a target pixmap
 
-		// out of bounds?
-		if (!tRect.intersect(r)) {
-			return;
-		}
+	Params:
+		target = target pixmap to draw on
+		image = source pixmap
+		pos = top-left destination position (on the target pixmap)
+ +/
+void drawPixmap(Pixmap target, Pixmap image, Point pos) {
+	alias source = image;
 
-		immutable drawingTarget = Point(
-			(r.pos.x >= 0) ? r.pos.x : 0,
-			(r.pos.y >= 0) ? r.pos.y : 0,
-		);
+	immutable tRect = OriginRectangle(
+		Size(target.width, target.height),
+	);
 
-		immutable drawingEnd = Point(
-			(r.right < tRect.right) ? r.right : tRect.right,
-			(r.bottom < tRect.bottom) ? r.bottom : tRect.bottom,
-		);
+	immutable sRect = Rectangle(pos, source.size);
 
-		immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
-
-		foreach (y; drawingTarget.y .. drawingEnd.y) {
-			target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] = color;
-		}
+	// out of bounds?
+	if (!tRect.intersect(sRect)) {
+		return;
 	}
 
-	/++
-		Draws a line
-	 +/
-	void drawLine(Pixmap target, Point a, Point b, Pixel color) {
-		import std.math : round, sqrt;
+	immutable drawingTarget = Point(
+		(pos.x >= 0) ? pos.x : 0,
+		(pos.y >= 0) ? pos.y : 0,
+	);
 
-		// TODO: line width
-		// TODO: anti-aliasing (looks awful without it!)
+	immutable drawingEnd = Point(
+		(sRect.right < tRect.right) ? sRect.right : tRect.right,
+		(sRect.bottom < tRect.bottom) ? sRect.bottom : tRect.bottom,
+	);
 
-		float deltaX = b.x - a.x;
-		float deltaY = b.y - a.y;
-		int steps = sqrt(deltaX * deltaX + deltaY * deltaY).typeCast!int;
+	immutable drawingSource = Point(drawingTarget.x, 0) - Point(sRect.pos.x, sRect.pos.y);
+	immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
 
-		float[2] step = [
-			(deltaX / steps),
-			(deltaY / steps),
-		];
+	foreach (y; drawingTarget.y .. drawingEnd.y) {
+		target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] =
+			source.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
+	}
+}
 
-		foreach (i; 0 .. steps) {
-			// dfmt off
-			immutable Point p = a + Point(
-				round(step[0] * i).typeCast!int,
-				round(step[1] * i).typeCast!int,
-			);
-			// dfmt on
+/++
+    Draws a sprite from a spritesheet
+ +/
+void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point pos) {
+	immutable tRect = OriginRectangle(
+		Size(target.width, target.height),
+	);
 
-			immutable offset = linearOffset(p, target.width);
-			target.data[offset] = color;
-		}
+	immutable spriteOffset = sheet.getSpritePixelOffset2D(spriteIndex);
+	immutable sRect = Rectangle(pos, sheet.spriteSize);
 
-		immutable offsetEnd = linearOffset(b, target.width);
-		target.data[offsetEnd] = color;
+	// out of bounds?
+	if (!tRect.intersect(sRect)) {
+		return;
 	}
 
-	/++
-	    Draws an image (a source pixmap) on a target pixmap
+	immutable drawingTarget = Point(
+		(pos.x >= 0) ? pos.x : 0,
+		(pos.y >= 0) ? pos.y : 0,
+	);
 
-		Params:
-			target = target pixmap to draw on
-			image = source pixmap
-			pos = top-left destination position (on the target pixmap)
-	 +/
-	void drawPixmap(Pixmap target, Pixmap image, Point pos) {
-		alias source = image;
+	immutable drawingEnd = Point(
+		(sRect.right < tRect.right) ? sRect.right : tRect.right,
+		(sRect.bottom < tRect.bottom) ? sRect.bottom : tRect.bottom,
+	);
 
-		immutable tRect = OriginRectangle(
-			Size(target.width, target.height),
-		);
+	immutable drawingSource =
+		spriteOffset
+		+ Point(drawingTarget.x, 0)
+		- Point(sRect.pos.x, sRect.pos.y);
+	immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
 
-		immutable sRect = Rectangle(pos, source.size);
-
-		// out of bounds?
-		if (!tRect.intersect(sRect)) {
-			return;
-		}
-
-		immutable drawingTarget = Point(
-			(pos.x >= 0) ? pos.x : 0,
-			(pos.y >= 0) ? pos.y : 0,
-		);
-
-		immutable drawingEnd = Point(
-			(sRect.right < tRect.right) ? sRect.right : tRect.right,
-			(sRect.bottom < tRect.bottom) ? sRect.bottom : tRect.bottom,
-		);
-
-		immutable drawingSource = Point(drawingTarget.x, 0) - Point(sRect.pos.x, sRect.pos.y);
-		immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
-
-		foreach (y; drawingTarget.y .. drawingEnd.y) {
-			target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] =
-				source.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
-		}
-	}
-
-	/++
-	    Draws a sprite from a spritesheet
-	 +/
-	void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point pos) {
-		immutable tRect = OriginRectangle(
-			Size(target.width, target.height),
-		);
-
-		immutable spriteOffset = sheet.getSpritePixelOffset2D(spriteIndex);
-		immutable sRect = Rectangle(pos, sheet.spriteSize);
-
-		// out of bounds?
-		if (!tRect.intersect(sRect)) {
-			return;
-		}
-
-		immutable drawingTarget = Point(
-			(pos.x >= 0) ? pos.x : 0,
-			(pos.y >= 0) ? pos.y : 0,
-		);
-
-		immutable drawingEnd = Point(
-			(sRect.right < tRect.right) ? sRect.right : tRect.right,
-			(sRect.bottom < tRect.bottom) ? sRect.bottom : tRect.bottom,
-		);
-
-		immutable drawingSource =
-			spriteOffset
-			+ Point(drawingTarget.x, 0)
-			- Point(sRect.pos.x, sRect.pos.y);
-		immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
-
-		foreach (y; drawingTarget.y .. drawingEnd.y) {
-			target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[]
-				= sheet.pixmap.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
-		}
+	foreach (y; drawingTarget.y .. drawingEnd.y) {
+		target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[]
+			= sheet.pixmap.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
 	}
 }
