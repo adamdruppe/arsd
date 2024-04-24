@@ -87,7 +87,6 @@
 
 	---
 	import arsd.pixmappresenter;
-	import arsd.simpledisplay : MouseEvent;
 
 	int main() {
 		// Internal resolution of the images (“frames”) we will render.

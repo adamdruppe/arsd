@@ -8,17 +8,22 @@ module arsd.pixmappaint;
 import arsd.color;
 import arsd.core;
 
-///
-alias Pixel = Color;
+alias Color = arsd.color.Color;
 
 ///
 alias ColorF = arsd.color.ColorF;
 
 ///
-alias Size = arsd.color.Size;
+alias Pixel = Color;
 
 ///
 alias Point = arsd.color.Point;
+
+///
+alias Rectangle = arsd.color.Rectangle;
+
+///
+alias Size = arsd.color.Size;
 
 // verify assumption(s)
 static assert(Pixel.sizeof == uint.sizeof);
