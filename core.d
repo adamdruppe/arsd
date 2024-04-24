@@ -186,7 +186,28 @@ version(Posix) {
 
 	$(TIP
 		This is a helper function for readability purposes.
+		The idea is to make type-casting as accessible as `to()` from `std.conv`.
 	)
+
+	---
+	int i =    cast(int)(foo * bar);
+	int i = typeCast!int(foo * bar);
+
+	int j = cast(int) round(floatValue);
+	int j = round(floatValue).typeCast!int;
+
+	int k = cast(int) floatValue + foobar;
+	int k = floatValue.typeCast!int + foobar;
+
+	auto m = Point(
+		cast(int) calc(a.x, b.x),
+		cast(int) calc(a.y, b.y),
+	);
+	auto m = Point(
+		calc(a.x, b.x).typeCast!int,
+		calc(a.y, b.y).typeCast!int,
+	);
+	---
  +/
 auto ref T typeCast(T, S)(auto ref S v) {
 	return cast(T) v;
