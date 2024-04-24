@@ -143,6 +143,88 @@ struct Pixmap {
 	}
 }
 
+///
+struct SpriteSheet {
+	private {
+		Pixmap _pixmap;
+		Size _spriteDimensions;
+		Size _layout; // pre-computed upon construction
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(Pixmap pixmap, Size spriteSize) {
+		_pixmap = pixmap;
+		_spriteDimensions = spriteSize;
+
+		_layout = Size(
+			_pixmap.width / _spriteDimensions.width,
+			_pixmap.height / _spriteDimensions.height,
+		);
+	}
+
+	///
+	inout(Pixmap) pixmap() inout {
+		return _pixmap;
+	}
+
+	///
+	Size spriteSize() inout {
+		return _spriteDimensions;
+	}
+
+	///
+	Size layout() inout {
+		return _layout;
+	}
+
+	///
+	Point getSpriteColumn(int index) inout {
+		immutable x = index % layout.width;
+		immutable y = (index - x) / layout.height;
+		return Point(x, y);
+	}
+
+	///
+	Point getSpritePixelOffset2D(int index) inout {
+		immutable col = this.getSpriteColumn(index);
+		return Point(
+			col.x * _spriteDimensions.width,
+			col.y * _spriteDimensions.height,
+		);
+	}
+}
+
+// Silly micro-optimization
+private struct OriginRectangle {
+	Size size;
+
+@safe pure nothrow @nogc:
+
+	int left() const => 0;
+	int top() const => 0;
+	int right() const => size.width;
+	int bottom() const => size.height;
+
+	bool intersect(const Rectangle b) const {
+		// dfmt off
+		return (
+			(b.right    > 0          ) &&
+			(b.left     < this.right ) &&
+			(b.bottom   > 0          ) &&
+			(b.top      < this.bottom)
+		);
+		// dfmt on
+	}
+}
+
+private {
+
+@safe pure nothrow @nogc:
+	Point pos(Rectangle r) => r.upperLeft;
+}
+
 // Alpha-blending functions
 @safe pure nothrow @nogc {
 
@@ -171,32 +253,6 @@ struct Pixmap {
 
 // Drawing functions
 @safe pure nothrow @nogc {
-
-	private {
-		struct OriginRectangle {
-			Size size;
-
-		@safe pure nothrow @nogc:
-
-			int left() const => 0;
-			int top() const => 0;
-			int right() const => size.width;
-			int bottom() const => size.height;
-
-			bool intersect(const Rectangle b) const {
-				// dfmt off
-				return (
-					(b.right    > 0          ) &&
-					(b.left     < this.right ) &&
-					(b.bottom   > 0          ) &&
-					(b.top      < this.bottom)
-				);
-				// dfmt on
-			}
-		}
-
-		Point pos(Rectangle r) => r.upperLeft;
-	}
 
 	/++
 		Draws a single pixel
@@ -310,6 +366,44 @@ struct Pixmap {
 		foreach (y; drawingTarget.y .. drawingEnd.y) {
 			target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] =
 				source.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
+		}
+	}
+
+	/++
+	    Draws a sprite from a spritesheet
+	 +/
+	void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point pos) {
+		immutable tRect = OriginRectangle(
+			Size(target.width, target.height),
+		);
+
+		immutable spriteOffset = sheet.getSpritePixelOffset2D(spriteIndex);
+		immutable sRect = Rectangle(pos, sheet.spriteSize);
+
+		// out of bounds?
+		if (!tRect.intersect(sRect)) {
+			return;
+		}
+
+		immutable drawingTarget = Point(
+			(pos.x >= 0) ? pos.x : 0,
+			(pos.y >= 0) ? pos.y : 0,
+		);
+
+		immutable drawingEnd = Point(
+			(sRect.right < tRect.right) ? sRect.right : tRect.right,
+			(sRect.bottom < tRect.bottom) ? sRect.bottom : tRect.bottom,
+		);
+
+		immutable drawingSource =
+			spriteOffset
+			+ Point(drawingTarget.x, 0)
+			- Point(sRect.pos.x, sRect.pos.y);
+		immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
+
+		foreach (y; drawingTarget.y .. drawingEnd.y) {
+			target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[]
+				= sheet.pixmap.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
 		}
 	}
 }
