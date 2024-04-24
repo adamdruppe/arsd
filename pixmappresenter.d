@@ -158,7 +158,18 @@
 module arsd.pixmappresenter;
 
 import arsd.core;
-import arsd.simpledisplay;
+
+/++
+	While publicly importing `arsd.simpledisplay` is not actually necessary,
+	most real-world code would eventually import said module as well anyway.
+
+	More importantly, this public import prevents users from facing certain
+	symbol clashes in their code that would occur in modules importing both
+	`pixmappresenter` and `simpledisplay`.
+	For instance both of these modules happen to define different types
+	as `Pixmap`.
+ +/
+public import arsd.simpledisplay;
 
 ///
 public import arsd.pixmappaint;
