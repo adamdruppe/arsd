@@ -208,6 +208,9 @@ version(Posix) {
 		calc(a.y, b.y).typeCast!int,
 	);
 	---
+
+	History:
+		Added April 24, 2024
  +/
 auto ref T typeCast(T, S)(auto ref S v) {
 	return cast(T) v;

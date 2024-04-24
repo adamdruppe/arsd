@@ -60,6 +60,16 @@ struct Pixmap {
 		this.width = width;
 	}
 
+	/++
+		Creates a $(I deep clone) of the Pixmap
+	 +/
+	Pixmap clone() const {
+		auto c = Pixmap();
+		c.width = this.width;
+		c.data = this.data.dup;
+		return c;
+	}
+
 	// undocumented: really shouldn’t be used.
 	// carries the risks of `length` and `width` getting out of sync accidentally.
 	deprecated("Use `size` instead.")
@@ -233,6 +243,9 @@ struct Pixmap {
 	 +/
 	void drawLine(Pixmap target, Point a, Point b, Pixel color) {
 		import std.math : round, sqrt;
+
+		// TODO: line width
+		// TODO: anti-aliasing (looks awful without it!)
 
 		float deltaX = b.x - a.x;
 		float deltaY = b.y - a.y;
