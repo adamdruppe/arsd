@@ -365,7 +365,7 @@ public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @trusted {
 
 enum BlendMode {
 	none = 0,
-	overwrite = none,
+	replace = none,
 	normal = 1,
 	alpha = normal,
 
@@ -385,7 +385,7 @@ enum blendNormal = BlendMode.normal;
 /++
 	Blends pixel `source` into pixel `target`.
  +/
-void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == BlendMode.overwrite) {
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == BlendMode.replace) {
 	target = source;
 }
 
@@ -425,7 +425,7 @@ void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode =
  +/
 void blendPixels(BlendMode mode)(scope Pixel[] target, scope const Pixel[] source) @trusted
 in (source.length == target.length) {
-	static if (mode == BlendMode.overwrite) {
+	static if (mode == BlendMode.replace) {
 		target.ptr[0 .. target.length] = source.ptr[0 .. target.length];
 	} else {
 		// better error message in case it’s not implemented
