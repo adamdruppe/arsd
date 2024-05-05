@@ -35,6 +35,12 @@ static assert(Pixel.sizeof == uint.sizeof);
 	}
 
 	///
+	Pixel rgba(ubyte r, ubyte g, ubyte b, float aPct)
+	in (aPct >= 0 && aPct <= 1) {
+		return Pixel(r, g, b, typeCast!ubyte(aPct * 255));
+	}
+
+	///
 	Pixel rgb(ubyte r, ubyte g, ubyte b) {
 		return rgba(r, g, b, 0xFF);
 	}
@@ -56,6 +62,13 @@ struct Pixmap {
 	///
 	this(Size size) {
 		this.size = size;
+	}
+
+	///
+	this(int width, int height)
+	in (width > 0)
+	in (height > 0) {
+		this(Size(width, height));
 	}
 
 	///
@@ -231,13 +244,86 @@ private {
 	Point pos(Rectangle r) => r.upperLeft;
 }
 
+/++
+	Fast 8-bit “percentage” function
+
+	This function optimizes its runtime performance by substituting
+	the division by 255 with an approximation using bitshifts.
+
+	Nonetheless, the its result are as accurate as a floating point
+	division with 64-bit precision.
+
+	Params:
+		nPercentage = percentage as the number of 255ths (“two hundred fifty-fifths”)
+		value = base value (“total”)
+
+	Returns:
+		`round(value * nPercentage / 255.0)`
+ +/
+ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
+	immutable factor = (nPercentage | (nPercentage << 8));
+	return (((value * factor) + 0x8080) >> 16);
+}
+
+@safe unittest {
+	// Accuracy verification
+
+	static ubyte n255thsOfFP64(const ubyte nPercentage, const ubyte value) {
+		import std.math : round;
+
+		return (value * nPercentage / 255.0).round().typeCast!ubyte();
+	}
+
+	for (int value = ubyte.min; value <= ubyte.max; ++value) {
+		for (int percent = ubyte.min; percent <= ubyte.max; ++percent) {
+			immutable v = cast(ubyte) value;
+			immutable p = cast(ubyte) percent;
+
+			immutable approximated = n255thsOf(p, v);
+			immutable precise = n255thsOfFP64(p, v);
+			assert(approximated == precise);
+		}
+	}
+}
+
+/++
+	Sets the opacity of a [Pixmap].
+
+	This lossy operation updates the alpha-channel value of each pixel.
+	→ `alpha *= opacity`
+
+	See_Also:
+		Use [opacityF] with opacity values in percent (%).
+ +/
+void opacity(ref Pixmap pixmap, const ubyte opacity) {
+	foreach (ref px; pixmap.data) {
+		px.a = opacity.n255thsOf(px.a);
+	}
+}
+
+/++
+	Sets the opacity of a [Pixmap].
+
+	This lossy operation updates the alpha-channel value of each pixel.
+	→ `alpha *= opacity`
+
+	See_Also:
+		Use [opacity] with 8-bit integer opacity values (in 255ths).
+ +/
+void opacityF(ref Pixmap pixmap, const float opacity)
+in (opacity >= 0)
+in (opacity <= 1.0) {
+	immutable opacity255 = typeCast!ubyte(opacity * 255);
+	pixmap.opacity = opacity255;
+}
+
 // ==== Alpha-blending functions ====
 
 ///
 public void alphaBlend(scope Pixel[] target, scope const Pixel[] source) @trusted
 in (source.length == target.length) {
-	foreach (immutable idx, ref pxtarget; target) {
-		alphaBlend(pxtarget, source.ptr[idx]);
+	foreach (immutable idx, ref pxTarget; target) {
+		alphaBlend(pxTarget, source.ptr[idx]);
 	}
 }
 
@@ -252,6 +338,97 @@ public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @trusted {
 		immutable d = cast(ubyte)(((px * alphaTarget) + 0x8080) >> 16);
 		immutable s = cast(ubyte)(((pxSource.components.ptr[ib] * alphaSource) + 0x8080) >> 16);
 		px = cast(ubyte)(d + s);
+	}
+}
+
+// ==== Blending functions ====
+
+enum BlendMode {
+	none = 0,
+	overwrite = none,
+	normal = 1,
+	alpha = normal,
+
+	multiply,
+	screen,
+
+	darken,
+	lighten,
+}
+
+///
+alias Blend = BlendMode;
+
+// undocumented
+enum blendNormal = BlendMode.normal;
+
+/++
+	Blends pixel `source` into pixel `target`.
+ +/
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == BlendMode.overwrite) {
+	target = source;
+}
+
+/// ditto
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.alpha) {
+	return alphaBlend(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.multiply) {
+	function(ref Pixel target, const Pixel source) @trusted {
+		foreach (immutable ib, ref ch; target.components) {
+			ch = n255thsOf(source.components.ptr[ib], ch);
+		}
+	}(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.screen) {
+	assert(false, "TODO");
+}
+
+/// ditto
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.darken) {
+	assert(false, "TODO");
+}
+
+/// ditto
+void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.lighten) {
+	assert(false, "TODO");
+}
+
+/++
+	Blends the pixel data of `source` into `target`.
+
+	`source` and `target` MUST have the same length.
+ +/
+void blendPixels(BlendMode mode)(scope Pixel[] target, scope const Pixel[] source) @trusted
+in (source.length == target.length) {
+	static if (mode == BlendMode.overwrite) {
+		target.ptr[0 .. target.length] = source.ptr[0 .. target.length];
+	} else {
+		// better error message in case it’s not implemented
+		static if (!is(typeof(blendPixel!mode))) {
+			static assert(false, "Missing `blendPixel!(" ~ mode.stringof ~ ")`.");
+		}
+
+		foreach (immutable idx, ref pxTarget; target) {
+			blendPixel!mode(pxTarget, source.ptr[idx]);
+		}
+	}
+}
+
+/// ditto
+void blendPixels(scope Pixel[] target, scope const Pixel[] source, BlendMode mode) {
+	import std.meta : NoDuplicates;
+	import std.traits : EnumMembers;
+
+	final switch (mode) with (BlendMode) {
+		static foreach (m; NoDuplicates!(EnumMembers!BlendMode)) {
+	case m:
+			return blendPixels!m(target, source);
+		}
 	}
 }
 
@@ -339,7 +516,7 @@ void drawLine(Pixmap target, Point a, Point b, Pixel color) {
 		image = source pixmap
 		pos = top-left destination position (on the target pixmap)
  +/
-void drawPixmap(Pixmap target, Pixmap image, Point pos) {
+void drawPixmap(Pixmap target, Pixmap image, Point pos, Blend blend = blendNormal) {
 	alias source = image;
 
 	immutable tRect = OriginRectangle(
@@ -367,15 +544,18 @@ void drawPixmap(Pixmap target, Pixmap image, Point pos) {
 	immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
 
 	foreach (y; drawingTarget.y .. drawingEnd.y) {
-		target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[] =
-			source.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
+		blendPixels(
+			target.sliceAt(Point(drawingTarget.x, y), drawingWidth),
+			source.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth),
+			blend,
+		);
 	}
 }
 
 /++
-    Draws a sprite from a spritesheet
+	Draws a sprite from a spritesheet
  +/
-void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point pos) {
+void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point pos, Blend blend = blendNormal) {
 	immutable tRect = OriginRectangle(
 		Size(target.width, target.height),
 	);
@@ -405,7 +585,10 @@ void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point p
 	immutable int drawingWidth = drawingEnd.x - drawingTarget.x;
 
 	foreach (y; drawingTarget.y .. drawingEnd.y) {
-		target.sliceAt(Point(drawingTarget.x, y), drawingWidth)[]
-			= sheet.pixmap.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth);
+		blendPixels(
+			target.sliceAt(Point(drawingTarget.x, y), drawingWidth),
+			sheet.pixmap.sliceAt(Point(drawingSource.x, y + drawingSource.y), drawingWidth),
+			blend,
+		);
 	}
 }
