@@ -250,11 +250,11 @@ struct ComResult {
 
 	T getD(T)() {
 		switch(result.vt) {
-			case 3: // int
+			case Vt.long_: // int
 				static if(is(T : const long))
 					return result.intVal;
 				throw new Exception("cannot convert variant of type int to requested " ~ T.stringof);
-			case 8: // string
+			case Vt.string_:
 				static if(is(T : const string))
 					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
 				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
@@ -720,6 +720,28 @@ auto getComObject(T = Dynamic)(wstring c, bool tryCreateIfGetFails = true) {
 // FIXME: add one to get by ProgID rather than always guid
 // FIXME: add a dynamic com object that uses IDispatch
 
+/// Variant Type
+/// https://learn.microsoft.com/en-us/office/vba/language/reference/user-interface-help/vartype-function
+private enum Vt
+{
+	empty = 0,
+	null_ = 1,
+	integer = 2,
+	long_ = 3,
+	single = 4,
+	double_ = 5,
+	currency = 6,
+	date = 7,
+	string_ = 8,
+	object = 9,
+	error = 10,
+	boolean = 11,
+	variant = 12,
+	dataObject = 13,
+	decimal = 14,
+	byte_ = 17,
+	longLong = 20,
+}
 
 /* COM SERVER CODE */
 
@@ -729,19 +751,25 @@ T getFromVariant(T)(VARIANT arg) {
 	static if(is(T == void)) {
 		return;
 	} else static if(is(T == int)) {
-		if(arg.vt == 3)
+		if(arg.vt == Vt.long_)
 			return arg.intVal;
+	} else static if (is(T == float)) {
+		if(arg.vt == Vt.single)
+			return arg.fltVal;
+	} else static if (is(T == double)) {
+		if(arg.vt == Vt.double_)
+			return arg.dblVal;
 	} else static if(is(T == bool)) {
-		if(arg.vt == 11)
+		if(arg.vt == Vt.boolean)
 			return arg.boolVal ? true : false;
 	} else static if(is(T == string)) {
-		if(arg.vt == 8) {
+		if(arg.vt == Vt.string_) {
 			auto str = arg.bstrVal;
 			scope(exit) SysFreeString(str);
 			return to!string(str[0 .. SysStringLen(str)]);
 		}
 	} else static if(is(T == IDispatch)) {
-		if(arg.vt == 9)
+		if(arg.vt == Vt.object)
 			return arg.pdispVal;
 	} else static if(is(T : IUnknown)) {
 		// if(arg.vt == 13)
@@ -789,7 +817,7 @@ T getFromVariant(T)(VARIANT arg) {
 			}
 		}
 	}
-	throw new Exception("Type mismatch, needed "~ T.stringof ~"got " ~ to!string(arg.vt));
+	throw new Exception("Type mismatch, needed "~ T.stringof ~" got " ~ to!string(cast(Vt) arg.vt));
 	assert(0);
 }
 
