@@ -7389,7 +7389,9 @@ version(cgi_with_websocket) {
 
 		cgi.flush();
 
-		return new WebSocket(cgi);
+		auto ws = new WebSocket(cgi);
+		ws.readyState_ = WebSocket.OPEN;
+		return ws;
 	}
 
 	// FIXME get websocket to work on other modes, not just embedded_httpd
