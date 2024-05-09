@@ -42,6 +42,12 @@ static if(__traits(compiles, () { import core.interpolation; })) {
 	struct InterpolatedExpression(string code) {}
 }
 
+import core.attribute;
+static if(__traits(hasMember, core.attribute, "implicit"))
+	alias implicit = core.attribute.implicit;
+else
+	enum implicit;
+
 
 // FIXME: add callbacks on file open for tracing dependencies dynamically
 
@@ -3945,6 +3951,10 @@ package(arsd) int indexOf(scope const(char)[] haystack, scope const(char)[] need
 	return -1;
 }
 
+package(arsd) int indexOf(scope const(ubyte)[] haystack, scope const(char)[] needle) {
+	return indexOf(cast(const(char)[]) haystack, needle);
+}
+
 unittest {
 	assert("foo".indexOf("f") == 0);
 	assert("foo".indexOf("o") == 1);
@@ -4548,13 +4558,13 @@ class AsyncReadResponse : AsyncOperationResponse {
 		runHelperFunction() - whomever it reports to is the parent
 +/
 
-version(HasThread) class ScheduableTask : Fiber {
+version(HasThread) class SchedulableTask : Fiber {
 	private void delegate() dg;
 
 	// linked list stuff
-	private static ScheduableTask taskRoot;
-	private ScheduableTask previous;
-	private ScheduableTask next;
+	private static SchedulableTask taskRoot;
+	private SchedulableTask previous;
+	private SchedulableTask next;
 
 	// need the controlling thread to know how to wake it up if it receives a message
 	private Thread controllingThread;
@@ -4643,7 +4653,7 @@ version(HasThread) SchedulableTaskController inSchedulableTask() {
 	import core.thread.fiber;
 
 	if(auto fiber = Fiber.getThis) {
-		return SchedulableTaskController(cast(ScheduableTask) fiber);
+		return SchedulableTaskController(cast(SchedulableTask) fiber);
 	}
 
 	return SchedulableTaskController(null);
@@ -4651,11 +4661,11 @@ version(HasThread) SchedulableTaskController inSchedulableTask() {
 
 /// ditto
 version(HasThread) struct SchedulableTaskController {
-	private this(ScheduableTask fiber) {
+	private this(SchedulableTask fiber) {
 		this.fiber = fiber;
 	}
 
-	private ScheduableTask fiber;
+	private SchedulableTask fiber;
 
 	/++
 
