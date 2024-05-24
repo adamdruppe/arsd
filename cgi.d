@@ -6861,6 +6861,8 @@ version(cgi_with_websocket) {
 	class WebSocket {
 		Cgi cgi;
 
+		private bool isClient = false;
+
 		private this(Cgi cgi) {
 			this.cgi = cgi;
 
@@ -6978,7 +6980,48 @@ version(cgi_with_websocket) {
 			string origin; /// Origin URL to send with the handshake, if desired.
 			string protocol; /// the protocol header, if desired.
 
-			int pingFrequency = 5000; /// Amount of time (in msecs) of idleness after which to send an automatic ping
+			/++
+				Additional headers to put in the HTTP request. These should be formatted `Name: value`, like for example:
+
+				---
+				Config config;
+				config.additionalHeaders ~= "Authorization: Bearer your_auth_token_here";
+				---
+
+				History:
+					Added February 19, 2021 (included in dub version 9.2)
+			+/
+			string[] additionalHeaders;
+
+			/++
+				Amount of time (in msecs) of idleness after which to send an automatic ping
+
+				Please note how this interacts with [timeoutFromInactivity] - a ping counts as activity that
+				keeps the socket alive.
+			+/
+			int pingFrequency = 5000;
+
+			/++
+				Amount of time to disconnect when there's no activity. Note that automatic pings will keep the connection alive; this timeout only occurs if there's absolutely nothing, including no responses to websocket ping frames. Since the default [pingFrequency] is only seconds, this one minute should never elapse unless the connection is actually dead.
+
+				The one thing to keep in mind is if your program is busy and doesn't check input, it might consider this a time out since there's no activity. The reason is that your program was busy rather than a connection failure, but it doesn't care. You should avoid long processing periods anyway though!
+
+				History:
+					Added March 31, 2021 (included in dub version 9.4)
+			+/
+			Duration timeoutFromInactivity = 1.minutes;
+
+			/++
+				For https connections, if this is `true`, it will fail to connect if the TLS certificate can not be
+				verified. Setting this to `false` will skip this check and allow the connection to continue anyway.
+
+				History:
+					Added April 5, 2022 (dub v10.8)
+
+					Prior to this, it always used the global (but undocumented) `defaultVerifyPeer` setting, and sometimes
+					even if it was true, it would skip the verification. Now, it always respects this local setting.
+			+/
+			bool verifyPeer = true;
 		}
 
 		/++
@@ -6990,9 +7033,15 @@ version(cgi_with_websocket) {
 
 		/++
 			Closes the connection, sending a graceful teardown message to the other side.
+
+			Code 1000 is the normal closure code.
+
+			History:
+				The default `code` was changed to 1000 on January 9, 2023. Previously it was 0,
+				but also ignored anyway.
 		+/
 		/// Group: foundational
-		void close(int code = 0, string reason = null)
+		void close(int code = 1000, string reason = null)
 			//in (reason.length < 123)
 			in { assert(reason.length < 123); } do
 		{
@@ -7000,31 +7049,43 @@ version(cgi_with_websocket) {
 				return; // it cool, we done
 			WebSocketFrame wss;
 			wss.fin = true;
+			wss.masked = this.isClient;
 			wss.opcode = WebSocketOpcode.close;
-			wss.data = cast(ubyte[]) reason.dup;
+			wss.data = [ubyte((code >> 8) & 0xff), ubyte(code & 0xff)] ~ cast(ubyte[]) reason.dup;
 			wss.send(&llsend);
 
 			readyState_ = CLOSING;
 
+			closeCalled = true;
+
 			llclose();
 		}
+
+		private bool closeCalled;
 
 		/++
 			Sends a ping message to the server. This is done automatically by the library if you set a non-zero [Config.pingFrequency], but you can also send extra pings explicitly as well with this function.
 		+/
 		/// Group: foundational
-		void ping() {
+		void ping(in ubyte[] data = null) {
 			WebSocketFrame wss;
 			wss.fin = true;
+			wss.masked = this.isClient;
 			wss.opcode = WebSocketOpcode.ping;
+			if(data !is null) wss.data = data.dup;
 			wss.send(&llsend);
 		}
 
-		// automatically handled....
-		void pong() {
+		/++
+			Sends a pong message to the server. This is normally done automatically in response to pings.
+		+/
+		/// Group: foundational
+		void pong(in ubyte[] data = null) {
 			WebSocketFrame wss;
 			wss.fin = true;
+			wss.masked = this.isClient;
 			wss.opcode = WebSocketOpcode.pong;
+			if(data !is null) wss.data = data.dup;
 			wss.send(&llsend);
 		}
 
@@ -7035,6 +7096,7 @@ version(cgi_with_websocket) {
 		void send(in char[] textData) {
 			WebSocketFrame wss;
 			wss.fin = true;
+			wss.masked = this.isClient;
 			wss.opcode = WebSocketOpcode.text;
 			wss.data = cast(ubyte[]) textData.dup;
 			wss.send(&llsend);
@@ -7046,6 +7108,7 @@ version(cgi_with_websocket) {
 		/// Group: foundational
 		void send(in ubyte[] binaryData) {
 			WebSocketFrame wss;
+			wss.masked = this.isClient;
 			wss.fin = true;
 			wss.opcode = WebSocketOpcode.binary;
 			wss.data = cast(ubyte[]) binaryData.dup;
@@ -7080,10 +7143,12 @@ version(cgi_with_websocket) {
 				return false;
 			if(!isDataPending())
 				return true;
+
 			while(isDataPending()) {
 				if(lowLevelReceive() == false)
 					throw new ConnectionClosedException("Connection closed in middle of message");
 			}
+
 			goto checkAgain;
 		}
 
@@ -7161,23 +7226,40 @@ version(cgi_with_websocket) {
 						}
 					break;
 					case WebSocketOpcode.close:
-						readyState_ = CLOSED;
+
+						//import std.stdio; writeln("closed ", cast(string) m.data);
+
+						ushort code = CloseEvent.StandardCloseCodes.noStatusCodePresent;
+						const(char)[] reason;
+
+						if(m.data.length >= 2) {
+							code = (m.data[0] << 8) | m.data[1];
+							reason = (cast(char[]) m.data[2 .. $]);
+						}
+
 						if(onclose)
-							onclose();
+							onclose(CloseEvent(code, reason, true));
+
+						// if we receive one and haven't sent one back we're supposed to echo it back and close.
+						if(!closeCalled)
+							close(code, reason.idup);
+
+						readyState_ = CLOSED;
 
 						unregisterActiveSocket(this);
 					break;
 					case WebSocketOpcode.ping:
-						pong();
+						// import std.stdio; writeln("ping received ", m.data);
+						pong(m.data);
 					break;
 					case WebSocketOpcode.pong:
+						// import std.stdio; writeln("pong received ", m.data);
 						// just really references it is still alive, nbd.
 					break;
 					default: // ignore though i could and perhaps should throw too
 				}
 			}
 
-			// the recv thing can be invalidated so gotta copy it over ugh
 			if(d.length) {
 				m.data = m.data.dup();
 			}
@@ -7196,8 +7278,52 @@ version(cgi_with_websocket) {
 			} while(lowLevelReceive());
 		}
 
+		/++
+			Arguments for the close event. The `code` and `reason` are provided from the close message on the websocket, if they are present. The spec says code 1000 indicates a normal, default reason close, but reserves the code range from 3000-5000 for future definition; the 3000s can be registered with IANA and the 4000's are application private use. The `reason` should be user readable, but not displayed to the end user. `wasClean` is true if the server actually sent a close event, false if it just disconnected.
 
-		void delegate() onclose; ///
+			$(PITFALL
+				The `reason` argument references a temporary buffer and there's no guarantee it will remain valid once your callback returns. It may be freed and will very likely be overwritten. If you want to keep the reason beyond the callback, make sure you `.idup` it.
+			)
+
+			History:
+				Added March 19, 2023 (dub v11.0).
+		+/
+		static struct CloseEvent {
+			ushort code;
+			const(char)[] reason;
+			bool wasClean;
+
+			string extendedErrorInformationUnstable;
+
+			/++
+				See https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1 for details.
+			+/
+			enum StandardCloseCodes {
+				purposeFulfilled = 1000,
+				goingAway = 1001,
+				protocolError = 1002,
+				unacceptableData = 1003, // e.g. got text message when you can only handle binary
+				Reserved = 1004,
+				noStatusCodePresent = 1005, // not set by endpoint.
+				abnormalClosure = 1006, // not set by endpoint. closed without a Close control. FIXME: maybe keep a copy of errno around for these
+				inconsistentData = 1007, // e.g. utf8 validation failed
+				genericPolicyViolation = 1008,
+				messageTooBig = 1009,
+				clientRequiredExtensionMissing = 1010, // only the client should send this
+				unnexpectedCondition = 1011,
+				unverifiedCertificate = 1015, // not set by client
+			}
+		}
+
+		/++
+			The `CloseEvent` you get references a temporary buffer that may be overwritten after your handler returns. If you want to keep it or the `event.reason` member, remember to `.idup` it.
+
+			History:
+				The `CloseEvent` was changed to a [arsd.core.FlexibleDelegate] on March 19, 2023 (dub v11.0). Before that, `onclose` was a public member of type `void delegate()`. This change means setters still work with or without the [CloseEvent] argument.
+
+				Your onclose method is now also called on abnormal terminations. Check the `wasClean` member of the `CloseEvent` to know if it came from a close frame or other cause.
+		+/
+		arsd.core.FlexibleDelegate!(void delegate(CloseEvent event)) onclose;
 		void delegate() onerror; ///
 		void delegate(in char[]) ontextmessage; ///
 		void delegate(in ubyte[]) onbinarymessage; ///
@@ -7216,7 +7342,8 @@ version(cgi_with_websocket) {
 			onbinarymessage = dg;
 		}
 
-		/* } end copy/paste */
+	/* } end copy/paste */
+
 
 
 	}
@@ -7262,7 +7389,9 @@ version(cgi_with_websocket) {
 
 		cgi.flush();
 
-		return new WebSocket(cgi);
+		auto ws = new WebSocket(cgi);
+		ws.readyState_ = WebSocket.OPEN;
+		return ws;
 	}
 
 	// FIXME get websocket to work on other modes, not just embedded_httpd

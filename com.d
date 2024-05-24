@@ -250,11 +250,11 @@ struct ComResult {
 
 	T getD(T)() {
 		switch(result.vt) {
-			case 3: // int
+			case VARENUM.VT_I4: // int
 				static if(is(T : const long))
 					return result.intVal;
 				throw new Exception("cannot convert variant of type int to requested " ~ T.stringof);
-			case 8: // string
+			case VARENUM.VT_BSTR:
 				static if(is(T : const string))
 					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
 				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
@@ -720,7 +720,6 @@ auto getComObject(T = Dynamic)(wstring c, bool tryCreateIfGetFails = true) {
 // FIXME: add one to get by ProgID rather than always guid
 // FIXME: add a dynamic com object that uses IDispatch
 
-
 /* COM SERVER CODE */
 
 T getFromVariant(T)(VARIANT arg) {
@@ -729,25 +728,31 @@ T getFromVariant(T)(VARIANT arg) {
 	static if(is(T == void)) {
 		return;
 	} else static if(is(T == int)) {
-		if(arg.vt == 3)
+		if(arg.vt == VARENUM.VT_I4)
 			return arg.intVal;
+	} else static if (is(T == float)) {
+		if(arg.vt == VARENUM.VT_R4)
+			return arg.fltVal;
+	} else static if (is(T == double)) {
+		if(arg.vt == VARENUM.VT_R8)
+			return arg.dblVal;
 	} else static if(is(T == bool)) {
-		if(arg.vt == 11)
+		if(arg.vt == VARENUM.VT_BOOL)
 			return arg.boolVal ? true : false;
 	} else static if(is(T == string)) {
-		if(arg.vt == 8) {
+		if(arg.vt == VARENUM.VT_BSTR) {
 			auto str = arg.bstrVal;
 			scope(exit) SysFreeString(str);
 			return to!string(str[0 .. SysStringLen(str)]);
 		}
 	} else static if(is(T == IDispatch)) {
-		if(arg.vt == 9)
+		if(arg.vt == VARENUM.VT_DISPATCH)
 			return arg.pdispVal;
 	} else static if(is(T : IUnknown)) {
 		// if(arg.vt == 13)
 		static assert(0);
 	} else static if(is(T == ComClient!(D, I), D, I)) {
-		if(arg.vt == 9)
+		if(arg.vt == VARENUM.VT_DISPATCH)
 			return ComClient!(D, I)(arg.pdispVal);
 	} else static if(is(T == E[], E)) {
 		if(arg.vt & 0x2000) {
@@ -789,7 +794,7 @@ T getFromVariant(T)(VARIANT arg) {
 			}
 		}
 	}
-	throw new Exception("Type mismatch, needed "~ T.stringof ~"got " ~ to!string(arg.vt));
+	throw new Exception("Type mismatch, needed "~ T.stringof ~" got " ~ to!string(cast(VARENUM) arg.vt));
 	assert(0);
 }
 
