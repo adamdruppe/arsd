@@ -38,7 +38,7 @@ static assert(Pixel.sizeof == uint.sizeof);
 	///
 	Pixel rgba(ubyte r, ubyte g, ubyte b, float aPct)
 	in (aPct >= 0 && aPct <= 1) {
-		return Pixel(r, g, b, typeCast!ubyte(aPct * 255));
+		return Pixel(r, g, b, castTo!ubyte(aPct * 255));
 	}
 
 	///
@@ -141,7 +141,7 @@ struct Pixmap {
 			return 0;
 		}
 
-		return typeCast!int(data.length / width);
+		return castTo!int(data.length / width);
 	}
 
 	/// Rectangular size of the buffer
@@ -151,7 +151,7 @@ struct Pixmap {
 
 	/// Length of the buffer, i.e. the number of pixels
 	int length() inout {
-		return typeCast!int(data.length);
+		return castTo!int(data.length);
 	}
 
 	/++
@@ -290,7 +290,7 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	// Accuracy verification
 
 	static ubyte n255thsOfFP64(const ubyte nPercentage, const ubyte value) {
-		return (value * nPercentage / 255.0).round().typeCast!ubyte();
+		return (value * nPercentage / 255.0).round().castTo!ubyte();
 	}
 
 	for (int value = ubyte.min; value <= ubyte.max; ++value) {
@@ -332,7 +332,7 @@ void opacity(ref Pixmap pixmap, const ubyte opacity) {
 void opacityF(ref Pixmap pixmap, const float opacity)
 in (opacity >= 0)
 in (opacity <= 1.0) {
-	immutable opacity255 = round(opacity * 255).typeCast!ubyte;
+	immutable opacity255 = round(opacity * 255).castTo!ubyte;
 	pixmap.opacity = opacity255;
 }
 
@@ -517,7 +517,7 @@ void drawLine(Pixmap target, Point a, Point b, Pixel color) {
 
 	float deltaX = b.x - a.x;
 	float deltaY = b.y - a.y;
-	int steps = sqrt(deltaX * deltaX + deltaY * deltaY).typeCast!int;
+	int steps = sqrt(deltaX * deltaX + deltaY * deltaY).castTo!int;
 
 	float[2] step = [
 		(deltaX / steps),
@@ -527,8 +527,8 @@ void drawLine(Pixmap target, Point a, Point b, Pixel color) {
 	foreach (i; 0 .. steps) {
 		// dfmt off
 		immutable Point p = a + Point(
-			round(step[0] * i).typeCast!int,
-			round(step[1] * i).typeCast!int,
+			round(step[0] * i).castTo!int,
+			round(step[1] * i).castTo!int,
 		);
 		// dfmt on
 

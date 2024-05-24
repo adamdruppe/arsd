@@ -238,7 +238,7 @@ private @safe pure nothrow @nogc {
 
 	Point offsetCenter(const Size drawing, const Size canvas) {
 		auto delta = canvas.deltaPerimeter(drawing);
-		return (typeCast!Point(delta) >> 1);
+		return (castTo!Point(delta) >> 1);
 	}
 }
 
@@ -278,8 +278,8 @@ Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow 
 	case Scaling.contain:
 		const float scaleF = karContainScalingFactorF(config.renderer.resolution, config.window.size);
 		size = Size(
-			typeCast!int(scaleF * config.renderer.resolution.width),
-			typeCast!int(scaleF * config.renderer.resolution.height),
+			castTo!int(scaleF * config.renderer.resolution.width),
+			castTo!int(scaleF * config.renderer.resolution.height),
 		);
 		break;
 
@@ -297,8 +297,8 @@ Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow 
 	case Scaling.cover:
 		const float fillF = karCoverScalingFactorF(config.renderer.resolution, config.window.size);
 		size = Size(
-			typeCast!int(fillF * config.renderer.resolution.width),
-			typeCast!int(fillF * config.renderer.resolution.height),
+			castTo!int(fillF * config.renderer.resolution.width),
+			castTo!int(fillF * config.renderer.resolution.height),
 		);
 		break;
 	}
@@ -549,7 +549,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				0, 0,
 				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				GL_RGBA, GL_UNSIGNED_BYTE,
-				typeCast!(void*)(_poc.framebuffer.data.ptr)
+				castTo!(void*)(_poc.framebuffer.data.ptr)
 			);
 
 			glUseProgram(_shader.shaderProgram);
@@ -604,7 +604,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, null);
 			glEnableVertexAttribArray(0);
 
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, typeCast!(void*)(2 * GLfloat.sizeof));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, castTo!(void*)(2 * GLfloat.sizeof));
 			glEnableVertexAttribArray(1);
 		}
 
@@ -785,7 +785,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 					0, 0,
 					_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 					GL_RGBA, GL_UNSIGNED_BYTE,
-					typeCast!(void*)(_poc.framebuffer.data.ptr)
+					castTo!(void*)(_poc.framebuffer.data.ptr)
 				);
 
 				glBegin(GL_QUADS);
