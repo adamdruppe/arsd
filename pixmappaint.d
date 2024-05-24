@@ -272,6 +272,9 @@ private struct OriginRectangle {
 // misc
 private {
 	Point pos(Rectangle r) => r.upperLeft;
+
+	T max(T)(T a, T b) => (a >= b) ? a : b;
+	T min(T)(T a, T b) => (a <= b) ? a : b;
 }
 
 /++
@@ -491,6 +494,7 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 	ref Pixel target,
 	const Pixel source,
 ) if (mode == Blend.multiply) {
+
 	return alphaBlend!(accuracy,
 		(a, b) => n255thsOf(a, b)
 	)(target, source);
@@ -512,7 +516,10 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 	ref Pixel target,
 	const Pixel source,
 ) if (mode == Blend.darken) {
-	assert(false, "TODO");
+
+	return alphaBlend!(accuracy,
+		(a, b) => min(a, b)
+	)(target, source);
 }
 
 /// ditto
@@ -520,7 +527,10 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 	ref Pixel target,
 	const Pixel source,
 ) if (mode == Blend.lighten) {
-	assert(false, "TODO");
+
+	return alphaBlend!(accuracy,
+		(a, b) => max(a, b)
+	)(target, source);
 }
 
 /++
