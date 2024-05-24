@@ -2,6 +2,15 @@
 	== pixmappaint ==
 	Copyright Elias Batek (0xEAB) 2024.
 	Distributed under the Boost Software License, Version 1.0.
+
+	$(WARNING
+		$(B Early Technology Preview.)
+	)
+
+	$(PITFALL
+		This module is $(B work in progress).
+		API is subject to changes until further notice.
+	)
  +/
 module arsd.pixmappaint;
 
