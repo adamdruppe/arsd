@@ -442,7 +442,7 @@ in (source.length == target.length) {
 	} else {
 		// better error message in case it’s not implemented
 		static if (!is(typeof(blendPixel!mode))) {
-			static assert(false, "Missing `blendPixel!(" ~ mode.stringof ~ ")`.");
+			pragma(msg, "Hint: Missing or bad `blendPixel!(" ~ mode.stringof ~ ")`.");
 		}
 
 		foreach (immutable idx, ref pxTarget; target) {
