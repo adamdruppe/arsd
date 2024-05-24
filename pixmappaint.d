@@ -278,7 +278,7 @@ private {
 }
 
 /++
-	Limits a value to a maximum 0xFF (= 255).
+	Limits a value to a maximum of 0xFF (= 255).
  +/
 ubyte clamp255(Tint)(const Tint value) {
 	pragma(inline, true);
@@ -291,7 +291,7 @@ ubyte clamp255(Tint)(const Tint value) {
 	This function optimizes its runtime performance by substituting
 	the division by 255 with an approximation using bitshifts.
 
-	Nonetheless, the its result are as accurate as a floating point
+	Nonetheless, its result are as accurate as a floating point
 	division with 64-bit precision.
 
 	Params:
@@ -310,7 +310,7 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	// Accuracy verification
 
 	static ubyte n255thsOfFP64(const ubyte nPercentage, const ubyte value) {
-		return (value * nPercentage / 255.0).round().castTo!ubyte();
+		return (double(value) * double(nPercentage) / 255.0).round().castTo!ubyte();
 	}
 
 	for (int value = ubyte.min; value <= ubyte.max; ++value) {
@@ -395,7 +395,7 @@ enum BlendAccuracy {
 ///
 public void alphaBlend(
 	BlendAccuracy accuracy,
-	ubyte function(const ubyte, const ubyte) pure blend = null,
+	ubyte function(const ubyte, const ubyte) blend = null,
 )(
 	scope Pixel[] target,
 	scope const Pixel[] source,
