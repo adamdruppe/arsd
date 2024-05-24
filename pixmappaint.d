@@ -7,6 +7,7 @@ module arsd.pixmappaint;
 
 import arsd.color;
 import arsd.core;
+import std.math : round;
 
 alias Color = arsd.color.Color;
 
@@ -289,8 +290,6 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	// Accuracy verification
 
 	static ubyte n255thsOfFP64(const ubyte nPercentage, const ubyte value) {
-		import std.math : round;
-
 		return (value * nPercentage / 255.0).round().typeCast!ubyte();
 	}
 
@@ -333,7 +332,7 @@ void opacity(ref Pixmap pixmap, const ubyte opacity) {
 void opacityF(ref Pixmap pixmap, const float opacity)
 in (opacity >= 0)
 in (opacity <= 1.0) {
-	immutable opacity255 = typeCast!ubyte(opacity * 255);
+	immutable opacity255 = round(opacity * 255).typeCast!ubyte;
 	pixmap.opacity = opacity255;
 }
 
@@ -357,6 +356,23 @@ public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @trusted {
 	foreach (immutable ib, ref px; pxTarget.components) {
 		immutable d = cast(ubyte)(((px * alphaTarget) + 0x8080) >> 16);
 		immutable s = cast(ubyte)(((pxSource.components.ptr[ib] * alphaSource) + 0x8080) >> 16);
+		px = cast(ubyte)(d + s);
+	}
+}
+
+///
+public void alphaBlend(
+	ubyte function(const ubyte, const ubyte) blend
+)(ref Pixel pxTarget, const Pixel pxSource) @trusted {
+	pragma(inline, true);
+
+	immutable alphaSource = (pxSource.a | (pxSource.a << 8));
+	immutable alphaTarget = (0xFFFF - alphaSource);
+
+	foreach (immutable ib, ref px; pxTarget.components) {
+		immutable b = blend(px, pxSource.components.ptr[ib]);
+		immutable d = cast(ubyte)(((px * alphaTarget) + 0x8080) >> 16);
+		immutable s = cast(ubyte)(((b * alphaSource) + 0x8080) >> 16);
 		px = cast(ubyte)(d + s);
 	}
 }
@@ -396,11 +412,7 @@ void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode =
 
 /// ditto
 void blendPixel(BlendMode mode)(ref Pixel target, const Pixel source) if (mode == Blend.multiply) {
-	function(ref Pixel target, const Pixel source) @trusted {
-		foreach (immutable ib, ref ch; target.components) {
-			ch = n255thsOf(source.components.ptr[ib], ch);
-		}
-	}(target, source);
+	return alphaBlend!((a, b) => n255thsOf(a, b))(target, source);
 }
 
 /// ditto
@@ -498,7 +510,7 @@ void drawRectangle(Pixmap target, Rectangle rectangle, Pixel color) {
 	Draws a line
  +/
 void drawLine(Pixmap target, Point a, Point b, Pixel color) {
-	import std.math : round, sqrt;
+	import std.math : sqrt;
 
 	// TODO: line width
 	// TODO: anti-aliasing (looks awful without it!)
