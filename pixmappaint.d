@@ -463,6 +463,8 @@ enum BlendMode {
 
 	darken,
 	lighten,
+
+	divide,
 }
 
 ///
@@ -530,6 +532,17 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 
 	return alphaBlend!(accuracy,
 		(a, b) => max(a, b)
+	)(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.divide) {
+
+	return alphaBlend!(accuracy,
+		(b, f) => (f == 0) ? ubyte(0xFF) : clamp255(0xFF * b / f)
 	)(target, source);
 }
 
