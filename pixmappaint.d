@@ -311,6 +311,16 @@ static if (hasGamutIntegration) {
 
 	/++
 		Creates a Pixmap copying the pixel data from the provided [GamutImage].
+
+		---
+		// Load image using Gamut
+		import gamut;
+		Image img;
+		img.loadFromFile("dunes.jpg");
+
+		// Convert to Pixmap
+		Pixmap pixmap = img.toPixmap();
+		---
 	 +/
 	bool toPixmap(ref GamutImage source, out Pixmap result) @trusted nothrow
 	in (source.isValid) {
