@@ -291,7 +291,9 @@ private {
 }
 
 /++
-	Integer square root
+	Calculates the square root
+	of an integer number
+	as an integer number.
  +/
 ubyte intSqrt(const ubyte value) @safe pure nothrow @nogc {
 	switch (value) {
@@ -353,7 +355,9 @@ unittest {
 }
 
 /++
-	Square root of a normalized integer
+	Calculates the square root
+	of the normalized value
+	representated by the input integer number.
 
 	Normalization:
 		`[0x00 .. 0xFF]` → `[0.0 .. 1.0]`
