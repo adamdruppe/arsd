@@ -18,6 +18,17 @@ import arsd.color;
 import arsd.core;
 import std.math : round;
 
+/*
+	## TODO
+
+	- Refactoring the template-mess of blendPixel() & co.
+	- A bunch more blend modes
+	- Scaling
+	- Rotating
+	- Skewing
+ */
+
+///
 alias Color = arsd.color.Color;
 
 ///
@@ -278,6 +289,479 @@ private {
 }
 
 /++
+	Integer square root
+ +/
+ubyte intSqrt(const ubyte value) @safe pure nothrow @nogc {
+	switch (value) {
+	default:
+		// unreachable
+		assert(false, "ubyte != uint8");
+	case 0:
+		return 0;
+	case 1: .. case 2:
+		return 1;
+	case 3: .. case 6:
+		return 2;
+	case 7: .. case 12:
+		return 3;
+	case 13: .. case 20:
+		return 4;
+	case 21: .. case 30:
+		return 5;
+	case 31: .. case 42:
+		return 6;
+	case 43: .. case 56:
+		return 7;
+	case 57: .. case 72:
+		return 8;
+	case 73: .. case 90:
+		return 9;
+	case 91: .. case 110:
+		return 10;
+	case 111: .. case 132:
+		return 11;
+	case 133: .. case 156:
+		return 12;
+	case 157: .. case 182:
+		return 13;
+	case 183: .. case 210:
+		return 14;
+	case 211: .. case 240:
+		return 15;
+	case 241: .. case 255:
+		return 16;
+	}
+}
+
+///
+unittest {
+	assert(intSqrt(4) == 2);
+	assert(intSqrt(9) == 3);
+	assert(intSqrt(10) == 3);
+}
+
+unittest {
+	import std.math : round, sqrt;
+
+	foreach (n; ubyte.min .. ubyte.max + 1) {
+		ubyte fp = sqrt(float(n)).round().castTo!ubyte;
+		ubyte i8 = intSqrt(n.castTo!ubyte);
+		assert(fp == i8);
+	}
+}
+
+/++
+	Square root of a normalized integer
+
+	Normalization:
+		`[0x00 .. 0xFF]` → `[0.0 .. 1.0]`
+
+	Returns:
+		sqrt(value / 255f) * 255
+ +/
+ubyte intNormalizedSqrt(const ubyte value) {
+	switch (value) {
+	default:
+		// unreachable
+		assert(false, "ubyte != uint8");
+	case 0x00:
+		return 0x00;
+	case 0x01:
+		return 0x10;
+	case 0x02:
+		return 0x17;
+	case 0x03:
+		return 0x1C;
+	case 0x04:
+		return 0x20;
+	case 0x05:
+		return 0x24;
+	case 0x06:
+		return 0x27;
+	case 0x07:
+		return 0x2A;
+	case 0x08:
+		return 0x2D;
+	case 0x09:
+		return 0x30;
+	case 0x0A:
+		return 0x32;
+	case 0x0B:
+		return 0x35;
+	case 0x0C:
+		return 0x37;
+	case 0x0D:
+		return 0x3A;
+	case 0x0E:
+		return 0x3C;
+	case 0x0F:
+		return 0x3E;
+	case 0x10:
+		return 0x40;
+	case 0x11:
+		return 0x42;
+	case 0x12:
+		return 0x44;
+	case 0x13:
+		return 0x46;
+	case 0x14:
+		return 0x47;
+	case 0x15:
+		return 0x49;
+	case 0x16:
+		return 0x4B;
+	case 0x17:
+		return 0x4D;
+	case 0x18:
+		return 0x4E;
+	case 0x19:
+		return 0x50;
+	case 0x1A:
+		return 0x51;
+	case 0x1B:
+		return 0x53;
+	case 0x1C:
+		return 0x54;
+	case 0x1D:
+		return 0x56;
+	case 0x1E:
+		return 0x57;
+	case 0x1F:
+		return 0x59;
+	case 0x20:
+		return 0x5A;
+	case 0x21:
+		return 0x5C;
+	case 0x22:
+		return 0x5D;
+	case 0x23:
+		return 0x5E;
+	case 0x24:
+		return 0x60;
+	case 0x25:
+		return 0x61;
+	case 0x26:
+		return 0x62;
+	case 0x27:
+		return 0x64;
+	case 0x28:
+		return 0x65;
+	case 0x29:
+		return 0x66;
+	case 0x2A:
+		return 0x67;
+	case 0x2B:
+		return 0x69;
+	case 0x2C:
+		return 0x6A;
+	case 0x2D:
+		return 0x6B;
+	case 0x2E:
+		return 0x6C;
+	case 0x2F:
+		return 0x6D;
+	case 0x30:
+		return 0x6F;
+	case 0x31:
+		return 0x70;
+	case 0x32:
+		return 0x71;
+	case 0x33:
+		return 0x72;
+	case 0x34:
+		return 0x73;
+	case 0x35:
+		return 0x74;
+	case 0x36:
+		return 0x75;
+	case 0x37:
+		return 0x76;
+	case 0x38:
+		return 0x77;
+	case 0x39:
+		return 0x79;
+	case 0x3A:
+		return 0x7A;
+	case 0x3B:
+		return 0x7B;
+	case 0x3C:
+		return 0x7C;
+	case 0x3D:
+		return 0x7D;
+	case 0x3E:
+		return 0x7E;
+	case 0x3F:
+		return 0x7F;
+	case 0x40:
+		return 0x80;
+	case 0x41:
+		return 0x81;
+	case 0x42:
+		return 0x82;
+	case 0x43:
+		return 0x83;
+	case 0x44:
+		return 0x84;
+	case 0x45:
+		return 0x85;
+	case 0x46:
+		return 0x86;
+	case 0x47: .. case 0x48:
+		return 0x87;
+	case 0x49:
+		return 0x88;
+	case 0x4A:
+		return 0x89;
+	case 0x4B:
+		return 0x8A;
+	case 0x4C:
+		return 0x8B;
+	case 0x4D:
+		return 0x8C;
+	case 0x4E:
+		return 0x8D;
+	case 0x4F:
+		return 0x8E;
+	case 0x50:
+		return 0x8F;
+	case 0x51:
+		return 0x90;
+	case 0x52: .. case 0x53:
+		return 0x91;
+	case 0x54:
+		return 0x92;
+	case 0x55:
+		return 0x93;
+	case 0x56:
+		return 0x94;
+	case 0x57:
+		return 0x95;
+	case 0x58:
+		return 0x96;
+	case 0x59: .. case 0x5A:
+		return 0x97;
+	case 0x5B:
+		return 0x98;
+	case 0x5C:
+		return 0x99;
+	case 0x5D:
+		return 0x9A;
+	case 0x5E:
+		return 0x9B;
+	case 0x5F: .. case 0x60:
+		return 0x9C;
+	case 0x61:
+		return 0x9D;
+	case 0x62:
+		return 0x9E;
+	case 0x63:
+		return 0x9F;
+	case 0x64: .. case 0x65:
+		return 0xA0;
+	case 0x66:
+		return 0xA1;
+	case 0x67:
+		return 0xA2;
+	case 0x68:
+		return 0xA3;
+	case 0x69: .. case 0x6A:
+		return 0xA4;
+	case 0x6B:
+		return 0xA5;
+	case 0x6C:
+		return 0xA6;
+	case 0x6D: .. case 0x6E:
+		return 0xA7;
+	case 0x6F:
+		return 0xA8;
+	case 0x70:
+		return 0xA9;
+	case 0x71: .. case 0x72:
+		return 0xAA;
+	case 0x73:
+		return 0xAB;
+	case 0x74:
+		return 0xAC;
+	case 0x75: .. case 0x76:
+		return 0xAD;
+	case 0x77:
+		return 0xAE;
+	case 0x78:
+		return 0xAF;
+	case 0x79: .. case 0x7A:
+		return 0xB0;
+	case 0x7B:
+		return 0xB1;
+	case 0x7C:
+		return 0xB2;
+	case 0x7D: .. case 0x7E:
+		return 0xB3;
+	case 0x7F:
+		return 0xB4;
+	case 0x80: .. case 0x81:
+		return 0xB5;
+	case 0x82:
+		return 0xB6;
+	case 0x83: .. case 0x84:
+		return 0xB7;
+	case 0x85:
+		return 0xB8;
+	case 0x86:
+		return 0xB9;
+	case 0x87: .. case 0x88:
+		return 0xBA;
+	case 0x89:
+		return 0xBB;
+	case 0x8A: .. case 0x8B:
+		return 0xBC;
+	case 0x8C:
+		return 0xBD;
+	case 0x8D: .. case 0x8E:
+		return 0xBE;
+	case 0x8F:
+		return 0xBF;
+	case 0x90: .. case 0x91:
+		return 0xC0;
+	case 0x92:
+		return 0xC1;
+	case 0x93: .. case 0x94:
+		return 0xC2;
+	case 0x95:
+		return 0xC3;
+	case 0x96: .. case 0x97:
+		return 0xC4;
+	case 0x98:
+		return 0xC5;
+	case 0x99: .. case 0x9A:
+		return 0xC6;
+	case 0x9B: .. case 0x9C:
+		return 0xC7;
+	case 0x9D:
+		return 0xC8;
+	case 0x9E: .. case 0x9F:
+		return 0xC9;
+	case 0xA0:
+		return 0xCA;
+	case 0xA1: .. case 0xA2:
+		return 0xCB;
+	case 0xA3: .. case 0xA4:
+		return 0xCC;
+	case 0xA5:
+		return 0xCD;
+	case 0xA6: .. case 0xA7:
+		return 0xCE;
+	case 0xA8:
+		return 0xCF;
+	case 0xA9: .. case 0xAA:
+		return 0xD0;
+	case 0xAB: .. case 0xAC:
+		return 0xD1;
+	case 0xAD:
+		return 0xD2;
+	case 0xAE: .. case 0xAF:
+		return 0xD3;
+	case 0xB0: .. case 0xB1:
+		return 0xD4;
+	case 0xB2:
+		return 0xD5;
+	case 0xB3: .. case 0xB4:
+		return 0xD6;
+	case 0xB5: .. case 0xB6:
+		return 0xD7;
+	case 0xB7:
+		return 0xD8;
+	case 0xB8: .. case 0xB9:
+		return 0xD9;
+	case 0xBA: .. case 0xBB:
+		return 0xDA;
+	case 0xBC:
+		return 0xDB;
+	case 0xBD: .. case 0xBE:
+		return 0xDC;
+	case 0xBF: .. case 0xC0:
+		return 0xDD;
+	case 0xC1: .. case 0xC2:
+		return 0xDE;
+	case 0xC3:
+		return 0xDF;
+	case 0xC4: .. case 0xC5:
+		return 0xE0;
+	case 0xC6: .. case 0xC7:
+		return 0xE1;
+	case 0xC8: .. case 0xC9:
+		return 0xE2;
+	case 0xCA:
+		return 0xE3;
+	case 0xCB: .. case 0xCC:
+		return 0xE4;
+	case 0xCD: .. case 0xCE:
+		return 0xE5;
+	case 0xCF: .. case 0xD0:
+		return 0xE6;
+	case 0xD1: .. case 0xD2:
+		return 0xE7;
+	case 0xD3:
+		return 0xE8;
+	case 0xD4: .. case 0xD5:
+		return 0xE9;
+	case 0xD6: .. case 0xD7:
+		return 0xEA;
+	case 0xD8: .. case 0xD9:
+		return 0xEB;
+	case 0xDA: .. case 0xDB:
+		return 0xEC;
+	case 0xDC: .. case 0xDD:
+		return 0xED;
+	case 0xDE: .. case 0xDF:
+		return 0xEE;
+	case 0xE0:
+		return 0xEF;
+	case 0xE1: .. case 0xE2:
+		return 0xF0;
+	case 0xE3: .. case 0xE4:
+		return 0xF1;
+	case 0xE5: .. case 0xE6:
+		return 0xF2;
+	case 0xE7: .. case 0xE8:
+		return 0xF3;
+	case 0xE9: .. case 0xEA:
+		return 0xF4;
+	case 0xEB: .. case 0xEC:
+		return 0xF5;
+	case 0xED: .. case 0xEE:
+		return 0xF6;
+	case 0xEF: .. case 0xF0:
+		return 0xF7;
+	case 0xF1: .. case 0xF2:
+		return 0xF8;
+	case 0xF3: .. case 0xF4:
+		return 0xF9;
+	case 0xF5: .. case 0xF6:
+		return 0xFA;
+	case 0xF7: .. case 0xF8:
+		return 0xFB;
+	case 0xF9: .. case 0xFA:
+		return 0xFC;
+	case 0xFB: .. case 0xFC:
+		return 0xFD;
+	case 0xFD: .. case 0xFE:
+		return 0xFE;
+	case 0xFF:
+		return 0xFF;
+	}
+}
+
+unittest {
+	import std.math : round, sqrt;
+
+	foreach (n; ubyte.min .. ubyte.max + 1) {
+		ubyte fp = (sqrt(n / 255.0f) * 255).round().castTo!ubyte;
+		ubyte i8 = intNormalizedSqrt(n.castTo!ubyte);
+		assert(fp == i8);
+	}
+}
+
+/++
 	Limits a value to a maximum of 0xFF (= 255).
  +/
 ubyte clamp255(Tint)(const Tint value) {
@@ -452,18 +936,46 @@ public void alphaBlend(ref Pixel pxTarget, const Pixel pxSource) @safe {
 
 // ==== Blending functions ====
 
+/++
+	Blend modes
+
+	$(NOTE
+		As blending operations are implemented as integer calculations,
+		results may be slightly less precise than those from image manipulation
+		programs using floating-point math.
+	)
+
+	See_Also:
+		<https://www.w3.org/TR/compositing/#blending>
+ +/
 enum BlendMode {
+	///
 	none = 0,
+	///
 	replace = none,
+	///
 	normal = 1,
+	///
 	alpha = normal,
 
+	///
 	multiply,
+	///
 	screen,
 
+	///
+	overlay,
+	///
+	hardLight,
+	///
+	softLight,
+
+	///
 	darken,
+	///
 	lighten,
 
+	///
 	divide,
 }
 
@@ -533,6 +1045,68 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 	return alphaBlend!(accuracy,
 		(a, b) => max(a, b)
 	)(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.overlay) {
+
+	return alphaBlend!(accuracy, function(const ubyte b, const ubyte f) {
+		if (b < 0x80) {
+			return n255thsOf((2 * b).castTo!ubyte, f);
+		}
+		return castTo!ubyte(
+			0xFF - n255thsOf(castTo!ubyte(2 * (0xFF - b)), (0xFF - f))
+		);
+	})(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.hardLight) {
+
+	return alphaBlend!(accuracy, function(const ubyte b, const ubyte f) {
+		if (f < 0x80) {
+			return n255thsOf(castTo!ubyte(2 * f), b);
+		}
+		return castTo!ubyte(
+			0xFF - n255thsOf(castTo!ubyte(2 * (0xFF - f)), (0xFF - b))
+		);
+	})(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.softLight) {
+
+	return alphaBlend!(accuracy, function(const ubyte b, const ubyte f) {
+		if (f < 0x80) {
+			// dfmt off
+			return castTo!ubyte(
+				b - n255thsOf(
+						n255thsOf((0xFF - 2 * f).castTo!ubyte, b),
+						(0xFF - b),
+					)
+			);
+			// dfmt on
+		}
+
+		// dfmt off
+		immutable ubyte d = (b < 0x40)
+			? castTo!ubyte((b * (0x3FC + (((16 * b - 0xBF4) * b) / 255))) / 255)
+			: intNormalizedSqrt(b);
+		//dfmt on
+
+		return castTo!ubyte(
+			b + n255thsOf((2 * f - 0xFF).castTo!ubyte, (d - b).castTo!ubyte)
+		);
+	})(target, source);
 }
 
 /// ditto
