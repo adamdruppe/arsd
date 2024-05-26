@@ -42,6 +42,11 @@ static if(__traits(compiles, () { import core.interpolation; })) {
 	struct InterpolatedExpression(string code) {}
 }
 
+version(use_arsd_core)
+	enum use_arsd_core = true;
+else
+	enum use_arsd_core = false;
+
 import core.attribute;
 static if(__traits(hasMember, core.attribute, "implicit"))
 	alias implicit = core.attribute.implicit;
@@ -79,6 +84,7 @@ else
 	version = HasSocket;
 	version = HasThread;
 	version = HasErrno;
+	version = HasTimer;
 }
 
 version(HasThread)
@@ -1553,7 +1559,7 @@ class InvalidArgumentsException : ArsdExceptionBase {
 	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
 		// FIXME: print the details better
 		foreach(arg; invalidArguments)
-			sink("invalidArguments[]", arg.name ~ " " ~ arg.description);
+			sink(arg.name, arg.givenValue.toString ~ " - " ~ arg.description);
 	}
 }
 
@@ -3088,6 +3094,339 @@ enum OnOutOfSpace {
 	discard, /// discard all contents that do not fit in your provided buffer
 	exception, /// throw an exception if there is data that would not fit in your provided buffer
 }
+
+
+
+/+
+	The GC can be called from any thread, and a lot of cleanup must be done
+	on the gui thread. Since the GC can interrupt any locks - including being
+	triggered inside a critical section - it is vital to avoid deadlocks to get
+	these functions called from the right place.
+
+	If the buffer overflows, things are going to get leaked. I'm kinda ok with that
+	right now.
+
+	The cleanup function is run when the event loop gets around to it, which is just
+	whenever there's something there after it has been woken up for other work. It does
+	NOT wake up the loop itself - can't risk doing that from inside the GC in another thread.
+	(Well actually it might be ok but i don't wanna mess with it right now.)
++/
+package(arsd) struct CleanupQueue {
+	import core.stdc.stdlib;
+
+	void queue(alias func, T...)(T args) {
+		static struct Args {
+			T args;
+		}
+		static struct RealJob {
+			Job j;
+			Args a;
+		}
+		static void call(Job* data) {
+			auto rj = cast(RealJob*) data;
+			func(rj.a.args);
+		}
+
+		RealJob* thing = cast(RealJob*) malloc(RealJob.sizeof);
+		thing.j.call = &call;
+		thing.a.args = args;
+
+		buffer[tail++] = cast(Job*) thing;
+
+		// FIXME: set overflowed
+	}
+
+	void process() {
+		const tail = this.tail;
+
+		while(tail != head) {
+			Job* job = cast(Job*) buffer[head++];
+			job.call(job);
+			free(job);
+		}
+
+		if(overflowed)
+			throw new object.Exception("cleanup overflowed");
+	}
+
+	private:
+
+	ubyte tail; // must ONLY be written by queue
+	ubyte head; // must ONLY be written by process
+	bool overflowed;
+
+	static struct Job {
+		void function(Job*) call;
+	}
+
+	void*[256] buffer;
+}
+package(arsd) __gshared CleanupQueue cleanupQueue;
+
+
+
+
+/++
+	A timer that will trigger your function on a given interval.
+
+
+	You create a timer with an interval and a callback. It will continue
+	to fire on the interval until it is destroyed.
+
+	---
+	auto timer = new Timer(50, { it happened!; });
+	timer.destroy();
+	---
+
+	Timers can only be expected to fire when the event loop is running and only
+	once per iteration through the event loop.
+
+	History:
+		Prior to December 9, 2020, a timer pulse set too high with a handler too
+		slow could lock up the event loop. It now guarantees other things will
+		get a chance to run between timer calls, even if that means not keeping up
+		with the requested interval.
++/
+version(HasTimer)
+class Timer {
+	// FIXME: absolute time vs relative time
+	// FIXME: real time?
+
+	// FIXME: I might add overloads for ones that take a count of
+	// how many elapsed since last time (on Windows, it will divide
+	// the ticks thing given, on Linux it is just available) and
+	// maybe one that takes an instance of the Timer itself too
+
+
+	/++
+		Creates an initialized, but unarmed timer. You must call other methods later.
+	+/
+	this() {
+		initialize();
+	}
+
+	private void initialize() {
+		version(Windows) {
+			handle = CreateWaitableTimer(null, false, null);
+			if(handle is null)
+				throw new WindowsApiException("CreateWaitableTimer", GetLastError());
+			cbh = new CallbackHelper(&trigger);
+		} else version(linux) {
+			import core.sys.linux.timerfd;
+
+			fd = timerfd_create(CLOCK_MONOTONIC, 0);
+			if(fd == -1)
+				throw new Exception("timer create failed");
+
+			auto el = getThisThreadEventLoop(EventLoopType.Ui);
+			unregisterToken = el.addCallbackOnFdReadable(fd, new CallbackHelper(&trigger));
+		} else throw new NotYetImplementedException();
+		// FIXME: freebsd 12 has timer_fd and netbsd 10 too
+	}
+
+	/++
+	+/
+	void setPulseCallback(void delegate() onPulse) {
+		assert(onPulse !is null);
+		this.onPulse = onPulse;
+	}
+
+	/++
+	+/
+	void changeTime(int intervalInMilliseconds, bool repeats) {
+		this.intervalInMilliseconds = intervalInMilliseconds;
+		this.repeats = repeats;
+		changeTimeInternal(intervalInMilliseconds, repeats);
+	}
+
+	private void changeTimeInternal(int intervalInMilliseconds, bool repeats) {
+		version(Windows)
+		{
+			LARGE_INTEGER initialTime;
+			initialTime.QuadPart = -intervalInMilliseconds * 10000000L / 1000; // Windows wants hnsecs, we have msecs
+			if(!SetWaitableTimer(handle, &initialTime, repeats ? intervalInMilliseconds : 0, &timerCallback, cast(void*) cbh, false))
+				throw new WindowsApiException("SetWaitableTimer", GetLastError());
+		} else version(linux) {
+			import core.sys.linux.timerfd;
+
+			itimerspec value = makeItimerspec(intervalInMilliseconds, repeats);
+			if(timerfd_settime(fd, 0, &value, null) == -1) {
+				throw new ErrnoApiException("couldn't change pulse timer", errno);
+			}
+		} else {
+			throw new NotYetImplementedException();
+		}
+		// FIXME: freebsd 12 has timer_fd and netbsd 10 too
+	}
+
+	/++
+	+/
+	void pause() {
+		// FIXME this kinda makes little sense tbh
+		// when it restarts, it won't be on the same rhythm as it was at first...
+		changeTimeInternal(0, false);
+	}
+
+	/++
+	+/
+	void unpause() {
+		changeTimeInternal(this.intervalInMilliseconds, this.repeats);
+	}
+
+	/++
+	+/
+	void cancel() {
+		version(Windows)
+			CancelWaitableTimer(handle);
+		else
+			changeTime(0, false);
+	}
+
+
+	/++
+		Create a timer with a callback when it triggers.
+	+/
+	this(int intervalInMilliseconds, void delegate() onPulse, bool repeats = true) @trusted {
+		assert(onPulse !is null);
+
+		initialize();
+		setPulseCallback(onPulse);
+		changeTime(intervalInMilliseconds, repeats);
+	}
+
+	version(Windows) {} else {
+		ICoreEventLoop.UnregisterToken unregisterToken;
+	}
+
+	// just cuz I sometimes call it this.
+	alias dispose = destroy;
+
+	/++
+		Stop and destroy the timer object.
+
+		You should not use it again after destroying it.
+	+/
+	void destroy() {
+		version(Windows) {
+			cbh.release();
+		} else {
+			unregisterToken.unregister();
+		}
+
+		version(Windows) {
+			staticDestroy(handle);
+			handle = null;
+		} else version(linux) {
+			staticDestroy(fd);
+			fd = -1;
+		} else throw new NotYetImplementedException();
+	}
+
+	~this() {
+		version(Windows) {} else
+			cleanupQueue.queue!unregister(unregisterToken);
+		version(Windows) { if(handle)
+			cleanupQueue.queue!staticDestroy(handle);
+		} else version(linux) { if(fd != -1)
+			cleanupQueue.queue!staticDestroy(fd);
+		}
+	}
+
+
+	private:
+
+	version(Windows)
+	static void staticDestroy(HANDLE handle) {
+		if(handle) {
+			// KillTimer(null, handle);
+			CancelWaitableTimer(cast(void*)handle);
+			CloseHandle(handle);
+		}
+	}
+	else version(linux)
+	static void staticDestroy(int fd) @system {
+		if(fd != -1) {
+			import unix = core.sys.posix.unistd;
+
+			unix.close(fd);
+		}
+	}
+
+	version(Windows) {} else
+	static void unregister(arsd.core.ICoreEventLoop.UnregisterToken urt) {
+		urt.unregister();
+	}
+
+
+	void delegate() onPulse;
+	int intervalInMilliseconds;
+	bool repeats;
+
+	int lastEventLoopRoundTriggered;
+
+	version(linux) {
+		static auto makeItimerspec(int intervalInMilliseconds, bool repeats) {
+			import core.sys.linux.timerfd;
+
+			itimerspec value;
+			value.it_value.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+			value.it_value.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+
+			if(repeats) {
+				value.it_interval.tv_sec = cast(int) (intervalInMilliseconds / 1000);
+				value.it_interval.tv_nsec = (intervalInMilliseconds % 1000) * 1000_000;
+			}
+
+			return value;
+		}
+	}
+
+	void trigger() {
+		version(linux) {
+			import unix = core.sys.posix.unistd;
+			long val;
+			unix.read(fd, &val, val.sizeof); // gotta clear the pipe
+		} else version(Windows) {
+			if(this.lastEventLoopRoundTriggered == eventLoopRound)
+				return; // never try to actually run faster than the event loop
+			lastEventLoopRoundTriggered = eventLoopRound;
+		} else throw new NotYetImplementedException();
+
+		if(onPulse)
+			onPulse();
+	}
+
+	version(Windows)
+		extern(Windows)
+		//static void timerCallback(HWND, UINT, UINT_PTR timer, DWORD dwTime) nothrow {
+		static void timerCallback(void* timer, DWORD lowTime, DWORD hiTime) nothrow {
+			auto cbh = cast(CallbackHelper) timer;
+			try
+				cbh.call();
+			catch(Throwable e) { sdpy_abort(e); assert(0); }
+		}
+
+	version(Windows) {
+		HANDLE handle;
+		CallbackHelper cbh;
+	} else version(linux) {
+		int fd = -1;
+	} else version(OSXCocoa) {
+	} else static assert(0, "timer not supported");
+}
+
+version(Windows)
+	private void sdpy_abort(Throwable e) nothrow {
+		try
+			MessageBoxA(null, (e.toString() ~ "\0").ptr, "Exception caught in WndProc", 0);
+		catch(Exception e)
+			MessageBoxA(null, "Exception.toString threw too!", "Exception caught in WndProc", 0);
+		ExitProcess(1);
+	}
+
+
+private int eventLoopRound = -1; // so things that assume 0 still work eg lastEventLoopRoundTriggered
+
 
 
 /++
@@ -4935,6 +5274,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		// the other queues go through one byte at a time pipes (barf). freebsd 13 and newest nbsd have eventfd too tho so maybe i can use them but the other kqueue systems don't.
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
+			scope(exit) eventLoopRound++;
 			kevent_t[16] ev;
 			//timespec tout = timespec(1, 0);
 			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, null/*&tout*/);
@@ -5103,6 +5443,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		bool isWorker; // if it is a worker we wait on the iocp, if not we wait on msg
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
+			scope(exit) eventLoopRound++;
 			if(isWorker) {
 				// this function is only supported on Windows Vista and up, so using this
 				// means dropping support for XP.
@@ -5438,6 +5779,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		// on the global one directly.
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
+			scope(exit) eventLoopRound++;
 			epoll_event[16] events;
 			auto ret = epoll_wait(epollfd, events.ptr, cast(int) events.length, -1); // FIXME: timeout
 			if(ret == -1) {
@@ -6841,6 +7183,7 @@ struct Timeout {
 }
 
 Timeout setTimeout(void delegate() dg, int msecs, int permittedJitter = 20) {
+static assert(0);
 	return Timeout.init;
 }
 

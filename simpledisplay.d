@@ -1118,8 +1118,6 @@ unittest {
 	}
 }
 
-import arsd.core;
-
 // FIXME: tetris demo
 // FIXME: space invaders demo
 // FIXME: asteroids demo
@@ -5676,6 +5674,9 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 		with the requested interval.
 */
 version(with_timer) {
+version(use_arsd_core)
+	alias Timer = arsd.core.Timer; // FIXME should probably wrap it for a stable api
+else
 class Timer {
 // FIXME: needs pause and unpause
 	// FIXME: I might add overloads for ones that take a count of
@@ -5723,11 +5724,6 @@ class Timer {
 			version(with_eventloop) {
 				import arsd.eventloop;
 				addFileEventListeners(fd, &trigger, null, null);
-			} else version(use_arsd_core) {
-				import arsd.core;
-				auto el = getThisThreadEventLoop(EventLoopType.Ui);
-
-				unregisterToken = el.addCallbackOnFdReadable(fd, new CallbackHelper(&trigger));
 			} else {
 				prepareEventLoop();
 
@@ -5739,13 +5735,6 @@ class Timer {
 		} else featureNotImplemented();
 	}
 
-	version(use_arsd_core) {
-		version(Windows) {} else {
-			import arsd.core;
-			ICoreEventLoop.UnregisterToken unregisterToken;
-		}
-	}
-
 	private int intervalInMilliseconds;
 
 	// just cuz I sometimes call it this.
@@ -5753,11 +5742,6 @@ class Timer {
 
 	/// Stop and destroy the timer object.
 	void destroy() {
-		version(use_arsd_core) {
-			version(Windows) {} else
-				unregisterToken.unregister();
-		}
-
 		version(Windows) {
 			staticDestroy(handle);
 			handle = null;
@@ -5797,17 +5781,7 @@ class Timer {
 		}
 	}
 
-	version(use_arsd_core) { version(Windows) {} else
-	static void unregister(arsd.core.ICoreEventLoop.UnregisterToken urt) {
-		urt.unregister();
-	}
-	}
-
 	~this() {
-		version(use_arsd_core) { version(Windows) {} else
-			cleanupQueue.queue!unregister(unregisterToken);
-		}
-
 		version(Windows) { if(handle)
 			cleanupQueue.queue!staticDestroy(handle);
 		} else version(linux) { if(fd != -1)
@@ -22576,72 +22550,6 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
                         mixin(name ~ " = null;");
         }
 }
-
-/+
-	The GC can be called from any thread, and a lot of cleanup must be done
-	on the gui thread. Since the GC can interrupt any locks - including being
-	triggered inside a critical section - it is vital to avoid deadlocks to get
-	these functions called from the right place.
-
-	If the buffer overflows, things are going to get leaked. I'm kinda ok with that
-	right now.
-
-	The cleanup function is run when the event loop gets around to it, which is just
-	whenever there's something there after it has been woken up for other work. It does
-	NOT wake up the loop itself - can't risk doing that from inside the GC in another thread.
-	(Well actually it might be ok but i don't wanna mess with it right now.)
-+/
-private struct CleanupQueue {
-	import core.stdc.stdlib;
-
-	void queue(alias func, T...)(T args) {
-		static struct Args {
-			T args;
-		}
-		static struct RealJob {
-			Job j;
-			Args a;
-		}
-		static void call(Job* data) {
-			auto rj = cast(RealJob*) data;
-			func(rj.a.args);
-		}
-
-		RealJob* thing = cast(RealJob*) malloc(RealJob.sizeof);
-		thing.j.call = &call;
-		thing.a.args = args;
-
-		buffer[tail++] = cast(Job*) thing;
-
-		// FIXME: set overflowed
-	}
-
-	void process() {
-		const tail = this.tail;
-
-		while(tail != head) {
-			Job* job = cast(Job*) buffer[head++];
-			job.call(job);
-			free(job);
-		}
-
-		if(overflowed)
-			throw new Exception("cleanup overflowed");
-	}
-
-	private:
-
-	ubyte tail; // must ONLY be written by queue
-	ubyte head; // must ONLY be written by process
-	bool overflowed;
-
-	static struct Job {
-		void function(Job*) call;
-	}
-
-	void*[256] buffer;
-}
-private __gshared CleanupQueue cleanupQueue;
 
 // version(X11)
 /++

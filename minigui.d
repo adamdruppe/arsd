@@ -319,6 +319,7 @@ unittest {
 
 
 import arsd.core;
+alias Timer = arsd.simpledisplay.Timer;
 public import arsd.simpledisplay;
 /++
 	Convenience import to override the Windows GDI Rectangle function (you can still use it through fully-qualified imports)
