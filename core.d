@@ -189,6 +189,45 @@ version(Posix) {
 	=========================
 +/
 
+/++
+	Casts value `v` to type `T`.
+
+	$(TIP
+		This is a helper function for readability purposes.
+		The idea is to make type-casting as accessible as `to()` from `std.conv`.
+	)
+
+	---
+	int i =  cast(int)(foo * bar);
+	int i = castTo!int(foo * bar);
+
+	int j = cast(int) round(floatValue);
+	int j = round(floatValue).castTo!int;
+
+	int k = cast(int) floatValue  + foobar;
+	int k = floatValue.castTo!int + foobar;
+
+	auto m = Point(
+		cast(int) calc(a.x, b.x),
+		cast(int) calc(a.y, b.y),
+	);
+	auto m = Point(
+		calc(a.x, b.x).castTo!int,
+		calc(a.y, b.y).castTo!int,
+	);
+	---
+
+	History:
+		Added on April 24, 2024.
+		Renamed from `typeCast` to `castTo` on May 24, 2024.
+ +/
+auto ref T castTo(T, S)(auto ref S v) {
+	return cast(T) v;
+}
+
+///
+alias typeCast = castTo;
+
 // enum stringz : const(char)* { init = null }
 
 /++

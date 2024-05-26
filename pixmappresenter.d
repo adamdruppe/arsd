@@ -87,7 +87,6 @@
 
 	---
 	import arsd.pixmappresenter;
-	import arsd.simpledisplay : MouseEvent;
 
 	int main() {
 		// Internal resolution of the images (“frames”) we will render.
@@ -157,8 +156,22 @@
  +/
 module arsd.pixmappresenter;
 
-import arsd.color;
-import arsd.simpledisplay;
+import arsd.core;
+
+/++
+	While publicly importing `arsd.simpledisplay` is not actually necessary,
+	most real-world code would eventually import said module as well anyway.
+
+	More importantly, this public import prevents users from facing certain
+	symbol clashes in their code that would occur in modules importing both
+	`pixmappresenter` and `simpledisplay`.
+	For instance both of these modules happen to define different types
+	as `Pixmap`.
+ +/
+public import arsd.simpledisplay;
+
+///
+public import arsd.pixmappaint;
 
 /*
 	## TODO
@@ -166,9 +179,6 @@ import arsd.simpledisplay;
 	- More comprehensive documentation
 	- Additional renderer implementations:
 		- a `ScreenPainter`-based renderer
-		- a legacy OpenGL renderer (maybe)
-	- Is there something in arsd that serves a similar purpose to `Pixmap`?
-		- Can we convert to/from it?
 	- Minimum window size
 		- to ensure `Scaling.integer` doesn’t break “unexpectedly”
 	- More control over timing
@@ -176,128 +186,13 @@ import arsd.simpledisplay;
  */
 
 ///
-alias Pixel = Color;
-
-///
-alias ColorF = arsd.color.ColorF;
-
-///
-alias Size = arsd.color.Size;
-
-///
-alias Point = arsd.color.Point;
+alias Pixmap = arsd.pixmappaint.Pixmap;
 
 ///
 alias WindowResizedCallback = void delegate(Size);
 
-// verify assumption(s)
-static assert(Pixel.sizeof == uint.sizeof);
-
 // is the Timer class available on this platform?
 private enum hasTimer = is(Timer == class);
-
-/// casts value `v` to type `T`
-auto ref T typeCast(T, S)(auto ref S v) {
-	return cast(T) v;
-}
-
-@safe pure nothrow @nogc {
-	///
-	Pixel rgba(ubyte r, ubyte g, ubyte b, ubyte a = 0xFF) {
-		return Pixel(r, g, b, a);
-	}
-
-	///
-	Pixel rgb(ubyte r, ubyte g, ubyte b) {
-		return rgba(r, g, b, 0xFF);
-	}
-}
-
-/++
-	Pixel data container
- +/
-struct Pixmap {
-
-	/// Pixel data
-	Pixel[] data;
-
-	/// Pixel per row
-	int width;
-
-@safe pure nothrow:
-
-	///
-	this(Size size) {
-		this.size = size;
-	}
-
-	///
-	this(Pixel[] data, int width) @nogc
-	in (data.length % width == 0) {
-		this.data = data;
-		this.width = width;
-	}
-
-	// undocumented: really shouldn’t be used.
-	// carries the risks of `length` and `width` getting out of sync accidentally.
-	deprecated("Use `size` instead.")
-	void length(int value) {
-		data.length = value;
-	}
-
-	/++
-		Changes the size of the buffer
-
-		Reallocates the underlying pixel array.
-	 +/
-	void size(Size value) {
-		data.length = value.area;
-		width = value.width;
-	}
-
-	/// ditto
-	void size(int totalPixels, int width)
-	in (totalPixels % width == 0) {
-		data.length = totalPixels;
-		this.width = width;
-	}
-
-@safe pure nothrow @nogc:
-
-	/// Height of the buffer, i.e. the number of lines
-	int height() inout {
-		if (width == 0) {
-			return 0;
-		}
-
-		return typeCast!int(data.length / width);
-	}
-
-	/// Rectangular size of the buffer
-	Size size() inout {
-		return Size(width, height);
-	}
-
-	/// Length of the buffer, i.e. the number of pixels
-	int length() inout {
-		return typeCast!int(data.length);
-	}
-
-	/++
-		Number of bytes per line
-
-		Returns:
-			width × Pixel.sizeof
-	 +/
-	int pitch() inout {
-		return (width * int(Pixel.sizeof));
-	}
-
-	/// Clears the buffer’s contents (by setting each pixel to the same color)
-	void clear(Pixel value) {
-		data[] = value;
-	}
-}
 
 // viewport math
 private @safe pure nothrow @nogc {
@@ -341,7 +236,7 @@ private @safe pure nothrow @nogc {
 
 	Point offsetCenter(const Size drawing, const Size canvas) {
 		auto delta = canvas.deltaPerimeter(drawing);
-		return (typeCast!Point(delta) >> 1);
+		return (castTo!Point(delta) >> 1);
 	}
 }
 
@@ -381,8 +276,8 @@ Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow 
 	case Scaling.contain:
 		const float scaleF = karContainScalingFactorF(config.renderer.resolution, config.window.size);
 		size = Size(
-			typeCast!int(scaleF * config.renderer.resolution.width),
-			typeCast!int(scaleF * config.renderer.resolution.height),
+			castTo!int(scaleF * config.renderer.resolution.width),
+			castTo!int(scaleF * config.renderer.resolution.height),
 		);
 		break;
 
@@ -400,8 +295,8 @@ Viewport calculateViewport(const ref PresenterConfig config) @safe pure nothrow 
 	case Scaling.cover:
 		const float fillF = karCoverScalingFactorF(config.renderer.resolution, config.window.size);
 		size = Size(
-			typeCast!int(fillF * config.renderer.resolution.width),
-			typeCast!int(fillF * config.renderer.resolution.height),
+			castTo!int(fillF * config.renderer.resolution.width),
+			castTo!int(fillF * config.renderer.resolution.height),
 		);
 		break;
 	}
@@ -652,7 +547,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				0, 0,
 				_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 				GL_RGBA, GL_UNSIGNED_BYTE,
-				typeCast!(void*)(_poc.framebuffer.data.ptr)
+				castTo!(void*)(_poc.framebuffer.data.ptr)
 			);
 
 			glUseProgram(_shader.shaderProgram);
@@ -707,7 +602,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, null);
 			glEnableVertexAttribArray(0);
 
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, typeCast!(void*)(2 * GLfloat.sizeof));
+			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * GLfloat.sizeof, castTo!(void*)(2 * GLfloat.sizeof));
 			glEnableVertexAttribArray(1);
 		}
 
@@ -888,7 +783,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 					0, 0,
 					_poc.config.renderer.resolution.width, _poc.config.renderer.resolution.height,
 					GL_RGBA, GL_UNSIGNED_BYTE,
-					typeCast!(void*)(_poc.framebuffer.data.ptr)
+					castTo!(void*)(_poc.framebuffer.data.ptr)
 				);
 
 				glBegin(GL_QUADS);

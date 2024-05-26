@@ -682,12 +682,26 @@
 			}
 		},
 		{
+			"name": "pixmappaint",
+			"description": "2D drawing companion library of Pixmap Presenter.",
+			"targetType": "library",
+			"sourceFiles": ["pixmappaint.d"],
+			"dependencies": {
+				"arsd-official:color_base":"*",
+				"arsd-official:core":"*"
+			},
+			"dflags-dmd": ["-mv=arsd.pixmappaint=$PACKAGE_DIR/pixmappaint.d"],
+			"dflags-ldc": ["--mv=arsd.pixmappaint=$PACKAGE_DIR/pixmappaint.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.pixmappaint=$PACKAGE_DIR/pixmappaint.d"]
+		},
+		{
 			"name": "pixmappresenter",
 			"description": "High-level display library. Designed to blit fully-rendered frames to the screen.",
 			"targetType": "library",
 			"sourceFiles": ["pixmappresenter.d"],
 			"dependencies": {
-				"arsd-official:color_base":"*",
+				"arsd-official:core":"*",
+				"arsd-official:pixmappaint":"*",
 				"arsd-official:simpledisplay":"*"
 			},
 			"dflags-dmd": ["-mv=arsd.pixmappresenter=$PACKAGE_DIR/pixmappresenter.d"],
