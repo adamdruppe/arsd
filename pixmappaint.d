@@ -280,9 +280,95 @@ private struct OriginRectangle {
 	}
 }
 
+// ==== Gamut integration ====
+
+/++
+	Reports whether the integration functionality for
+	the $(B Gamut) image decoding/encoding library by $(I AuburnSounds)
+	is available.
+
+	Compile-time setting that is automatically enabled
+	if importing `Image` from module `gamut` succeeds.
+
+	See_Also:
+		<https://github.com/AuburnSounds/gamut>
+ +/
+enum bool hasGamutIntegration = __traits(compiles, () { import gamut : GamutImage = Image; });
+
+//static if (hasGamutIntegration) {
+//	pragma(msg, "arsd.pixmappaint: Gamut integration enabled");
+//}
+
+/++
+	This means that something went wrong using the $(I Gamut) integration of Pixmap Paint.
++/
+class GamutIntegrationException : ArsdExceptionBase {
+	this(string operation, string file = __FILE__, size_t line = __LINE__, Throwable next = null) @trusted {
+		super(operation, file, line, next);
+	}
+}
+
+static if (hasGamutIntegration) {
+	import gamut : GamutImage = Image;
+
+	/++
+		Creates a Pixmap copying the pixel data from the provided [GamutImage].
+	 +/
+	bool toPixmap(ref GamutImage source, out Pixmap result) @trusted nothrow
+	in (source.isValid) {
+		import gamut;
+
+		enum supportedLayout = (LAYOUT_GAPLESS | LAYOUT_VERT_STRAIGHT);
+		enum supportedFormat = PixelType.rgba8;
+
+		immutable bool needsConversion = (
+			(source.layoutConstraints != supportedLayout)
+				|| (source.type != supportedFormat)
+		);
+
+		if (needsConversion) {
+			source = source.clone();
+
+			immutable conversionSuccessful = source.convertTo(supportedFormat, supportedLayout);
+			if (!conversionSuccessful) {
+				return false;
+			}
+		}
+
+		Pixel[] data = source.allPixelsAtOnce()
+			.castTo!(void[])
+			.castTo!(Pixel[])
+			.dup;
+
+		result = Pixmap(data, source.width);
+		return true;
+	}
+
+	/++
+		Creates a Pixmap copying the pixel data from the provided [GamutImage].
+	 +/
+	Pixmap toPixmap(ref GamutImage source) @safe {
+		if (source.isError) {
+			import std.format : format;
+
+			throw new GamutIntegrationException(format!"Invalid source image. Gamut reports: \"%s\""(source.errorMessage));
+		}
+
+		Pixmap result;
+		const success = toPixmap(source, result);
+
+		if (!success) {
+			throw new GamutIntegrationException("Failed to convert `gamut`.`Image` to a supported format.");
+		}
+
+		return result;
+	}
+}
+
 @safe pure nothrow @nogc:
 
-// misc
+// ==== Misc functions ====
+
 private {
 	Point pos(Rectangle r) => r.upperLeft;
 
