@@ -4957,7 +4957,7 @@ class WebSocket {
 			return true;
 		if(r <= 0) {
 			//import std.stdio; writeln(WSAGetLastError());
-			throw new Exception("Socket receive failed " ~ lastSocketError());
+			return false;
 		}
 		receiveBufferUsedLength += r;
 		return true;
@@ -5062,17 +5062,47 @@ class WebSocket {
 
 	/++
 		Closes the connection, sending a graceful teardown message to the other side.
+		If you provide no arguments, it sends code 1000, normal closure. If you provide
+		a code, you should also provide a short reason string.
 
-		Code 1000 is the normal closure code.
+		Params:
+			code = reason code.
+
+			0-999 are invalid.
+			1000-2999 are defined by the RFC. [https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1]
+				1000 - normal finish
+				1001 - endpoint going away
+				1002 - protocol error
+				1003 - unacceptable data received (e.g. binary message when you can't handle it)
+				1004 - reserved
+				1005 - missing status code (should not be set except by implementations)
+				1006 - abnormal connection closure (should only be set by implementations)
+				1007 - inconsistent data received (i.e. utf-8 decode error in text message)
+				1008 - policy violation
+				1009 - received message too big
+				1010 - client aborting due to required extension being unsupported by the server
+				1011 - server had unexpected failure
+				1015 - reserved for TLS handshake failure
+			3000-3999 are to be registered with IANA.
+			4000-4999 are private-use custom codes depending on the application. These are what you'd most commonly set here.
+
+			reason = <= 123 bytes of human-readable reason text, used for logs and debugging
 
 		History:
 			The default `code` was changed to 1000 on January 9, 2023. Previously it was 0,
 			but also ignored anyway.
+
+			On May 11, 2024, the optional arguments were changed to overloads since if you provide a code, you should also provide a reason.
 	+/
 	/// Group: foundational
-	void close(int code = 1000, string reason = null)
+	void close() {
+		close(1000, null);
+	}
+
+	/// ditto
+	void close(int code, string reason)
 		//in (reason.length < 123)
-		in { assert(reason.length < 123); } do
+		in { assert(reason.length <= 123); } do
 	{
 		if(readyState_ != OPEN)
 			return; // it cool, we done
@@ -5089,6 +5119,11 @@ class WebSocket {
 
 		llclose();
 	}
+
+	deprecated("If you provide a code, please also provide a reason string") void close(int code) {
+		close(code, null);
+	}
+
 
 	private bool closeCalled;
 
@@ -5172,7 +5207,8 @@ class WebSocket {
 		if(!isDataPending())
 			return true;
 		while(isDataPending())
-			lowLevelReceive();
+			if(lowLevelReceive() == false)
+				return false;
 		goto checkAgain;
 	}
 
@@ -5271,6 +5307,7 @@ class WebSocket {
 					readyState_ = CLOSED;
 
 					unregisterActiveSocket(this);
+					socket.close();
 				break;
 				case WebSocketOpcode.ping:
 					// import std.stdio; writeln("ping received ", m.data);
@@ -5381,6 +5418,7 @@ class WebSocket {
 				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection lost", false, lastSocketError()));
 
 			unregisterActiveSocket(sock);
+			sock.socket.close();
 			return false;
 		}
 		while(sock.processOnce().populated) {}
@@ -5398,9 +5436,9 @@ class WebSocket {
 			if(sock.onclose)
 				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, null));
 
-			sock.socket.close();
 			sock.readyState_ = CLOSED;
 			unregisterActiveSocket(sock);
+			sock.socket.close();
 			return false;
 		}
 
@@ -5582,6 +5620,7 @@ template addToSimpledisplayEventLoop() {
 			if(!ws.lowLevelReceive()) {
 				ws.readyState_ = WebSocket.CLOSED;
 				WebSocket.unregisterActiveSocket(ws);
+				ws.socket.close();
 				return;
 			}
 			while(ws.processOnce().populated) {}
