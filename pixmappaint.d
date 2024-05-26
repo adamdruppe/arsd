@@ -24,8 +24,10 @@ import std.math : round;
 	- Refactoring the template-mess of blendPixel() & co.
 	- A bunch more blend modes
 	- Scaling
+	- Cropping
 	- Rotating
 	- Skewing
+	- HSL
  */
 
 ///
@@ -976,6 +978,17 @@ enum BlendMode {
 	lighten,
 
 	///
+	colorDodge,
+	///
+	colorBurn,
+
+	///
+	difference,
+	///
+	exclusion,
+	///
+	subtract,
+	///
 	divide,
 }
 
@@ -1107,6 +1120,81 @@ void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
 			b + n255thsOf((2 * f - 0xFF).castTo!ubyte, (d - b).castTo!ubyte)
 		);
 	})(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.colorDodge) {
+
+	return alphaBlend!(accuracy, function(const ubyte b, const ubyte f) {
+		if (b == 0x00) {
+			return ubyte(0x00);
+		}
+		if (f == 0xFF) {
+			return ubyte(0xFF);
+		}
+		return min(
+			ubyte(0xFF),
+			clamp255((255 * b) / (0xFF - f))
+		);
+	})(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.colorBurn) {
+
+	return alphaBlend!(accuracy, function(const ubyte b, const ubyte f) {
+		if (b == 0xFF) {
+			return ubyte(0xFF);
+		}
+		if (f == 0x00) {
+			return ubyte(0x00);
+		}
+
+		immutable m = min(
+			ubyte(0xFF),
+			clamp255(((0xFF - b) * 255) / f)
+		);
+		return castTo!ubyte(0xFF - m);
+	})(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.difference) {
+
+	return alphaBlend!(accuracy,
+		(b, f) => (b > f) ? castTo!ubyte(b - f) : castTo!ubyte(f - b)
+	)(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.exclusion) {
+
+	return alphaBlend!(accuracy,
+		(b, f) => castTo!ubyte(b + f - (2 * n255thsOf(f, b)))
+	)(target, source);
+}
+
+/// ditto
+void blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)(
+	ref Pixel target,
+	const Pixel source,
+) if (mode == Blend.subtract) {
+
+	return alphaBlend!(accuracy,
+		(b, f) => (b > f) ? castTo!ubyte(b - f) : ubyte(0)
+	)(target, source);
 }
 
 /// ditto
