@@ -135,26 +135,6 @@ struct Pixmap {
 		this.width = width;
 	}
 
-	static {
-		/++
-			Creates a Pixmap wrapping the pixel data from the provided `TrueColorImage`.
-
-			Interoperability function: `arsd.color`
-		 +/
-		Pixmap fromTrueColorImage(TrueColorImage source) @nogc {
-			return Pixmap(source.imageData.colors, source.width);
-		}
-
-		/++
-			Creates a Pixmap wrapping the pixel data from the provided `MemoryImage`.
-
-			Interoperability function: `arsd.color`
-		 +/
-		Pixmap fromMemoryImage(MemoryImage source) {
-			return fromTrueColorImage(source.getAsTrueColorImage());
-		}
-	}
-
 @safe pure nothrow @nogc:
 
 	/// Height of the buffer, i.e. the number of lines
@@ -278,6 +258,24 @@ private struct OriginRectangle {
 		);
 		// dfmt on
 	}
+}
+
+/++
+	Creates a Pixmap wrapping the pixel data of the provided `TrueColorImage`.
+
+	Interoperability function: `arsd.color`
+ +/
+Pixmap toPixmap(TrueColorImage source) @nogc {
+	return Pixmap(source.imageData.colors, source.width);
+}
+
+/++
+	Creates a Pixmap wrapping the pixel data from the provided `MemoryImage`.
+
+	Interoperability function: `arsd.color`
+ +/
+Pixmap toPixmap(MemoryImage source) {
+	return source.getAsTrueColorImage().toPixmap();
 }
 
 // ==== Gamut integration ====
