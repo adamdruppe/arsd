@@ -19,15 +19,15 @@ import arsd.core;
 import std.math : round;
 
 /*
-	## TODO
+	## TODO:
 
 	- Refactoring the template-mess of blendPixel() & co.
-	- A bunch more blend modes
 	- Scaling
 	- Cropping
 	- Rotating
 	- Skewing
 	- HSL
+	- Advanced blend modes (maybe)
  */
 
 ///
@@ -824,7 +824,7 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	See_Also:
 		Use [opacityF] with opacity values in percent (%).
  +/
-void opacity(ref Pixmap pixmap, const ubyte opacity) {
+void opacity(Pixmap pixmap, const ubyte opacity) {
 	foreach (ref px; pixmap.data) {
 		px.a = opacity.n255thsOf(px.a);
 	}
@@ -839,11 +839,36 @@ void opacity(ref Pixmap pixmap, const ubyte opacity) {
 	See_Also:
 		Use [opacity] with 8-bit integer opacity values (in 255ths).
  +/
-void opacityF(ref Pixmap pixmap, const float opacity)
+void opacityF(Pixmap pixmap, const float opacity)
 in (opacity >= 0)
 in (opacity <= 1.0) {
 	immutable opacity255 = round(opacity * 255).castTo!ubyte;
 	pixmap.opacity = opacity255;
+}
+
+/++
+	Inverts a color (to its negative color).
+ +/
+Pixel invert(const Pixel color) {
+	return Pixel(
+		0xFF - color.r,
+		0xFF - color.g,
+		0xFF - color.b,
+		color.a,
+	);
+}
+
+/++
+	Inverts all colors to produce a $(B negative image).
+
+	$(TIP
+		Develops a positive image when applied to a negative one.
+	)
+ +/
+void invert(Pixmap pixmap) {
+	foreach (ref px; pixmap.data) {
+		px = invert(px);
+	}
 }
 
 // ==== Blending functions ====
@@ -1130,6 +1155,7 @@ template blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)
 					// dfmt on
 				}
 
+				// TODO: optimize if possible
 				// dfmt off
 				immutable ubyte d = (b < 0x40)
 					? castTo!ubyte((b * (0x3FC + (((16 * b - 0xBF4) * b) / 255))) / 255)
@@ -1216,6 +1242,10 @@ template blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)
 			)(target, source);
 		}
 	}
+
+	//else {
+	//	static assert(false, "Missing `blendPixel()` implementation for `BlendMode`.`" ~ mode ~ "`.");
+	//}
 }
 
 /++
