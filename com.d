@@ -605,6 +605,8 @@ VARIANT toComVariant(T)(T arg) {
 		ret.pdispVal = arg.innerComObject_;
 	} else static if(is(T : ComProperty)) {
 		ret = arg._fetchProperty();
+	} else static if (is(T : ComResult)) {
+		ret = arg.result;
 	} else static if(is(T : int)) {
 		ret.vt = 3;
 		ret.intVal = arg;
