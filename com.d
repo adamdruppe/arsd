@@ -358,6 +358,8 @@ struct ComProperty {
 			&argError // arg error
 		);//, "Invoke");
 
+		VariantClear(&vargs[0]);
+
 		import std.conv;
 		if(FAILED(hr)) {
 			if(hr == DISP_E_EXCEPTION) {
@@ -429,6 +431,12 @@ struct ComProperty {
 				&einfo, // exception info
 				&argError // arg error
 			);//, "Invoke");
+		}
+
+		static if(args.length) {
+			foreach (ref v; vargs[]) {
+				VariantClear(&v);
+			}
 		}
 
 		import std.conv;
@@ -546,6 +554,12 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 					&argError // arg error
 				);//, "Invoke");
 
+				static if (args.length) {
+					foreach (ref v; vargs[]) {
+						VariantClear(&v);
+					}
+				}
+
 				import std.conv;
 				if(FAILED(hr)) {
 					if(hr == DISP_E_EXCEPTION) {
@@ -620,9 +634,85 @@ VARIANT toComVariant(T)(T arg) {
 		ret.vt = 8;
 		import std.utf;
 		ret.bstrVal = SysAllocString(toUTFz!(wchar*)(arg));
+	} else static if (is(T : E[], E)) {
+		auto sizes = ndArrayDimensions!uint(arg);
+		SAFEARRAYBOUND[sizes.length] saBound;
+		foreach (i; 0 .. sizes.length) {
+			saBound[i].lLbound = 0;
+			saBound[i].cElements = sizes[i];
+		}
+		enum vt = vtFromDType!E;
+		SAFEARRAY* sa = SafeArrayCreate(vt, saBound.length, saBound.ptr);
+		int[sizes.length] indices;
+		void fill(int dim, T)(T val) {
+			static if (dim >= indices.length) {
+				static if (vt == VARENUM.VT_BSTR) {
+					import std.utf;
+					SafeArrayPutElement(sa, indices.ptr, SysAllocString(toUTFz!(wchar*)(val)));
+				} else {
+					SafeArrayPutElement(sa, indices.ptr, &val);
+				}
+				return;
+			} else {
+				foreach (i; 0 .. val.length) {
+					indices[dim] = cast(int) i;
+					fill!(dim + 1)(val[i]);
+				}
+			}
+		}
+		fill!(0)(arg);
+		ret.vt = VARENUM.VT_ARRAY | vt;
+		ret.parray = sa;
 	} else static assert(0, "Unsupported type (yet) " ~ T.stringof);
 
 	return ret;
+}
+
+/// Returns: for any multi-dimensional array, a static array of `length` values for each dimension.
+/// Strings are not considered arrays because they have the VT_BSTR type instead of VT_ARRAY
+private auto ndArrayDimensions(I, T)(T arg) {
+	static if (!is(T : const(char)[]) && (is(T == E[], E) || is(T == E[n], E, int n))) {
+        alias A = typeof(ndArrayDimensions!I(arg[0]));
+        I[1 + A.length] res = 0;
+        if (arg.length != 0) {
+            auto s = ndArrayDimensions!I(arg[0]);
+            res[1 .. $] = s[];
+        }
+        res[0] = cast(I) arg.length;
+		return res;
+	} else {
+		I[0] res;
+		return res;
+	}
+}
+
+unittest {
+	auto x = new float[][][](2, 3, 5);
+	assert(ndArrayDimensions!uint(x) == [2, 3, 5]);
+    short[4][][5] y;
+    y[0].length = 3;
+    assert(ndArrayDimensions!uint(y) == [5, 3, 4]);
+}
+
+/// Get VARENUM tag for basic type T
+private template vtFromDType(T) {
+	static if (is(T == short)) {
+		enum vtFromDType = VARENUM.VT_I2;
+	} else static if(is(T == int)) {
+		enum vtFromDType = VARENUM.VT_I4;
+	} else static if (is(T == float)) {
+		enum vtFromDType = VARENUM.VT_R4;
+	} else static if (is(T == double)) {
+		enum vtFromDType = VARENUM.VT_R8;
+	} else static if(is(T == bool)) {
+		enum vtFromDType = VARENUM.VT_BOOL;
+	} else static if (is(T : const(char)[])) {
+		enum vtFromDType = VARENUM.VT_BSTR;
+	} else static if (is(T == E[], E)) {
+		enum vtFromDType = vtFromDType!E;
+	} else {
+		static assert(0, "don't know VARENUM for " ~ T.stringof);
+	}
 }
 
 /*
