@@ -84,7 +84,13 @@ else
 	version = HasSocket;
 	version = HasThread;
 	version = HasErrno;
-	version = HasTimer;
+
+	version(Windows)
+		version = HasTimer;
+	version(linux)
+		version = HasTimer;
+	version(OSXCocoa)
+		version = HasTimer;
 }
 
 version(HasThread)
@@ -271,22 +277,243 @@ struct stringz {
 	}
 }
 
+/+
+	DateTime
+		year: 16 bits (-32k to +32k)
+		month: 4 bits
+		day: 5 bits
+
+		hour: 5 bits
+		minute: 6 bits
+		second: 6 bits
+
+		total: 25 bits + 17 bits = 42 bits
+
+		fractional seconds: 10 bits
+
+		accuracy flags: date_valid | time_valid = 2 bits
+
+		54 bits used, 8 bits remain. reserve 1 for signed.
+
+		would need 11 bits for minute-precise dt offset but meh.
++/
+
 /++
-	A limited variant to hold just a few types. It is made for the use of packing a small amount of extra data into error messages.
+	A packed date/time/datetime representation added for use with LimitedVariant.
+
+	You should probably not use this much directly, it is mostly an internal storage representation.
++/
+struct PackedDateTime {
+	private ulong packedData;
+
+	string toString() const {
+		char[64] buffer;
+		size_t pos;
+
+		if(hasDate) {
+			pos += intToString(year, buffer[pos .. $], IntToStringArgs().withPadding(4)).length;
+			buffer[pos++] = '-';
+			pos += intToString(month, buffer[pos .. $], IntToStringArgs().withPadding(2)).length;
+			buffer[pos++] = '-';
+			pos += intToString(day, buffer[pos .. $], IntToStringArgs().withPadding(2)).length;
+		}
+
+		if(hasTime) {
+			if(pos)
+				buffer[pos++] = 'T';
+
+			pos += intToString(hours, buffer[pos .. $], IntToStringArgs().withPadding(2)).length;
+			buffer[pos++] = ':';
+			pos += intToString(minutes, buffer[pos .. $], IntToStringArgs().withPadding(2)).length;
+			buffer[pos++] = ':';
+			pos += intToString(seconds, buffer[pos .. $], IntToStringArgs().withPadding(2)).length;
+			if(fractionalSeconds) {
+				buffer[pos++] = '.';
+				pos += intToString(fractionalSeconds, buffer[pos .. $], IntToStringArgs().withPadding(4)).length;
+			}
+		}
+
+		return buffer[0 .. pos].idup;
+	}
+
+	/++
+	+/
+	int fractionalSeconds() const { return getFromMask(00, 10); }
+	/// ditto
+	void fractionalSeconds(int a) {     setWithMask(a, 00, 10); }
+
+	/// ditto
+	int  seconds() const          { return getFromMask(10,  6); }
+	/// ditto
+	void seconds(int a)           {     setWithMask(a, 10,  6); }
+	/// ditto
+	int  minutes() const          { return getFromMask(16,  6); }
+	/// ditto
+	void minutes(int a)           {     setWithMask(a, 16,  6); }
+	/// ditto
+	int  hours() const            { return getFromMask(22,  5); }
+	/// ditto
+	void hours(int a)             {     setWithMask(a, 22,  5); }
+
+	/// ditto
+	int  day() const              { return getFromMask(27,  5); }
+	/// ditto
+	void day(int a)               {     setWithMask(a, 27,  5); }
+	/// ditto
+	int  month() const            { return getFromMask(32,  4); }
+	/// ditto
+	void month(int a)             {     setWithMask(a, 32,  4); }
+	/// ditto
+	int  year() const             { return getFromMask(36, 16); }
+	/// ditto
+	void year(int a)              {     setWithMask(a, 36, 16); }
+
+	/// ditto
+	bool hasTime() const          { return cast(bool) getFromMask(52,  1); }
+	/// ditto
+	void hasTime(bool a)          {     setWithMask(a, 52,  1); }
+	/// ditto
+	bool hasDate() const          { return cast(bool) getFromMask(53,  1); }
+	/// ditto
+	void hasDate(bool a)          {     setWithMask(a, 53,  1); }
+
+	private void setWithMask(int a, int bitOffset, int bitCount) {
+		auto mask = (1UL << bitCount) - 1;
+
+		packedData &= ~(mask << bitOffset);
+		packedData |= (a & mask) << bitOffset;
+	}
+
+	private int getFromMask(int bitOffset, int bitCount) const {
+		ulong packedData = this.packedData;
+		packedData >>= bitOffset;
+
+		ulong mask = (1UL << bitCount) - 1;
+
+		return cast(int) (packedData & mask);
+	}
+}
+
+unittest {
+	PackedDateTime dt;
+	dt.hours = 14;
+	dt.minutes = 30;
+	dt.seconds = 25;
+	dt.hasTime = true;
+
+	assert(dt.toString() == "14:30:25", dt.toString());
+
+	dt.hasTime = false;
+	dt.year = 2024;
+	dt.month = 5;
+	dt.day = 31;
+	dt.hasDate = true;
+
+	assert(dt.toString() == "2024-05-31", dt.toString());
+	dt.hasTime = true;
+	assert(dt.toString() == "2024-05-31T14:30:25", dt.toString());
+}
+
+/++
+	Basically a Phobos SysTime but standing alone as a simple 6 4 bit integer (but wrapped) for compatibility with LimitedVariant.
++/
+struct SimplifiedUtcTimestamp {
+	long timestamp;
+
+	string toString() const {
+		import core.stdc.time;
+		char[128] buffer;
+		auto ut = toUnixTime();
+		tm* t = gmtime(&ut);
+		if(t is null)
+			return "null time";
+
+		return buffer[0 .. strftime(buffer.ptr, buffer.length, "%FT%H:%M:%SZ", t)].idup;
+	}
+
+	version(Windows)
+		alias time_t = int;
+
+	static SimplifiedUtcTimestamp fromUnixTime(time_t t) {
+		return SimplifiedUtcTimestamp(621_355_968_000_000_000L + t * 1_000_000_000L / 100);
+	}
+
+	time_t toUnixTime() const {
+		return cast(time_t) ((timestamp - 621_355_968_000_000_000L) / 1_000_000_0); // hnsec = 7 digits
+	}
+}
+
+unittest {
+	SimplifiedUtcTimestamp sut = SimplifiedUtcTimestamp.fromUnixTime(86_400);
+	assert(sut.toString() == "1970-01-02T00:00:00Z");
+}
+
+/++
+	A limited variant to hold just a few types. It is made for the use of packing a small amount of extra data into error messages and some transit across virtual function boundaries.
 +/
 /+
+	ALL OF THESE ARE SUBJECT TO CHANGE
+
 	* if length and ptr are both 0, it is null
 	* if ptr == 1, length is an integer
 	* if ptr == 2, length is an unsigned integer (suggest printing in hex)
 	* if ptr == 3, length is a combination of flags (suggest printing in binary)
 	* if ptr == 4, length is a unix permission thing (suggest printing in octal)
 	* if ptr == 5, length is a double float
+	* if ptr == 6, length is an Object ref (reinterpret casted to void*)
+
+	* if ptr == 7, length is a ticks count (from MonoTime)
+	* if ptr == 8, length is a utc timestamp (hnsecs)
+	* if ptr == 9, length is a duration (signed hnsecs)
+	* if ptr == 10, length is a date or date time (bit packed, see flags in data to determine if it is a Date, Time, or DateTime)
+	* if ptr == 11, length is a dchar
+	* if ptr == 12, length is a bool (redundant to int?)
+
+	13, 14 reserved. prolly decimals. (4, 8 digits after decimal)
+
 	* if ptr == 15, length must be 0. this holds an empty, non-null, SSO string.
 	* if ptr >= 16 && < 24, length is reinterpret-casted a small string of length of (ptr & 0x7) + 1
+
 	* if length == size_t.max, ptr is interpreted as a stringz
 	* if ptr >= 1024, it is a non-null D string or byte array. It is a string if the length high bit is clear, a byte array if it is set. the length is what is left after you mask that out.
 
 	All other ptr values are reserved for future expansion.
+
+	It basically can store:
+		null
+			type details = must be 0
+		int (actually long)
+			type details = formatting hints
+		float (actually double)
+			type details = formatting hints
+		dchar (actually enum - upper half is the type tag, lower half is the member tag)
+			type details = ???
+		decimal
+			type details = precision specifier
+		object
+			type details = ???
+		timestamp
+			type details: ticks, utc timestamp, relative duration
+
+		sso
+		stringz
+
+		or it is bytes or a string; a normal D array (just bytes has a high bit set on length).
+
+	But there are subtypes of some of those; ints can just have formatting hints attached.
+		Could reserve 0-7 as low level type flag (null, int, float, pointer, object)
+		15-24 still can be the sso thing
+
+		We have 10 bits really.
+
+		00000 00000
+		????? OOLLL
+
+		The ????? are type details bits.
+
+	64 bits decmial to 4 points of precision needs... 14 bits for the small part (so max of 4 digits)? so 50 bits for the big part (max of about 1 quadrillion)
+		...actually it can just be a dollars * 10000 + cents * 100.
+
 +/
 struct LimitedVariant {
 
@@ -300,6 +527,19 @@ struct LimitedVariant {
 		intBinary,
 		intOctal,
 		double_,
+		object,
+
+		monoTime,
+		utcTimestamp,
+		duration,
+		dateTime,
+
+		// FIXME boolean? char? decimal?
+		// could do enums by way of a pointer but kinda iffy
+
+		// maybe some kind of prefixed string too for stuff like xml and json or enums etc.
+
+		// fyi can also use stringzs or length-prefixed string pointers
 		emptySso,
 		stringSso,
 		stringz,
@@ -310,7 +550,9 @@ struct LimitedVariant {
 	}
 
 	/++
+		Each datum stored in the LimitedVariant has a tag associated with it.
 
+		Each tag belongs to one or more data families.
 	+/
 	Contains contains() const {
 		auto tag = cast(size_t) ptr;
@@ -322,6 +564,13 @@ struct LimitedVariant {
 			case 3: return Contains.intBinary;
 			case 4: return Contains.intOctal;
 			case 5: return Contains.double_;
+			case 6: return Contains.object;
+
+			case 7: return Contains.monoTime;
+			case 8: return Contains.utcTimestamp;
+			case 9: return Contains.duration;
+			case 10: return Contains.dateTime;
+
 			case 15: return length is null ? Contains.emptySso : Contains.invalid;
 			default:
 				if(tag >= 16 && tag < 24) {
@@ -338,6 +587,11 @@ struct LimitedVariant {
 	}
 
 	/// ditto
+	bool containsNull() const {
+		return contains() == Contains.null_;
+	}
+
+	/// ditto
 	bool containsInt() const {
 		with(Contains)
 		switch(contains) {
@@ -348,12 +602,33 @@ struct LimitedVariant {
 		}
 	}
 
+	// all specializations of int...
+
+	/// ditto
+	bool containsMonoTime() const {
+		return contains() == Contains.monoTime;
+	}
+	/// ditto
+	bool containsUtcTimestamp() const {
+		return contains() == Contains.utcTimestamp;
+	}
+	/// ditto
+	bool containsDuration() const {
+		return contains() == Contains.duration;
+	}
+	/// ditto
+	bool containsDateTime() const {
+		return contains() == Contains.dateTime;
+	}
+
+	// done int specializations
+
 	/// ditto
 	bool containsString() const {
 		with(Contains)
 		switch(contains) {
 			case null_, emptySso, stringSso, string:
-			// case stringz:
+			case stringz:
 				return true;
 			default:
 				return false;
@@ -409,6 +684,8 @@ struct LimitedVariant {
 				return (cast(char*) &length)[0 .. len];
 			case string:
 				return (cast(const(char)*) ptr)[0 .. cast(size_t) length];
+			case stringz:
+				return arsd.core.stringz(cast(char*) ptr).borrow;
 			default:
 				Throw(); assert(0);
 		}
@@ -425,9 +702,11 @@ struct LimitedVariant {
 
 	/// ditto
 	double getDouble() const {
-		if(containsDouble)
-			return *cast(double*) &length;
-		else
+		if(containsDouble) {
+			floathack hack;
+			hack.e = cast(void*) length; // casting away const
+			return hack.d;
+		} else
 			Throw();
 		assert(0);
 	}
@@ -444,6 +723,55 @@ struct LimitedVariant {
 				Throw(); assert(0);
 		}
 	}
+
+	/// ditto
+	Object getObject() const {
+		with(Contains)
+		switch(contains()) {
+			case null_:
+				return null;
+			case object:
+				return cast(Object) length; // FIXME const correctness sigh
+			default:
+				Throw(); assert(0);
+		}
+	}
+
+	/// ditto
+	MonoTime getMonoTime() const {
+		if(containsMonoTime) {
+			MonoTime time;
+			__traits(getMember, time, "_ticks") = cast(long) length;
+			return time;
+		} else
+			Throw();
+		assert(0);
+	}
+	/// ditto
+	SimplifiedUtcTimestamp getUtcTimestamp() const {
+		if(containsUtcTimestamp)
+			return SimplifiedUtcTimestamp(cast(long) length);
+		else
+			Throw();
+		assert(0);
+	}
+	/// ditto
+	Duration getDuration() const {
+		if(containsDuration)
+			return hnsecs(cast(long) length);
+		else
+			Throw();
+		assert(0);
+	}
+	/// ditto
+	PackedDateTime getDateTime() const {
+		if(containsDateTime)
+			return PackedDateTime(cast(long) length);
+		else
+			Throw();
+		assert(0);
+	}
+
 
 	/++
 
@@ -472,28 +800,52 @@ struct LimitedVariant {
 				return intHelper("0b", 2);
 			case intOctal:
 				return intHelper("0o", 8);
-			case emptySso, stringSso, string:
+			case emptySso, stringSso, string, stringz:
 				return getString().idup;
 			case bytes:
 				auto b = getBytes();
 
 				return "<bytes>"; // FIXME
-
+			case object:
+				auto o = getObject();
+				return o is null ? "null" : o.toString();
+			case monoTime:
+				return getMonoTime.toString();
+			case utcTimestamp:
+				return getUtcTimestamp().toString();
+			case duration:
+				return getDuration().toString();
+			case dateTime:
+				return getDateTime().toString();
 			case double_:
-				assert(0); // FIXME
-			case stringz:
-				assert(0); // FIXME
+				auto d = getDouble();
+
+				import core.stdc.stdio;
+				char[128] buffer;
+				auto count = snprintf(buffer.ptr, buffer.length, "%.17lf", d);
+				return buffer[0 .. count].idup;
 			case invalid:
 				return "<invalid>";
 		}
 	}
 
 	/++
-
+		Note for integral types that are not `int` and `long` (for example, `short` or `ubyte`), you might want to explicitly convert them to `int`.
 	+/
 	this(string s) {
 		ptr = cast(const(ubyte)*) s.ptr;
 		length = cast(void*) s.length;
+	}
+
+	/// ditto
+	this(const(char)* stringz) {
+		if(stringz !is null) {
+			ptr = cast(const(ubyte)*) stringz;
+			length = cast(void*) size_t.max;
+		} else {
+			ptr = null;
+			length = null;
+		}
 	}
 
 	/// ditto
@@ -517,12 +869,55 @@ struct LimitedVariant {
 	}
 
 	/// ditto
-	version(none)
+	this(int i, int base = 10) {
+		this(cast(long) i, base);
+	}
+
+	/// ditto
+	this(bool i) {
+		// FIXME?
+		this(cast(long) i);
+	}
+
+	/// ditto
 	this(double d) {
-		// this crashes dmd! omg
-		assert(0);
-		// ptr = cast(ubyte*) 15;
-		// length = cast(void*) *cast(size_t*) &d;
+		// the reinterpret cast hack crashes dmd! omg
+		ptr = cast(ubyte*) 5;
+
+		floathack h;
+		h.d = d;
+
+		this.length = h.e;
+	}
+
+	/// ditto
+	this(Object o) {
+		this.ptr = cast(ubyte*) 6;
+		this.length = cast(void*) o;
+	}
+
+	/// ditto
+	this(MonoTime a) {
+		this.ptr = cast(ubyte*) 7;
+		this.length = cast(void*) a.ticks;
+	}
+
+	/// ditto
+	this(SimplifiedUtcTimestamp a) {
+		this.ptr = cast(ubyte*) 8;
+		this.length = cast(void*) a.timestamp;
+	}
+
+	/// ditto
+	this(Duration a) {
+		this.ptr = cast(ubyte*) 9;
+		this.length = cast(void*) a.total!"hnsecs";
+	}
+
+	/// ditto
+	this(PackedDateTime a) {
+		this.ptr = cast(ubyte*) 10;
+		this.length = cast(void*) a.packedData;
 	}
 }
 
@@ -541,6 +936,16 @@ unittest {
 	assert(v3.containsBytes());
 	assert(!v3.containsString());
 	assert(v3.getBytes() == [1, 2, 3]);
+}
+
+private union floathack {
+	// in 32 bit we'll use float instead since it at least fits in the void*
+	static if(double.sizeof == (void*).sizeof) {
+		double d;
+	} else {
+		float d;
+	}
+	void* e;
 }
 
 /++
@@ -1135,6 +1540,117 @@ unittest {
 	assert(flagsToString!MyFlags(3) == "a | b");
 	assert(flagsToString!MyFlags(0) == "none");
 	assert(flagsToString!MyFlags(2) == "b");
+}
+
+// technically s is octets but meh
+package string encodeUriComponent(string s) {
+	char[3] encodeChar(char c) {
+		char[3] buffer;
+		buffer[0] = '%';
+
+		enum hexchars = "0123456789ABCDEF";
+		buffer[1] = hexchars[c >> 4];
+		buffer[2] = hexchars[c & 0x0f];
+
+		return buffer;
+	}
+
+	string n;
+	size_t previous = 0;
+	foreach(idx, char ch; s) {
+		if(
+			(ch >= 'A' && ch <= 'Z')
+			||
+			(ch >= 'a' && ch <= 'z')
+			||
+			(ch >= '0' && ch <= '9')
+			|| ch == '-' || ch == '_' || ch == '.' || ch == '~' // unreserved set
+			|| ch == '!' || ch == '*' || ch == '\''|| ch == '(' || ch == ')' // subdelims but allowed in uri component (phobos also no encode them)
+		) {
+			// does not need encoding
+		} else {
+			n ~= s[previous .. idx];
+			n ~= encodeChar(ch);
+			previous = idx + 1;
+		}
+	}
+
+	if(n.length) {
+		n ~= s[previous .. $];
+		return n;
+	} else {
+		return s; // nothing needed encoding
+	}
+}
+unittest {
+	assert(encodeUriComponent("foo") == "foo");
+	assert(encodeUriComponent("f33Ao") == "f33Ao");
+	assert(encodeUriComponent("/") == "%2F");
+	assert(encodeUriComponent("/foo") == "%2Ffoo");
+	assert(encodeUriComponent("foo/") == "foo%2F");
+	assert(encodeUriComponent("foo/bar") == "foo%2Fbar");
+	assert(encodeUriComponent("foo/bar/") == "foo%2Fbar%2F");
+}
+
+// FIXME: I think if translatePlusToSpace we're supposed to do newline normalization too
+package string decodeUriComponent(string s, bool translatePlusToSpace = false) {
+	int skipping = 0;
+	size_t previous = 0;
+	string n = null;
+	foreach(idx, char ch; s) {
+		if(skipping) {
+			skipping--;
+			continue;
+		}
+
+		if(ch == '%') {
+			int hexDecode(char c) {
+				if(c >= 'A' && c <= 'F')
+					return c - 'A' + 10;
+				else if(c >= 'a' && c <= 'f')
+					return c - 'a' + 10;
+				else if(c >= '0' && c <= '9')
+					return c - '0' + 0;
+				else
+					throw ArsdException!"Invalid percent-encoding"("Invalid char encountered", idx, s);
+			}
+
+			skipping = 2;
+			n ~= s[previous .. idx];
+
+			if(idx + 2 >= s.length)
+				throw ArsdException!"Invalid percent-encoding"("End of string reached", idx, s);
+
+			n ~= (hexDecode(s[idx + 1]) << 4) | hexDecode(s[idx + 2]);
+
+			previous = idx + 3;
+		} else if(translatePlusToSpace && ch == '+') {
+			n ~= s[previous .. idx];
+			n ~= " ";
+			previous = idx + 1;
+		}
+	}
+
+	if(n.length) {
+		n ~= s[previous .. $];
+		return n;
+	} else {
+		return s; // nothing needed decoding
+	}
+}
+
+unittest {
+	assert(decodeUriComponent("foo") == "foo");
+	assert(decodeUriComponent("%2F") == "/");
+	assert(decodeUriComponent("%2f") == "/");
+	assert(decodeUriComponent("%2Ffoo") == "/foo");
+	assert(decodeUriComponent("foo%2F") == "foo/");
+	assert(decodeUriComponent("foo%2Fbar") == "foo/bar");
+	assert(decodeUriComponent("foo%2Fbar%2F") == "foo/bar/");
+	assert(decodeUriComponent("%2F%2F%2F") == "///");
+
+	assert(decodeUriComponent("+") == "+");
+	assert(decodeUriComponent("+", true) == " ");
 }
 
 private auto toDelegate(T)(T t) {
@@ -6856,6 +7372,151 @@ unittest {
 		thread.join();
 	}
 }
+
+/+
+	================
+	LOGGER FRAMEWORK
+	================
++/
+/++
+	The arsd.core logger works differently than many in that it works as a ring buffer of objects that are consumed (or missed; buffer overruns are possible) by a different thread instead of as strings written to some file.
+
+	A library (or an application) defines a log source. They write to this source.
+
+	Applications then define log sinks, zero or more, which reads from various sources and does something with them.
+
+	Log calls, in this sense, are quite similar to asynchronous events that can be subscribed to by event handlers. The difference is events are generally not dropped - they might coalesce but are usually not just plain dropped in a buffer overrun - whereas logs can be. If the log consumer can't keep up, the details are just lost. The log producer will not wait for the consumer to catch up.
+
+
+	An application can also set a default subscriber which applies to all log objects throughout.
+
+	All log message objects must be capable of being converted to strings and to json.
+
+	Ad-hoc messages can be done with interpolated sequences.
+
+	Messages automatically get a timestamp. They can also have file/line and maybe even a call stack.
+
+	Examples:
+	---
+		mixin LoggerOf!X mylogger;
+
+		mylogger.log(i"$this heartbeat"); // creates an ad-hoc log message
+	---
+
+	History:
+		Added May 27, 2024
++/
+mixin template LoggerOf(T) {
+	void log(LogLevel l, T message) {
+
+	}
+}
+
+private static template WillFitInGeis(Args...) {
+	static int lengthRequired() {
+		int place;
+		foreach(arg; Args) {
+			static if(is(arg == InterpolatedLiteral!str, string str)) {
+				if(place & 1) // can't put string in the data slot
+					place++;
+				place++;
+			} else static if(is(arg == InterpolationHeader) || is(arg == InterpolationFooter) || is(arg == InterpolatedExpression!code, string code)) {
+				// no storage required
+			} else {
+				if((place & 1) == 0) // can't put data in the string slot
+					place++;
+				place++;
+			}
+		}
+
+		if(place & 1)
+			place++;
+		return place / 2;
+	}
+
+	enum WillFitInGeis = lengthRequired() <= GenericEmbeddableInterpolatedSequence.seq.length;
+}
+
+
+/+
+	For making an array of istrings basically; it moves their CT magic to RT dynamic type.
++/
+struct GenericEmbeddableInterpolatedSequence {
+	static struct Element {
+		string str; // these are pointers to string literals every time
+		LimitedVariant lv;
+	}
+
+	Element[8] seq;
+
+	this(Args...)(InterpolationHeader, Args args, InterpolationFooter) {
+		int place;
+		bool stringUsedInPlace;
+		bool overflowed;
+
+		static assert(WillFitInGeis!(Args), "Your interpolated elements will not fit in the generic buffer.");
+
+		foreach(arg; args) {
+			static if(is(typeof(arg) == InterpolatedLiteral!str, string str)) {
+				if(stringUsedInPlace) {
+					place++;
+					stringUsedInPlace = false;
+				}
+
+				if(place == seq.length) {
+					overflowed = true;
+					break;
+				}
+				seq[place].str = str;
+				stringUsedInPlace = true;
+			} else static if(is(typeof(arg) == InterpolationHeader) || is(typeof(arg) == InterpolationFooter)) {
+				static assert(0, "Cannot embed interpolated sequences");
+			} else static if(is(typeof(arg) == InterpolatedExpression!code, string code)) {
+				// irrelevant
+			} else {
+				if(place == seq.length) {
+					overflowed = true;
+					break;
+				}
+				seq[place].lv = LimitedVariant(arg);
+				place++;
+				stringUsedInPlace = false;
+			}
+		}
+	}
+
+	string toString() {
+		string s;
+		foreach(item; seq) {
+			if(item.str !is null)
+				s ~= item.str;
+			if(!item.lv.containsNull())
+				s ~= item.lv.toString();
+		}
+		return s;
+	}
+}
+
+private struct LoggedElement(T) {
+	LogLevel level; // ?
+	MonoTime timestamp;
+	void*[16] stack; // ?
+	string originComponent;
+	string originFile;
+	size_t originLine;
+
+	T message;
+}
+
+private class TypeErasedLogger {
+	ubyte[] buffer;
+
+	void*[] messagePointers;
+	size_t position;
+}
+
+
+
 
 /+
 	=================
