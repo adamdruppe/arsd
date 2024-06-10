@@ -1,31 +1,34 @@
-/**
+/++
 	SQLite implementation of the [arsd.database.Database] interface.
 
-	Compile with version=sqlite_extended_metadata_available
-	if your sqlite is compiled with the
-	 SQLITE_ENABLE_COLUMN_METADATA C-preprocessor symbol.
 
-	If you enable that, you get the ability to use the
-	queryDataObject() function with sqlite. (You can still
-	use DataObjects, but you'll have to set up the mappings
-	manually without the extended metadata.)
-*/
+	Compile with `-version=sqlite_extended_metadata_available` if your sqlite is compiled with the `SQLITE_ENABLE_COLUMN_METADATA` C-preprocessor symbol.
+
+	If you enable that, you get the ability to use the queryDataObject() function with sqlite. (You can still use DataObjects, but you'll have to set up the mappings manually without the extended metadata.)
+
+	History:
+		Originally written prior to July 2011 (before arsd on git).
+
+		Only lightly modified before then and May 2024 when it got an overhaul.
+
+		FIXME: `PRAGMA foreign_keys = ON` is something i wanna enable by default in here.
++/
 module arsd.sqlite;
+
 version(static_sqlite) {} else
-pragma(lib, "sqlite3");
+	pragma(lib, "sqlite3");
 version(linux)
-pragma(lib, "dl"); // apparently sqlite3 depends on this
+	pragma(lib, "dl"); // apparently sqlite3 depends on this
+
 public import arsd.database;
-
-import std.exception;
-
-import std.string;
 
 import core.stdc.stdlib;
 import core.exception;
 import core.memory;
-import std.file;
 import std.conv;
+import std.string;
+import std.exception;
+
 /*
 	NOTE:
 
@@ -36,7 +39,7 @@ import std.conv;
 */
 
 
-/**
+/++
 	The Database interface provides a consistent and safe way to access sql RDBMSs.
 
 	Why are all the classes scope? To ensure the database connection is closed when you are done with it.
@@ -44,10 +47,10 @@ import std.conv;
 
 	(maybe including rolling back a transaction if one is going and it errors.... maybe, or that could bne
 	scope(exit))
-*/
-
++/
 Sqlite openDBAndCreateIfNotPresent(string filename, string sql, scope void delegate(Sqlite db) initialize = null){
-	if(exists(filename))
+	static import std.file;
+	if(std.file.exists(filename))
 		return new Sqlite(filename);
 	else {
 		auto db = new Sqlite(filename);
@@ -73,7 +76,9 @@ void main() {
 }
 */
 
-///
+/++
+
++/
 class Sqlite : Database {
   public:
 	/++
@@ -207,10 +212,6 @@ class Sqlite : Database {
 }
 
 
-
-
-
-
 class SqliteResult :  ResultSet {
 	int getFieldIndex(string field) {
 		foreach(i, n; columnNames)
@@ -235,7 +236,7 @@ class SqliteResult :  ResultSet {
 		if(rows.length <= position)
 			throw new Exception("Result is empty");
 		foreach(c; rows[position]) {
-			if(auto t = c.peek!(immutable(byte)[]))
+			if(auto t = c.peek!(immutable(ubyte)[]))
 				r.row ~= DatabaseDatum(cast(string) *t);
 			else if (auto d = c.peek!double)
 				// 17 significant decimal digits are enough to not lose precision (IEEE 754 section 5.12.2)
@@ -266,10 +267,6 @@ class SqliteResult :  ResultSet {
 	Variant[][] rows;
 	int position = 0;
 }
-
-
-
-
 
 
 struct Statement {
@@ -367,22 +364,19 @@ struct Statement {
 						import core.stdc.string : strlen;
 						sizediff_t l = strlen(str);
 						st.length = l;
-						for(int aa = 0; aa < l; aa++)
-							st[aa] = str[aa];
+						st[] = str[0 ..l];
 
 						v = assumeUnique(st);
 					break;
 					case SQLITE_BLOB:
-						byte* str = cast(byte*) sqlite3_column_blob(s, a);
-						byte[] st;
+						ubyte* str = cast(ubyte*) sqlite3_column_blob(s, a);
+						ubyte[] st;
 
 						int l = sqlite3_column_bytes(s, a);
 						st.length = l;
-						for(int aa = 0; aa < l; aa++)
-							st[aa] = str[aa];
+						st[] = str[0 .. l];
 
 						v = assumeUnique(st);
-
 					break;
 					case SQLITE_NULL:
 						string n = null;
@@ -622,49 +616,39 @@ template extract(A, T, R...){
 }
 
 
-
 version(sqlite_extended_metadata_available) {
-import std.typecons;
-struct ResultByDataObject {
-	this(SqliteResult r, Tuple!(string, string)[string] mappings, Sqlite db) {
-		result = r;
-		this.db = db;
-		this.mappings = mappings;
+	import std.typecons;
+	struct ResultByDataObject {
+		this(SqliteResult r, Tuple!(string, string)[string] mappings, Sqlite db) {
+			result = r;
+			this.db = db;
+			this.mappings = mappings;
+		}
+
+		Tuple!(string, string)[string] mappings;
+
+		ulong length() { return result.length; }
+		bool empty() { return result.empty; }
+		void popFront() { result.popFront(); }
+		DataObject front() {
+			return new DataObject(db, result.front.toAA, mappings);
+		}
+		// would it be good to add a new() method? would be valid even if empty
+		// it'd just fill in the ID's at random and allow you to do the rest
+
+		@disable this(this) { }
+
+		SqliteResult result;
+		Sqlite db;
 	}
-
-	Tuple!(string, string)[string] mappings;
-
-	ulong length() { return result.length; }
-	bool empty() { return result.empty; }
-	void popFront() { result.popFront(); }
-	DataObject front() {
-		return new DataObject(db, result.front.toAA, mappings);
-	}
-	// would it be good to add a new() method? would be valid even if empty
-	// it'd just fill in the ID's at random and allow you to do the rest
-
-	@disable this(this) { }
-
-	SqliteResult result;
-	Sqlite db;
 }
-}
-
-
-
-
-
-
-
-
 
 
 extern(C) int callback(void* cb, int howmany, char** text, char** columns) @system {
 	if(cb is null)
 		return 0;
 
-	void delegate(char[][char[]]) onEach = *cast(void delegate(char[][char[]])*)cb;
-
+	void delegate(char[][char[]]) onEach = *cast(void delegate(char[][char[]])*) cb;
 
 	char[][char[]] row;
 	import core.stdc.string : strlen;
@@ -690,99 +674,99 @@ extern(C) int callback(void* cb, int howmany, char** text, char** columns) @syst
 	return 0;
 }
 
+extern(C) {
+	struct sqlite3;
+	struct sqlite3_stmt;
+
+	enum int SQLITE_OK = 0;
+	enum int SQLITE_ROW = 100;
+	enum int SQLITE_DONE = 101;
+
+	enum int SQLITE_INTEGER = 1; // int
+	enum int SQLITE_FLOAT = 2;   // float
+	enum int SQLITE3_TEXT = 3;   // char[]
+	enum int SQLITE_BLOB = 4;    // ubyte[]
+	enum int SQLITE_NULL = 5;    // void* = null
+
+	enum int SQLITE_DELETE = 9; // table name, null
+	enum int SQLITE_INSERT = 18; // table name, null
+	enum int SQLITE_UPDATE = 23; // table name, column name
+
+	enum int SQLITE_OPEN_READONLY = 0x1;
+	enum int SQLITE_OPEN_READWRITE = 0x2;
+	enum int SQLITE_OPEN_CREATE = 0x4;
+	enum int SQLITE_CANTOPEN = 14;
 
 
-
-
-
-
-
-
-
-extern(C){
-	alias void sqlite3;
-	alias void sqlite3_stmt;
 	int sqlite3_changes(sqlite3*);
 	int sqlite3_close(sqlite3 *);
 	int sqlite3_exec(
-			sqlite3*,                                  /* An open database */
-			const(char) *sql,                           /* SQL to be evaluted */
-			int function(void*,int,char**,char**),  /* Callback function */
-			void *,                                    /* 1st argument to callback */
-			char **errmsg                              /* Error msg written here */
-			);
+		sqlite3*,                                  /* An open database */
+		const(char) *sql,                           /* SQL to be evaluted */
+		int function(void*,int,char**,char**),  /* Callback function */
+		void *,                                    /* 1st argument to callback */
+		char **errmsg                              /* Error msg written here */
+	);
 
 	int sqlite3_open(
-			const(char) *filename,   /* Database filename (UTF-8) */
-			sqlite3 **ppDb          /* OUT: SQLite db handle */
-			);
+		const(char) *filename,   /* Database filename (UTF-8) */
+		sqlite3 **ppDb          /* OUT: SQLite db handle */
+	);
 
-int sqlite3_open_v2(
-  const char *filename,   /* Database filename (UTF-8) */
-  sqlite3 **ppDb,         /* OUT: SQLite db handle */
-  int flags,              /* Flags */
-  const char *zVfs        /* Name of VFS module to use */
-);
+	int sqlite3_open_v2(
+		const char *filename,   /* Database filename (UTF-8) */
+		sqlite3 **ppDb,         /* OUT: SQLite db handle */
+		int flags,              /* Flags */
+		const char *zVfs        /* Name of VFS module to use */
+	);
 
 	int sqlite3_prepare_v2(
-  sqlite3 *db,            /* Database handle */
-  const(char) *zSql,       /* SQL statement, UTF-8 encoded */
-  int nByte,              /* Maximum length of zSql in bytes. */
-  sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
-  char **pzTail     /* OUT: Pointer to unused portion of zSql */
-);
-int sqlite3_finalize(sqlite3_stmt *pStmt);
-int sqlite3_step(sqlite3_stmt*);
-long sqlite3_last_insert_rowid(sqlite3*);
+		sqlite3 *db,            /* Database handle */
+		const(char) *zSql,       /* SQL statement, UTF-8 encoded */
+		int nByte,              /* Maximum length of zSql in bytes. */
+		sqlite3_stmt **ppStmt,  /* OUT: Statement handle */
+		char **pzTail     /* OUT: Pointer to unused portion of zSql */
+	);
 
-const int SQLITE_OK = 0;
-const int SQLITE_ROW = 100;
-const int SQLITE_DONE = 101;
+	int sqlite3_finalize(sqlite3_stmt *pStmt);
+	int sqlite3_step(sqlite3_stmt*);
+	long sqlite3_last_insert_rowid(sqlite3*);
 
-const int SQLITE_INTEGER = 1; // int
-const int SQLITE_FLOAT = 2;   // float
-const int SQLITE3_TEXT = 3;   // char[]
-const int SQLITE_BLOB = 4;    // byte[]
-const int SQLITE_NULL = 5;    // void* = null
+	char *sqlite3_mprintf(const char*,...);
 
-char *sqlite3_mprintf(const char*,...);
+	int sqlite3_reset(sqlite3_stmt *pStmt);
+	int sqlite3_clear_bindings(sqlite3_stmt*);
+	int sqlite3_bind_parameter_index(sqlite3_stmt*, const(char) *zName);
 
+	int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void*);
+	//int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void(*)(void*));
+	int sqlite3_bind_double(sqlite3_stmt*, int, double);
+	int sqlite3_bind_int(sqlite3_stmt*, int, int);
+	int sqlite3_bind_int64(sqlite3_stmt*, int, long);
+	int sqlite3_bind_null(sqlite3_stmt*, int);
+	int sqlite3_bind_text(sqlite3_stmt*, int, const(char)*, int n, void*);
+	//int sqlite3_bind_text(sqlite3_stmt*, int, char*, int n, void(*)(void*));
 
-int sqlite3_reset(sqlite3_stmt *pStmt);
-int sqlite3_clear_bindings(sqlite3_stmt*);
-int sqlite3_bind_parameter_index(sqlite3_stmt*, const(char) *zName);
+	void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
+	int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
+	double sqlite3_column_double(sqlite3_stmt*, int iCol);
+	int sqlite3_column_int(sqlite3_stmt*, int iCol);
+	long sqlite3_column_int64(sqlite3_stmt*, int iCol);
+	char *sqlite3_column_text(sqlite3_stmt*, int iCol);
+	int sqlite3_column_type(sqlite3_stmt*, int iCol);
+	char *sqlite3_column_name(sqlite3_stmt*, int N);
 
-int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void*);
-//int sqlite3_bind_blob(sqlite3_stmt*, int, void*, int n, void(*)(void*));
-int sqlite3_bind_double(sqlite3_stmt*, int, double);
-int sqlite3_bind_int(sqlite3_stmt*, int, int);
-int sqlite3_bind_int64(sqlite3_stmt*, int, long);
-int sqlite3_bind_null(sqlite3_stmt*, int);
-int sqlite3_bind_text(sqlite3_stmt*, int, const(char)*, int n, void*);
-//int sqlite3_bind_text(sqlite3_stmt*, int, char*, int n, void(*)(void*));
+	int sqlite3_column_count(sqlite3_stmt *pStmt);
+	void sqlite3_free(void*);
+	char *sqlite3_errmsg(sqlite3*);
 
-void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
-int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
-double sqlite3_column_double(sqlite3_stmt*, int iCol);
-int sqlite3_column_int(sqlite3_stmt*, int iCol);
-long sqlite3_column_int64(sqlite3_stmt*, int iCol);
-char *sqlite3_column_text(sqlite3_stmt*, int iCol);
-int sqlite3_column_type(sqlite3_stmt*, int iCol);
-char *sqlite3_column_name(sqlite3_stmt*, int N);
+	// will need these to enable support for DataObjects here
+	const(char*) sqlite3_column_database_name(sqlite3_stmt*,int);
+	const(char*) sqlite3_column_table_name(sqlite3_stmt*,int);
+	const(char*) sqlite3_column_origin_name(sqlite3_stmt*,int);
 
-int sqlite3_column_count(sqlite3_stmt *pStmt);
-void sqlite3_free(void*);
- char *sqlite3_errmsg(sqlite3*);
-
- const int SQLITE_OPEN_READONLY = 0x1;
- const int SQLITE_OPEN_READWRITE = 0x2;
- const int SQLITE_OPEN_CREATE = 0x4;
- const int SQLITE_CANTOPEN = 14;
-
-
-// will need these to enable support for DataObjects here
-const (char *)sqlite3_column_database_name(sqlite3_stmt*,int);
-const (char *)sqlite3_column_table_name(sqlite3_stmt*,int);
-const (char *)sqlite3_column_origin_name(sqlite3_stmt*,int);
+	// https://www.sqlite.org/c3ref/update_hook.html
+	void* sqlite3_update_hook(sqlite3* db, updatehookcallback cb, void* userData); // returns the old userData
 }
 
+extern(C) alias updatehookcallback = void function(void* userData, int op, char* databaseName, char* tableName, /* sqlite3_int64 */ long rowid);
