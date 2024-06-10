@@ -63,7 +63,7 @@ static import arsd.core;
 
 // FIXME: I think I want to disable sigpipe here too.
 
-import std.uri : encodeComponent;
+import arsd.core : encodeUriComponent, decodeUriComponent;
 
 debug(arsd_http2_verbose) debug=arsd_http2;
 
@@ -159,9 +159,9 @@ HttpRequest post(string url, string[string] req) {
 	foreach(k, v; req) {
 		if(bdata.length)
 			bdata ~= cast(ubyte[]) "&";
-		bdata ~= cast(ubyte[]) encodeComponent(k);
+		bdata ~= cast(ubyte[]) encodeUriComponent(k);
 		bdata ~= cast(ubyte[]) "=";
-		bdata ~= cast(ubyte[]) encodeComponent(v);
+		bdata ~= cast(ubyte[]) encodeUriComponent(v);
 	}
 	auto request = client.request(Uri(url), HttpVerb.POST, bdata, "application/x-www-form-urlencoded");
 	return request;
@@ -195,15 +195,13 @@ string get(string url, string[string] cookies = null) {
 
 }
 
-static import std.uri;
-
 string post(string url, string[string] args, string[string] cookies = null) {
 	string content;
 
 	foreach(name, arg; args) {
 		if(content.length)
 			content ~= "&";
-		content ~= std.uri.encode(name) ~ "=" ~ std.uri.encode(arg);
+		content ~= encodeUriComponent(name) ~ "=" ~ encodeUriComponent(arg);
 	}
 
 	auto hr = httpRequest("POST", url, cast(ubyte[]) content, cookies, ["Content-Type: application/x-www-form-urlencoded"]);
@@ -564,6 +562,21 @@ struct CookieHeader {
 	string name;
 	string value;
 	string[string] attributes;
+
+	// max-age
+	// expires
+	// httponly
+	// secure
+	// samesite
+	// path
+	// domain
+	// partitioned ?
+
+	// also want cookiejar features here with settings to save session cookies or not
+
+	// storing in file: http://kb.mozillazine.org/Cookies.txt (second arg in practice true if first arg starts with . it seems)
+	// or better yet sqlite: http://kb.mozillazine.org/Cookies.sqlite
+	// should be able to import/export from either upon request
 }
 
 import std.string;
@@ -1197,8 +1210,7 @@ class HttpRequest {
 			if(type.length == 0)
 				type = "text/plain";
 
-			import std.uri;
-			auto bdata = cast(ubyte[]) decodeComponent(data);
+			auto bdata = cast(ubyte[]) decodeUriComponent(data);
 
 			if(type.indexOf(";base64") != -1) {
 				import std.base64;
@@ -4238,20 +4250,19 @@ class HttpApiClient() {
 
 		///
 		string toUri() {
-			import std.uri;
 			string result;
 			foreach(idx, part; pathParts) {
 				if(idx)
 					result ~= "/";
-				result ~= encodeComponent(part);
+				result ~= encodeUriComponent(part);
 			}
 			result ~= "?";
 			foreach(idx, part; queryParts) {
 				if(idx)
 					result ~= "&";
-				result ~= encodeComponent(part[0]);
+				result ~= encodeUriComponent(part[0]);
 				result ~= "=";
-				result ~= encodeComponent(part[1]);
+				result ~= encodeUriComponent(part[1]);
 			}
 
 			return result;
@@ -4292,10 +4303,10 @@ class HttpApiClient() {
 					static if(idx % 2 == 0) {
 						if(answer.length)
 							answer ~= "&";
-						answer ~= encodeComponent(val); // it had better be a string! lol
+						answer ~= encodeUriComponent(val); // it had better be a string! lol
 						answer ~= "=";
 					} else {
-						answer ~= encodeComponent(to!string(val));
+						answer ~= encodeUriComponent(to!string(val));
 					}
 				}
 
