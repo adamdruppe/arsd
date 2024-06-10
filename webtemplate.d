@@ -273,8 +273,8 @@ class WebTemplateRenderer {
 		};
 
 		context.encodeURIComponent = function string(var f) {
-			import std.uri;
-			return encodeComponent(f.get!string);
+			import arsd.core;
+			return encodeUriComponent(f.get!string);
 		};
 
 		context.formatDate = function string(string s) {

@@ -8,10 +8,11 @@
 */
 module arsd.html;
 
+import arsd.core : encodeUriComponent;
+
 public import arsd.dom;
 import arsd.color;
 
-static import std.uri;
 import std.array;
 import std.string;
 import std.variant;
@@ -1757,7 +1758,7 @@ class MacroExpander {
 		};
 
 		functions["uriEncode"] = delegate dstring(dstring[] args) {
-			return to!dstring(std.uri.encodeComponent(to!string(args[0])));
+			return to!dstring(encodeUriComponent(to!string(args[0])));
 		};
 
 		functions["test"] = delegate dstring(dstring[] args) {

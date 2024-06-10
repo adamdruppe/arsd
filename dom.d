@@ -50,6 +50,9 @@
 +/
 module arsd.dom;
 
+static import arsd.core;
+import arsd.core : encodeUriComponent, decodeUriComponent;
+
 // FIXME: support the css standard namespace thing in the selectors too
 
 version(with_arsd_jsvar)
@@ -4575,7 +4578,6 @@ string camelCase(string a) {
 
 import std.string;
 import std.exception;
-import std.uri;
 import std.array;
 import std.range;
 
@@ -5400,7 +5402,7 @@ class Link : Element {
 			if(index == -1)
 				hash[var] = "";
 			else {
-				hash[decodeComponent(var[0..index])] = decodeComponent(var[index + 1 .. $]);
+				hash[decodeUriComponent(var[0..index])] = decodeUriComponent(var[index + 1 .. $]);
 			}
 		}
 
@@ -5430,9 +5432,9 @@ class Link : Element {
 			else
 				first = false;
 
-			query ~= encodeComponent(name);
+			query ~= encodeUriComponent(name);
 			if(value.length)
-				query ~= "=" ~ encodeComponent(value);
+				query ~= "=" ~ encodeUriComponent(value);
 		}
 
 		if(query != "?")
@@ -5672,7 +5674,7 @@ class Form : Element {
 			else
 				outputted = true;
 
-			ret ~= std.uri.encodeComponent(e.name) ~ "=" ~ std.uri.encodeComponent(getValue(e.name));
+			ret ~= encodeUriComponent(e.name) ~ "=" ~ encodeUriComponent(getValue(e.name));
 
 			namesDone[e.name] = true;
 		}

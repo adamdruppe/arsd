@@ -603,6 +603,8 @@ static import arsd.core;
 version(Posix)
 import arsd.core : makeNonBlocking;
 
+import arsd.core : encodeUriComponent, decodeUriComponent;
+
 
 // for a single thread, linear request thing, use:
 // -version=embedded_httpd_threads -version=cgi_no_threads
@@ -722,7 +724,6 @@ enum long defaultMaxContentLength = 5_000_000;
 public import std.string;
 public import std.stdio;
 public import std.conv;
-import std.uri;
 import std.uni;
 import std.algorithm.comparison;
 import std.algorithm.searching;
@@ -1025,7 +1026,7 @@ class Cgi {
 					auto info = breakUp(arg);
 					if(_cookie.length)
 						_cookie ~= "; ";
-					_cookie ~= std.uri.encodeComponent(info[0]) ~ "=" ~ std.uri.encodeComponent(info[1]);
+					_cookie ~= encodeUriComponent(info[0]) ~ "=" ~ encodeUriComponent(info[1]);
 				}
 				if (nextArgIs == "session") {
 					auto info = breakUp(arg);
@@ -1110,7 +1111,7 @@ class Cgi {
 					if(_queryString.length)
 						_queryString ~= "&";
 					auto parts = breakUp(arg);
-					_queryString ~= std.uri.encodeComponent(parts[0]) ~ "=" ~ std.uri.encodeComponent(parts[1]);
+					_queryString ~= encodeUriComponent(parts[0]) ~ "=" ~ encodeUriComponent(parts[1]);
 				}
 			}
 		}
@@ -2445,8 +2446,8 @@ class Cgi {
 	+/
 	void setCookie(string name, string data, long expiresIn = 0, string path = null, string domain = null, bool httpOnly = false, bool secure = false, SameSitePolicy sameSitePolicy = SameSitePolicy.Lax) {
 		assert(!outputtedResponseData);
-		string cookie = std.uri.encodeComponent(name) ~ "=";
-		cookie ~= std.uri.encodeComponent(data);
+		string cookie = encodeUriComponent(name) ~ "=";
+		cookie ~= encodeUriComponent(data);
 		if(path !is null)
 			cookie ~= "; path=" ~ path;
 		// FIXME: should I just be using max-age here? (also in cache below)
@@ -3131,7 +3132,7 @@ struct Uri {
 
 	// idk if i want to keep these, since the functions they wrap are used many, many, many times in existing code, so this is either an unnecessary alias or a gratuitous break of compatibility
 	// the decode ones need to keep different names anyway because we can't overload on return values...
-	static string encode(string s) { return std.uri.encodeComponent(s); }
+	static string encode(string s) { return encodeUriComponent(s); }
 	static string encode(string[string] s) { return encodeVariables(s); }
 	static string encode(string[][string] s) { return encodeVariables(s); }
 
@@ -3515,13 +3516,13 @@ string[][string] decodeVariables(string data, string separator = "&", string[]* 
 		string name;
 		string value;
 		if(equal == -1) {
-			name = decodeComponent(var);
+			name = decodeUriComponent(var);
 			value = "";
 		} else {
-			//_get[decodeComponent(var[0..equal])] ~= decodeComponent(var[equal + 1 .. $].replace("+", " "));
+			//_get[decodeUriComponent(var[0..equal])] ~= decodeUriComponent(var[equal + 1 .. $].replace("+", " "));
 			// stupid + -> space conversion.
-			name = decodeComponent(var[0..equal].replace("+", " "));
-			value = decodeComponent(var[equal + 1 .. $].replace("+", " "));
+			name = decodeUriComponent(var[0..equal].replace("+", " "));
+			value = decodeUriComponent(var[equal + 1 .. $].replace("+", " "));
 		}
 
 		_get[name] ~= value;
@@ -3554,7 +3555,7 @@ string encodeVariables(in string[string] data) {
 		else
 			outputted = true;
 
-		ret ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
+		ret ~= encodeUriComponent(k) ~ "=" ~ encodeUriComponent(v);
 	}
 
 	return ret;
@@ -3571,7 +3572,7 @@ string encodeVariables(in string[][string] data) {
 				ret ~= "&";
 			else
 				outputted = true;
-			ret ~= std.uri.encodeComponent(k) ~ "=" ~ std.uri.encodeComponent(v);
+			ret ~= encodeUriComponent(k) ~ "=" ~ encodeUriComponent(v);
 		}
 	}
 
@@ -11936,7 +11937,7 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 // man 2 sendfile
 	assert(urlPrefix[0] == '/');
 	if(filename is null)
-		filename = decodeComponent(urlPrefix[1 .. $]); // FIXME is this actually correct?
+		filename = decodeUriComponent(urlPrefix[1 .. $]); // FIXME is this actually correct?
 	if(contentType is null) {
 		contentType = contentTypeFromFileExtension(filename);
 	}
@@ -12027,7 +12028,7 @@ auto serveStaticFileDirectory(string urlPrefix, string directory = null, bool re
 	assert(directory[$-1] == '/');
 
 	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
-		auto file = decodeComponent(cgi.pathInfo[urlPrefix.length .. $]); // FIXME: is this actually correct
+		auto file = decodeUriComponent(cgi.pathInfo[urlPrefix.length .. $]); // FIXME: is this actually correct
 
 		if(details.recursive) {
 			// never allow a backslash since it isn't in a typical url anyway and makes the following checks easier
