@@ -209,20 +209,14 @@ class SlashCommandHandler {
 	}
 
 	/++
-		I know this signature looks ridiculous, but in your subclass, make:
-
-		---
-		this() {
-			super(this);
-		}
-		---
-
-		To initialize the reflection info to send to Discord. If you subclass your subclass,
+		This takes the child type into the parent so we can reflect over your added methods.
+		to initialize the reflection info to send to Discord. If you subclass your subclass,
 		make sure the grandchild constructor does `super(); registerAll(this);` to add its method
-		to the list too.
+		to the list too, but if you only have one level of child, the compiler will auto-generate
+		a constructor for you that calls this.
 	+/
-	protected this(this This)(This this_) {
-		registerAll(this_);
+	protected this(this This)() {
+		registerAll(cast(This) this);
 	}
 
 	/++
@@ -451,6 +445,7 @@ ync def something(interaction:discord.Interaction):
 		}
 
 		void registerAll(T)(T t) {
+			assert(t !is null);
 			foreach(memberName; __traits(derivedMembers, T))
 				static if(memberName != "__ctor") { // FIXME
 					HandlerInfo hi = makeHandler!(__traits(getMember, T, memberName))(t);
