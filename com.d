@@ -971,7 +971,7 @@ mixin template IDispatchImpl() {
 				} catch(Throwable e) {
 					// FIXME: fill in the exception info
 					if(except !is null) {
-						except.sCode = 1;
+						except.scode = 1;
 						import std.utf;
 						except.bstrDescription = SysAllocString(toUTFz!(wchar*)(e.toString()));
 						except.bstrSource = SysAllocString("amazing"w.ptr);
