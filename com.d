@@ -196,11 +196,12 @@ shared static ~this() {
 }
 
 ///
-void initializeClassicCom() {
+void initializeClassicCom(bool multiThreaded = false) {
 	if(coInitializeCalled)
 		return;
 
-	ComCheck(CoInitialize(null), "COM initialization failed");
+	ComCheck(CoInitializeEx(null, multiThreaded ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED),
+		"COM initialization failed");
 
 	coInitializeCalled++;
 }
