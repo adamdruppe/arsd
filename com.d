@@ -395,7 +395,7 @@ struct ComProperty {
 	}
 
 	ComResult opCall(Args...)(Args args) {
-		return callNamedArgs!([])(args);
+		return callWithNamedArgs!Args(null, args);
 	}
 
 	/// Call with named arguments
@@ -404,10 +404,10 @@ struct ComProperty {
 	///
 	/// So to call: `Com.f(10, 20, A: 30, B: 40)`, invoke this function as follows:
 	/// ---
-	/// Com.f().callNamedArgs!(["A", "B"])(10, 20, 30, 40);
+	/// Com.f().callWithNamedArgs!(["A", "B"])(10, 20, 30, 40);
 	/// ---
 	/// Argument names are case-insensitive
-	ComResult callNamedArgs(string[] argNames, Args...)(Args args) {
+	ComResult callWithNamedArgs(Args...)(string[] argNames, Args args) {
 		DISPPARAMS disp_params;
 
 		static if (args.length) {
@@ -420,8 +420,8 @@ struct ComProperty {
 			disp_params.rgvarg = vargs.ptr;
 			disp_params.cArgs = cast(int) args.length;
 
-			static if (argNames.length > 0) {
-				wchar*[argNames.length + 1] namesW;
+			if (argNames.length > 0) {
+				wchar*[Args.length + 1] namesW;
 				// GetIDsOfNames wants Method name at index 0 followed by parameter names.
 				// Order of passing named args is up to us, but it's standard to also put them backwards,
 				// and we've already done so with values in `vargs`, so we continue this trend
@@ -431,7 +431,7 @@ struct ComProperty {
 				foreach (i; 0 .. argNames.length) {
 					namesW[i + 1] = (to!wstring(argNames[$ - 1 - i]) ~ "\0"w).dup.ptr;
 				}
-				DISPID[argNames.length + 1] dispIds;
+				DISPID[Args.length + 1] dispIds;
 				innerComObject_.GetIDsOfNames(
 					&GUID_NULL, namesW.ptr, namesW.length, LOCALE_SYSTEM_DEFAULT, dispIds.ptr
 				).ComCheck("Unknown parameter name");
