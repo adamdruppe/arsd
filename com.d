@@ -271,10 +271,12 @@ struct ComResult {
 struct ComProperty {
 	IDispatch innerComObject_;
 	DISPID dispid;
+	string name;
 
 	this(IDispatch a, DISPID c, string name) {
 		this.innerComObject_ = a;
 		this.dispid = c;
+		this.name = name;
 	}
 
 	T getD(T)() {
@@ -393,9 +395,22 @@ struct ComProperty {
 	}
 
 	ComResult opCall(Args...)(Args args) {
+		return callWithNamedArgs!Args(null, args);
+	}
+
+	/// Call with named arguments
+	///
+	/// Note that all positional arguments are always followed by all named arguments.
+	///
+	/// So to call: `Com.f(10, 20, A: 30, B: 40)`, invoke this function as follows:
+	/// ---
+	/// Com.f().callWithNamedArgs!(["A", "B"])(10, 20, 30, 40);
+	/// ---
+	/// Argument names are case-insensitive
+	ComResult callWithNamedArgs(Args...)(string[] argNames, Args args) {
 		DISPPARAMS disp_params;
 
-		static if(args.length) {
+		static if (args.length) {
 			VARIANT[args.length] vargs;
 			foreach(idx, arg; args) {
 				// lol it is put in backwards way to explain MSFT
@@ -404,6 +419,27 @@ struct ComProperty {
 
 			disp_params.rgvarg = vargs.ptr;
 			disp_params.cArgs = cast(int) args.length;
+
+			if (argNames.length > 0) {
+				wchar*[Args.length + 1] namesW;
+				// GetIDsOfNames wants Method name at index 0 followed by parameter names.
+				// Order of passing named args is up to us, but it's standard to also put them backwards,
+				// and we've already done so with values in `vargs`, so we continue this trend
+				// with dispatch IDs of names
+				import std.conv: to;
+				namesW[0] = (to!wstring(this.name) ~ "\0"w).dup.ptr;
+				foreach (i; 0 .. argNames.length) {
+					namesW[i + 1] = (to!wstring(argNames[$ - 1 - i]) ~ "\0"w).dup.ptr;
+				}
+				DISPID[Args.length + 1] dispIds;
+				innerComObject_.GetIDsOfNames(
+					&GUID_NULL, namesW.ptr, namesW.length, LOCALE_SYSTEM_DEFAULT, dispIds.ptr
+				).ComCheck("Unknown parameter name");
+
+				// Strip Member name at index 0
+				disp_params.cNamedArgs = dispIds.length - 1;
+				disp_params.rgdispidNamedArgs = &dispIds[1];
+			}
 		}
 
 		VARIANT result;
