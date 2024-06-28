@@ -404,7 +404,7 @@ struct ComProperty {
 	///
 	/// So to call: `Com.f(10, 20, A: 30, B: 40)`, invoke this function as follows:
 	/// ---
-	/// Com.f().callWithNamedArgs!(["A", "B"])(10, 20, 30, 40);
+	/// Com.f().callWithNamedArgs(["A", "B"], 10, 20, 30, 40);
 	/// ---
 	/// Argument names are case-insensitive
 	ComResult callWithNamedArgs(Args...)(string[] argNames, Args args) {
@@ -433,11 +433,11 @@ struct ComProperty {
 				}
 				DISPID[Args.length + 1] dispIds;
 				innerComObject_.GetIDsOfNames(
-					&GUID_NULL, namesW.ptr, namesW.length, LOCALE_SYSTEM_DEFAULT, dispIds.ptr
+					&GUID_NULL, namesW.ptr, cast(uint) (1 + argNames.length), LOCALE_SYSTEM_DEFAULT, dispIds.ptr
 				).ComCheck("Unknown parameter name");
 
 				// Strip Member name at index 0
-				disp_params.cNamedArgs = dispIds.length - 1;
+				disp_params.cNamedArgs = cast(uint) argNames.length;
 				disp_params.rgdispidNamedArgs = &dispIds[1];
 			}
 		}
