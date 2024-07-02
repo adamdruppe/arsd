@@ -764,6 +764,10 @@ version(cef) {
 			this.client = client;
 		}
 
+		override void on_before_dev_tools_popup(RC!(cef_browser_t), cef_window_info_t*, cef_client_t**, cef_browser_settings_t*, cef_dictionary_value_t**, int*) nothrow {
+
+		}
+
 		override int on_before_popup(
 			RC!cef_browser_t browser,
 			RC!cef_frame_t frame,
@@ -930,7 +934,12 @@ version(cef) {
 	}
 
 	class MiniguiDialogHandler : CEF!cef_dialog_handler_t {
-		override int on_file_dialog(RC!(cef_browser_t) browser, cef_file_dialog_mode_t mode, const(cef_string_utf16_t)* title, const(cef_string_utf16_t)* default_file_path, cef_string_list_t accept_filters, RC!(cef_file_dialog_callback_t) callback) {
+		override int on_file_dialog(RC!(cef_browser_t) browser, cef_file_dialog_mode_t mode, const(cef_string_utf16_t)* title, const(cef_string_utf16_t)* default_file_path,
+			cef_string_list_t accept_filters,
+			cef_string_list_t accept_extensions,
+			cef_string_list_t accept_descriptions,
+			RC!(cef_file_dialog_callback_t) callback)
+		{
 			try {
 				auto ptr = callback.passable();
 				browser.runOnWebView((wv) {
@@ -952,7 +961,7 @@ version(cef) {
 	}
 
 	class MiniguiDownloadHandler : CEF!cef_download_handler_t {
-		override void on_before_download(
+		override int on_before_download(
 			RC!cef_browser_t browser,
 			RC!cef_download_item_t download_item,
 			const(cef_string_t)* suggested_name,
@@ -963,6 +972,8 @@ version(cef) {
 			auto fn = cef_string_t(cast(wstring)("/home/me/Downloads/"w ~ suggested_name.str[0..suggested_name.length]));
 			sdpyPrintDebugString(fn.toGC);
 			callback.cont(&fn, false);
+
+			return 1;
 		}
 
 		override void on_download_updated(
@@ -1117,6 +1128,14 @@ version(cef) {
 	}
 
 	class MiniguiRequestHandler : CEF!cef_request_handler_t {
+
+		override int on_render_process_unresponsive(RC!(cef_browser_t), RC!(cef_unresponsive_process_callback_t)) nothrow {
+			return 0;
+		}
+		override void on_render_process_responsive(RC!(cef_browser_t) p) nothrow {
+
+		}
+
 		override int on_before_browse(RC!(cef_browser_t), RC!(cef_frame_t), RC!(cef_request_t), int, int) nothrow {
 			return 0;
 		}
@@ -1139,7 +1158,7 @@ version(cef) {
 		override void on_render_view_ready(RC!(cef_browser_t) p) nothrow {
 
 		}
-		override void on_render_process_terminated(RC!(cef_browser_t), cef_termination_status_t) nothrow {
+		override void on_render_process_terminated(RC!(cef_browser_t), cef_termination_status_t, int error_code, const(cef_string_utf16_t)*) nothrow {
 
 		}
 		override void on_document_available_in_main_frame(RC!(cef_browser_t) browser) nothrow {
