@@ -5614,7 +5614,7 @@ version(fastcgi) {
 		int FCGX_HasSeenEOF(FCGX_Stream* stream);
 		c_int FCGX_FFlush(FCGX_Stream *stream);
 
-		int FCGX_OpenSocket(in char*, int);
+		int FCGX_OpenSocket(const char*, int);
 	}
 }
 
