@@ -250,20 +250,7 @@ struct ComResult {
 	}
 
 	T getD(T)() {
-		switch(result.vt) {
-			case VARENUM.VT_I4: // int
-				static if(is(T : const long))
-					return result.intVal;
-				throw new Exception("cannot convert variant of type int to requested " ~ T.stringof);
-			case VARENUM.VT_BSTR:
-				static if(is(T : const string))
-					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
-				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
-			default:
-				return getFromVariant!T(result);
-
-			//throw new Exception("can't handle this type " ~ to!string(result.vt));
-		}
+		return getFromVariant!T(result);
 	}
 
 }
@@ -658,6 +645,9 @@ VARIANT toComVariant(T)(T arg) {
 		ret = arg._fetchProperty();
 	} else static if (is(T : ComResult)) {
 		ret = arg.result;
+	} else static if(is(T : IDispatch)) {
+		ret.vt = VARENUM.VT_DISPATCH;
+		ret.pdispVal = arg;
 	} else static if(is(T : int)) {
 		ret.vt = 3;
 		ret.intVal = arg;
