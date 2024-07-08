@@ -652,23 +652,26 @@ VARIANT toComVariant(T)(T arg) {
 	static if(is(T : VARIANT)) {
 		ret = arg;
 	} else static if(is(T : ComClient!(Dynamic, IDispatch))) {
-		ret.vt = 9;
+		ret.vt = VARENUM.VT_DISPATCH;
 		ret.pdispVal = arg.innerComObject_;
 	} else static if(is(T : ComProperty)) {
 		ret = arg._fetchProperty();
 	} else static if (is(T : ComResult)) {
 		ret = arg.result;
+	} else static if(is(T : IDispatch)) {
+		ret.vt = VARENUM.VT_DISPATCH;
+		ret.pdispVal = arg;
 	} else static if(is(T : int)) {
-		ret.vt = 3;
+		ret.vt = VARENUM.VT_I4;
 		ret.intVal = arg;
 	} else static if(is(T : long)) {
-		ret.vt = 20;
-		ret.hVal = arg;
+		ret.vt = VARENUM.VT_I8;
+		ret.llVal = arg;
 	} else static if(is(T : double)) {
-		ret.vt = 5;
+		ret.vt = VARENUM.VT_R8;
 		ret.dblVal = arg;
 	} else static if(is(T : const(char)[])) {
-		ret.vt = 8;
+		ret.vt = VARENUM.VT_BSTR;
 		import std.utf;
 		ret.bstrVal = SysAllocString(toUTFz!(wchar*)(arg));
 	} else static if (is(T : E[], E)) {
