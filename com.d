@@ -288,32 +288,8 @@ struct ComProperty {
 			&argError // arg error
 		);//, "Invoke");
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
-
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				throw new ComException(hr, "Property get failed " ~ to!string(argError));
-			}
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Property get")) {
+			throw e;
 		}
 
 		return ComResult(result);
@@ -350,32 +326,8 @@ struct ComProperty {
 
 		VariantClear(&vargs[0]);
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
-
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				throw new ComException(hr, "Property put failed " ~ to!string(argError));
-			}
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Property put")) {
+			throw e;
 		}
 
 		return rhs;
@@ -463,37 +415,46 @@ struct ComProperty {
 			}
 		}
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
-
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				import std.conv;
-				throw new ComException(hr, "Call failed " ~ to!string(cast(void*) innerComObject_) ~ " " ~ to!string(dispid) ~ " " ~ to!string(argError));
-			}
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Call")) {
+			throw e;
 		}
 
 		return ComResult(result);
 	}
+}
+
+/// Returns: `null` on success, a D Exception created from `einfo` and `argError`
+/// in case the COM return `hr` signals failure
+private Exception exceptionFromComResult(HRESULT hr, ref EXCEPINFO einfo, uint argError, string action)
+{
+	import std.conv;
+	if(FAILED(hr)) {
+		if(hr == DISP_E_EXCEPTION) {
+			auto code = einfo.scode ? einfo.scode : einfo.wCode;
+			string source;
+			string description;
+			if(einfo.bstrSource) {
+				// this is really a wchar[] but it needs to be freed so....
+				source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+				SysFreeString(einfo.bstrSource);
+			}
+			if(einfo.bstrDescription) {
+				description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+				SysFreeString(einfo.bstrDescription);
+			}
+			if(einfo.bstrHelpFile) {
+				// FIXME: we could prolly use this too
+				SysFreeString(einfo.bstrHelpFile);
+				// and dwHelpContext
+			}
+
+			throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+		} else {
+			throw new ComException(hr, action ~ " failed " ~ to!string(argError));
+		}
+	}
+	return null;
 }
 
 ///
@@ -584,32 +545,8 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 					}
 				}
 
-				import std.conv;
-				if(FAILED(hr)) {
-					if(hr == DISP_E_EXCEPTION) {
-						auto code = einfo.scode ? einfo.scode : einfo.wCode;
-						string source;
-						string description;
-						if(einfo.bstrSource) {
-							// this is really a wchar[] but it needs to be freed so....
-							source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-							SysFreeString(einfo.bstrSource);
-						}
-						if(einfo.bstrDescription) {
-							description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-							SysFreeString(einfo.bstrDescription);
-						}
-						if(einfo.bstrHelpFile) {
-							// FIXME: we could prolly use this too
-							SysFreeString(einfo.bstrHelpFile);
-							// and dwHelpContext
-						}
-
-						throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-					} else {
-						throw new ComException(hr, "Call failed " ~ memberName ~ " " ~ to!string(argError));
-					}
+				if (Exception e = exceptionFromComResult(hr, einfo, argError, "Call")) {
+					throw e;
 				}
 
 				return getFromVariant!(typeof(return))(result);
