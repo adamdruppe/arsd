@@ -6546,6 +6546,8 @@ version(X11) {
 			void handleData(Atom target, in ubyte[] data) {
 				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
 					handler(cast(const char[]) data);
+				else if(target == None && data is null)
+					handler(null); // no suitable selection exists
 			}
 
 			Atom findBestFormat(Atom[] answer) {
