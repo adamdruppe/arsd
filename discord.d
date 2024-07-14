@@ -99,6 +99,14 @@ class DiscordChannel : DiscordEntity {
 	override string restType() {
 		return "channels";
 	}
+
+	void sendMessage(string message) {
+		if(message.length == 0)
+			message = "empty message specified";
+		var msg = var.emptyObject;
+		msg.content = message;
+		rest.messages.POST(msg).result;
+	}
 }
 
 /++
@@ -158,6 +166,22 @@ class DiscordUser : DiscordMentionable {
 		auto result = api.rest.guilds[role.guild.id].members[this.id].roles[role.id].DELETE().result;
 	}
 
+	private DiscordChannel dmChannel_;
+
+	DiscordChannel dmChannel() {
+		if(dmChannel_ is null) {
+			var obj = var.emptyObject;
+			obj.recipient_id = this.id;
+			var result = this.api.rest.users["@me"].channels.POST(obj).result;
+
+			dmChannel_ = new DiscordChannel(api, result.id.get!string);//, result);
+		}
+		return dmChannel_;
+	}
+
+	void sendMessage(string what) {
+		dmChannel.sendMessage(what);
+	}
 }
 
 /++
@@ -235,26 +259,44 @@ class SlashCommandHandler {
 		/++
 
 		+/
-		void reply(string message) scope {
-			replyLowLevel(message);
+		void reply(string message, bool ephemeral = false) scope {
+			replyLowLevel(message, ephemeral);
 		}
 
 		/++
 
 		+/
-		void replyWithError(in char[] message) scope {
-			replyLowLevel(message.idup);
+		void replyWithError(scope const(char)[] message) scope {
+			if(message.length == 0)
+				message = "I am error.";
+			replyLowLevel(message.idup, true);
 		}
 
-		void replyLowLevel(string message) scope {
+		enum MessageFlags : uint {
+			SUPPRESS_EMBEDS        = (1 << 2), // skip the embedded content
+			EPHEMERAL              = (1 << 6), // only visible to you
+			LOADING                = (1 << 7), // the bot is "thinking"
+			SUPPRESS_NOTIFICATIONS = (1 << 12) // skip push/desktop notifications
+		}
+
+		void replyLowLevel(string message, bool ephemeral) scope {
+			if(message.length == 0)
+				message = "empty message";
 			var reply = var.emptyObject;
 			reply.type = 4; // chat response in message. 5 can be answered quick and edited later if loading, 6 if quick answer, no loading message
 			var replyData = var.emptyObject;
 			replyData.content = message;
+			replyData.flags = ephemeral ? (1 << 6) : 0;
 			reply.data = replyData;
-			var result = api.rest.
-				interactions[commandArgs.interactionId][commandArgs.interactionToken].callback
-				.POST(reply).result;
+			try {
+				var result = api.rest.
+					interactions[commandArgs.interactionId][commandArgs.interactionToken].callback
+					.POST(reply).result;
+				writeln(result.toString);
+			} catch(Exception e) {
+				import std.stdio; writeln(commandArgs);
+				writeln(e.toString());
+			}
 		}
 	}
 
@@ -281,11 +323,21 @@ class SlashCommandHandler {
 	}
 
 	private {
+
+		static void validateDiscordSlashCommandName(string name) {
+			foreach(ch; name) {
+				if(ch != '_' && !(ch >= 'a' && ch <= 'z'))
+					throw new InvalidArgumentsException("name", "discord names must be all lower-case with only letters and underscores", LimitedVariant(name));
+			}
+		}
+
 		static HandlerInfo makeHandler(alias handler, T)(T slashThis) {
 			HandlerInfo info;
 
 			// must be all lower case!
 			info.name = __traits(identifier, handler);
+
+			validateDiscordSlashCommandName(info.name);
 
 			var cmd = var.emptyObject();
 			cmd.name = info.name;
@@ -309,6 +361,7 @@ class SlashCommandHandler {
 			foreach(idx, param; Params) {
 				var option = var.emptyObject;
 				auto name = __traits(identifier, Params[idx .. idx + 1]);
+				validateDiscordSlashCommandName(name);
 				names ~= name;
 				option.name = name;
 				option.description = "desc";
@@ -329,9 +382,9 @@ class SlashCommandHandler {
 				static if(is(typeof(handler) Return == return)) {
 					static if(is(Return == void)) {
 						__traits(child, slashThis, handler)(fargsFromJson!Params(api, names, args.interactionData, args).tupleof);
-						sendHandlerReply("OK", replyHelper);
+						sendHandlerReply("OK", replyHelper, true);
 					} else {
-						sendHandlerReply(__traits(child, slashThis, handler)(fargsFromJson!Params(api, names, args.interactionData, args).tupleof), replyHelper);
+						sendHandlerReply(__traits(child, slashThis, handler)(fargsFromJson!Params(api, names, args.interactionData, args).tupleof), replyHelper, false);
 					}
 				} else static assert(0);
 			};
@@ -439,9 +492,9 @@ ync def something(interaction:discord.Interaction):
 			}
 		}
 
-		static void sendHandlerReply(T)(T ret, scope InteractionReplyHelper replyHelper) {
+		static void sendHandlerReply(T)(T ret, scope InteractionReplyHelper replyHelper, bool ephemeral) {
 			import std.conv; // FIXME
-			replyHelper.reply(to!string(ret));
+			replyHelper.reply(to!string(ret), ephemeral);
 		}
 
 		void registerAll(T)(T t) {
@@ -482,7 +535,7 @@ class SendingUser : DiscordUser {
 	}
 }
 
-class SendingChannel : DiscordUser {
+class SendingChannel : DiscordChannel {
 	private this(DiscordRestApi api, string id, var initialCache) {
 		super(api, id);
 	}
@@ -733,24 +786,46 @@ class DiscordGatewayConnection {
 
 				scope SlashCommandHandler.InteractionReplyHelper replyHelper = new SlashCommandHandler.InteractionReplyHelper(api, commandArgs);
 
+				Exception throwExternally;
+
 				try {
 					if(slashCommandHandler_ is null)
-						throw ArsdException!"No slash commands registered"();
-
-					auto cmdName = commandArgs.interactionData.name.get!string;
-					if(auto pHandler = cmdName in slashCommandHandler_.handlers) {
-						(*pHandler)(commandArgs, replyHelper, api);
-					} else {
-						throw ArsdException!"Unregistered slash command"(cmdName);
+						throwExternally = ArsdException!"No slash commands registered"();
+					else {
+						auto cmdName = commandArgs.interactionData.name.get!string;
+						if(auto pHandler = cmdName in slashCommandHandler_.handlers) {
+							(*pHandler)(commandArgs, replyHelper, api);
+						} else {
+							throwExternally = ArsdException!"Unregistered slash command"(cmdName);
+						}
 					}
+				} catch(ArsdExceptionBase e) {
+					const(char)[] msg = e.message;
+					if(msg.length == 0)
+						msg = "I am error.";
+
+					e.getAdditionalPrintableInformation((string name, in char[] value) {
+						msg ~= ("\n");
+						msg ~= (name);
+						msg ~= (": ");
+						msg ~= (value);
+					});
+
+					replyHelper.replyWithError(msg);
 				} catch(Exception e) {
 					replyHelper.replyWithError(e.message);
 				}
+
+				if(throwExternally !is null)
+					throw throwExternally;
 			break;
 			case "READY":
 				this.session_id = data.session_id.get!string;
 				this.resume_gateway_url = data.resume_gateway_url.get!string;
 				this.applicationId_ = data.application.id.get!string;
+
+				if(slashCommandHandler_ !is null && applicationId.length)
+					slashCommandHandler_.register(api, applicationId);
 			break;
 
 			default:
