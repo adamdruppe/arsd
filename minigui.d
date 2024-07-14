@@ -1307,8 +1307,9 @@ class Widget : ReflectableProperties {
 	/// ditto
 	void defaultEventHandler_mousedown(MouseDownEvent event) {
 		if(event.button == MouseButton.left) {
-			if(this.tabStop)
+			if(this.tabStop) {
 				this.focus();
+			}
 		}
 	}
 	/// ditto
@@ -12066,6 +12067,24 @@ class TextDisplayHelper : Widget {
 	private const(TextLayouter.State)*[] undoStack;
 	private const(TextLayouter.State)*[] redoStack;
 
+	private string preservedPrimaryText;
+	protected void selectionChanged() {
+		static if(UsingSimpledisplayX11)
+		with(l.selection()) {
+			if(!isEmpty()) {
+				getPrimarySelection(parentWindow.win, (in char[] txt) {
+					if(txt.length) {
+						preservedPrimaryText = txt.idup;
+						// writeln(preservedPrimaryText);
+					}
+
+					setPrimarySelection(parentWindow.win, getContentString());
+				});
+			}
+		}
+	}
+
+
 	bool readonly;
 	bool caretNavigation; // scroll lock can flip this
 	bool singleLine;
@@ -12187,6 +12206,8 @@ class TextDisplayHelper : Widget {
 			setAnchor();
 			moveToEndOfDocument();
 			setFocus();
+
+			selectionChanged();
 		}
 		redraw();
 	}
@@ -12262,6 +12283,7 @@ class TextDisplayHelper : Widget {
 		});
 
 		bool mouseDown;
+		bool mouseActuallyMoved;
 
 		this.addEventListener((scope ResizeEvent re) {
 			// FIXME: I should add a method to give this client area width thing
@@ -12294,6 +12316,9 @@ class TextDisplayHelper : Widget {
 						l.selection.setFocus();
 					else
 						l.selection.setAnchor();
+
+					selectionChanged();
+
 					if(setPosition)
 						l.selection.setUserXCoordinate();
 					scrollForCaret();
@@ -12378,9 +12403,30 @@ class TextDisplayHelper : Widget {
 		this.addEventListener((scope ClickEvent ce) {
 			if(ce.button == MouseButton.middle) {
 				parentWindow.win.getPrimarySelection((txt) {
-					l.selection.replaceContent(txt);
+					doStateCheckpoint();
+
+					if(txt == l.selection.getContentString && preservedPrimaryText.length)
+						l.selection.replaceContent(preservedPrimaryText);
+					else
+						l.selection.replaceContent(txt);
 					redraw();
 				});
+			}
+		});
+
+		this.addEventListener((scope DoubleClickEvent dce) {
+			if(dce.button == MouseButton.left) {
+				with(l.selection()) {
+					scope dg = delegate const(char)[] (scope return const(char)[] ch) {
+						if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
+							return ch;
+						return null;
+					};
+					find(dg, 1, true).moveToEnd.setAnchor;
+					find(dg, 1, false).moveTo.setFocus;
+					selectionChanged();
+					redraw();
+				}
 			}
 		});
 
@@ -12390,6 +12436,7 @@ class TextDisplayHelper : Widget {
 				l.selection.moveTo(adjustForSingleLine(smw.position + downAt));
 				l.selection.setAnchor();
 				mouseDown = true;
+				mouseActuallyMoved = false;
 				parentWindow.captureMouse(this);
 				this.redraw();
 			} else if(ce.button == MouseButton.right) {
@@ -12458,6 +12505,7 @@ class TextDisplayHelper : Widget {
 
 				l.selection.moveTo(adjustForSingleLine(smw.position + movedTo));
 				l.selection.setFocus();
+				mouseActuallyMoved = true;
 				this.redraw();
 			}
 		});
@@ -12472,6 +12520,9 @@ class TextDisplayHelper : Widget {
 				parentWindow.releaseMouseCapture();
 				stopAutoscrollTimer();
 				this.redraw();
+
+				if(mouseActuallyMoved)
+					selectionChanged();
 			}
 			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
 		});
@@ -12820,6 +12871,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 			void setupCustomTextEditing() {
 				textLayout = new TextLayouter(defaultTextStyle());
+
 				auto smw = new ScrollMessageWidget(this);
 				if(!showingHorizontalScroll)
 					smw.horizontalScrollBar.hide();

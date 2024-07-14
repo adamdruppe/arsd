@@ -315,12 +315,14 @@ public struct Selection {
 	Selection setAnchor() {
 		impl.anchor = impl.position;
 		impl.focus = impl.position;
+		// layouter.notifySelectionChanged();
 		return this;
 	}
 
 	/// ditto
 	Selection setFocus() {
 		impl.focus = impl.position;
+		// layouter.notifySelectionChanged();
 		return this;
 	}
 
@@ -446,9 +448,127 @@ public struct Selection {
 		return this;
 	}
 
-	void find(scope const(char)[] text) {
+	/+
+	enum PlacementOfFind {
+		beginningOfHit,
+		endOfHit
 	}
 
+	enum IfNotFound {
+		changeNothing,
+		moveToEnd,
+		callDelegate
+	}
+
+	enum CaseSensitive {
+		yes,
+		no
+	}
+
+	void find(scope const(char)[] text, PlacementOfFind placeAt = PlacementOfFind.beginningOfHit, IfNotFound ifNotFound = IfNotFound.changeNothing) {
+	}
+	+/
+
+	/++
+		Does a custom search through the text.
+
+		Params:
+			predicate = a search filter. It passes you back a slice of your buffer filled with text at the current search position. You pass the slice of this buffer that matched your search, or `null` if there was no match here. You MUST return either null or a slice of the buffer that was passed to you. If you return an empty slice of of the buffer (buffer[0..0] for example), it cancels the search.
+
+			The window buffer will try to move one code unit at a time. It may straddle code point boundaries - you need to account for this in your predicate.
+
+			windowBuffer = a buffer to temporarily hold text for comparison. You should size this for the text you're trying to find
+
+			searchBackward = determines the direction of the search. If true, it searches from the start of current selection backward to the beginning of the document. If false, it searches from the end of current selection forward to the end of the document.
+		Returns:
+			an object representing the search results and letting you manipulate the selection based upon it
+
+	+/
+	FindResult find(
+		scope const(char)[] delegate(scope return const(char)[] buffer) predicate,
+		int windowBufferSize,
+		bool searchBackward,
+	) {
+		assert(windowBufferSize != 0, "you must pass a buffer of some size");
+
+		char[] windowBuffer = new char[](windowBufferSize); // FIXME i don't need to actually copy in the current impl
+
+		int currentSpot = impl.position;
+
+		const finalSpot = searchBackward ? currentSpot : cast(int) layouter.text.length;
+
+		if(searchBackward) {
+			currentSpot -= windowBuffer.length;
+			if(currentSpot < 0)
+				currentSpot = 0;
+		}
+
+		auto endingSpot = currentSpot + windowBuffer.length;
+		if(endingSpot > finalSpot)
+			endingSpot = finalSpot;
+
+		keep_searching:
+		windowBuffer[0 .. endingSpot - currentSpot] = layouter.text[currentSpot .. endingSpot];
+		auto result = predicate(windowBuffer[0 .. endingSpot - currentSpot]); 
+		if(result !is null) {
+			// we're done, it was found
+			auto offsetStart = result is null ? currentSpot : cast(int) (result.ptr - windowBuffer.ptr);
+			assert(offsetStart >= 0 && offsetStart < windowBuffer.length);
+			return FindResult(this, currentSpot + offsetStart, result !is null, currentSpot + cast(int) (offsetStart + result.length));
+		} else if((searchBackward && currentSpot > 0) || (!searchBackward && endingSpot < finalSpot)) {
+			// not found, keep searching
+			if(searchBackward) {
+				currentSpot--;
+				endingSpot--;
+			} else {
+				currentSpot++;
+				endingSpot++;
+			}
+			goto keep_searching;
+		} else {
+			// not found, at end of search
+			return FindResult(this, currentSpot, false, currentSpot /* zero length result */);
+		}
+
+		assert(0);
+	}
+
+	/// ditto
+	static struct FindResult {
+		private Selection selection;
+		private int position;
+		private bool found;
+		private int endPosition;
+
+		///
+		bool wasFound() {
+			return found;
+		}
+
+		///
+		Selection moveTo() {
+			selection.impl.position = position;
+			return selection;
+		}
+
+		///
+		Selection moveToEnd() {
+			selection.impl.position = endPosition;
+			return selection;
+		}
+
+		///
+		void selectHit() {
+			selection.impl.position = position;
+			selection.setAnchor();
+			selection.impl.position = endPosition;
+			selection.setFocus();
+		}
+	}
+
+
+
+	/+
 	/+ +
 		Searches by regex.
 
@@ -459,6 +579,7 @@ public struct Selection {
 	void find(RegEx)(RegEx re) {
 
 	}
+	+/
 
 	/+ Manipulating the data in the selection +/
 
@@ -863,6 +984,26 @@ public struct Selection {
 	}
 }
 
+unittest {
+	auto l = new TextLayouter(new class TextStyle {
+		mixin Defaults;
+	});
+
+	l.appendText("this is a test string again");
+	auto s = l.selection();
+	auto result = s.find(b => (b == "a") ? b : null, 1, false);
+	assert(result.wasFound);
+	assert(result.position == 8);
+	assert(result.endPosition == 9);
+	result.selectHit();
+	assert(s.getContentString() == "a");
+	result.moveToEnd();
+	result = s.find(b => (b == "a") ? b : null, 1, false); // should find next
+	assert(result.wasFound);
+	assert(result.position == 22);
+	assert(result.endPosition == 23);
+}
+
 private struct SelectionImpl {
 	// you want multiple selections at most points
 	int id;
@@ -941,6 +1082,21 @@ class TextLayouter {
 		}
 		assert(last == text.length); // and all chars in the array must be covered by a style block
 	}
+
+	/+
+	private void notifySelectionChanged() {
+		if(onSelectionChanged !is null)
+			onSelectionChanged(this);
+	}
+
+	/++
+		A delegate called when the current selection is changed through api or user action.
+
+		History:
+			Added July 10, 2024
+	+/
+	void delegate(TextLayouter l) onSelectionChanged;
+	+/
 
 	/++
 		Gets the object representing the given selection.
