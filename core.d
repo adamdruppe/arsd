@@ -53,6 +53,12 @@ static if(__traits(hasMember, core.attribute, "implicit"))
 else
 	enum implicit;
 
+static if(__traits(hasMember, core.attribute, "standalone"))
+	alias standalone = core.attribute.standalone;
+else
+	enum standalone;
+
+
 
 // FIXME: add callbacks on file open for tracing dependencies dynamically
 
@@ -3717,8 +3723,9 @@ class Timer {
 	/++
 		Creates an initialized, but unarmed timer. You must call other methods later.
 	+/
-	this() {
-		initialize();
+	this(bool actuallyInitialize = true) {
+		if(actuallyInitialize)
+			initialize();
 	}
 
 	private void initialize() {
@@ -3808,6 +3815,27 @@ class Timer {
 		initialize();
 		setPulseCallback(onPulse);
 		changeTime(intervalInMilliseconds, repeats);
+	}
+
+	/++
+		Sets a one-of timer that happens some time after the given timestamp, then destroys itself
+	+/
+	this(SimplifiedUtcTimestamp when, void delegate() onTimeArrived) {
+		import core.stdc.time;
+		auto ts = when.toUnixTime;
+		auto now = time(null);
+		if(ts <= now) {
+			this(false);
+			onTimeArrived();
+		} else {
+			// FIXME: should use the OS facilities to set the actual time on the real time clock
+			auto dis = this;
+			this(cast(int)(ts - now) * 1000, () {
+				onTimeArrived();
+				dis.cancel();
+				dis.dispose();
+			}, false);
+		}
 	}
 
 	version(Windows) {} else {
@@ -7409,6 +7437,142 @@ unittest {
 mixin template LoggerOf(T) {
 	void log(LogLevel l, T message) {
 
+	}
+}
+
+enum LogLevel {
+	Info
+}
+
+/+
+	=====================
+	TRANSLATION FRAMEWORK
+	=====================
++/
+
+/++
+	Represents a translatable string.
+
+
+	This depends on interpolated expression sequences to be ergonomic to use and in most cases, a function that uses this should take it as `tstring name...`; a typesafe variadic (this is also why it is a class rather than a struct - D only supports this particular feature on classes).
+
+	You can use `null` as a tstring. You can also construct it with UFCS: `i"foo".tstring`.
+
+	The actual translation engine should be set on the application level.
+
+	It is possible to get all translatable string templates compiled into the application at runtime.
+
+	History:
+		Added June 23, 2024
++/
+class tstring {
+	private GenericEmbeddableInterpolatedSequence geis;
+
+	/++
+		For a case where there is no plural specialization.
+	+/
+	this(Args...)(InterpolationHeader hdr, Args args, InterpolationFooter ftr) {
+		geis = GenericEmbeddableInterpolatedSequence(hdr, args, ftr);
+		tstringTemplateProcessor!(Args.length, Args) tp;
+	}
+
+	/+
+	/++
+		When here is a plural specialization this passes the default one.
+	+/
+	this(SArgs..., Pargs...)(
+		InterpolationHeader shdr, SArgs singularArgs, InterpolationFooter sftr,
+		InterpolationHeader phdr, PArgs pluralArgs, InterpolationFooter pftr
+	)
+	{
+		geis = GenericEmbeddableInterpolatedSequence(shdr, singularArgs, sftr);
+		//geis = GenericEmbeddableInterpolatedSequence(phdr, pluralArgs, pftr);
+
+		tstringTemplateProcessor!(Args.length, Args) tp;
+	}
+	+/
+
+	final override string toString() {
+		if(this is null)
+			return null;
+		if(translationEngine !is null)
+			return translationEngine.translate(geis);
+		else
+			return geis.toString();
+	}
+
+	static tstring opCall(Args...)(InterpolationHeader hdr, Args args, InterpolationFooter ftr) {
+		return new tstring(hdr, args, ftr);
+	}
+
+	/+ +++ +/
+
+	private static shared(TranslationEngine) translationEngine_ = null;
+
+	static shared(TranslationEngine) translationEngine() {
+		return translationEngine_;
+	}
+
+	static void translationEngine(shared TranslationEngine e) {
+		translationEngine_ = e;
+		if(e !is null) {
+			auto item = first;
+			while(item) {
+				e.handleTemplate(*item);
+				item = item.next;
+			}
+		}
+	}
+
+	public struct TranslatableElement {
+		string templ;
+		string pluralTempl;
+
+		TranslatableElement* next;
+	}
+
+	static __gshared TranslatableElement* first;
+
+	// FIXME: the template should be identified to the engine somehow
+
+	private static enum templateStringFor(Args...) = () {
+		int count;
+		string templ;
+		foreach(arg; Args) {
+			static if(is(arg == InterpolatedLiteral!str, string str))
+				templ ~= str;
+			else static if(is(arg == InterpolatedExpression!code, string code))
+				templ ~= "{" ~ cast(char)(++count + '0') ~ "}";
+		}
+		return templ;
+	}();
+
+	// this is here to inject static ctors so we can build up a runtime list from ct data
+	private static struct tstringTemplateProcessor(size_t pluralBegins, Args...) {
+		static __gshared TranslatableElement e = TranslatableElement(
+			templateStringFor!(Args[0 .. pluralBegins]),
+			templateStringFor!(Args[pluralBegins .. $]),
+			null /* next, filled in by the static ctor below */);
+
+		@standalone @system
+		shared static this() {
+			e.next = first;
+			first = &e;
+		}
+	}
+}
+
+/// ditto
+class TranslationEngine {
+	string translate(GenericEmbeddableInterpolatedSequence geis) shared {
+		return geis.toString();
+	}
+
+	/++
+		If the translation engine has been set early in the module
+		construction process (which it should be!)
+	+/
+	void handleTemplate(tstring.TranslatableElement t) shared {
 	}
 }
 
