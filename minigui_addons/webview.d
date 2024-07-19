@@ -1199,6 +1199,7 @@ version(cef) {
 				addItem("Copy link URL", 2);
 
 				// FIXME: open in other browsers
+				// FIXME: open in ytv
 				addSeparator();
 			}
 

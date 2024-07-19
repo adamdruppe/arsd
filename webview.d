@@ -427,6 +427,12 @@ import arsd.simpledisplay;
 //pragma(lib, "cef");
 
 class BrowserProcessHandler : CEF!cef_browser_process_handler_t {
+	this(void delegate(string dir, string[] args) onAlreadyRunningAppRelaunch) {
+		this.onAlreadyRunningAppRelaunch = onAlreadyRunningAppRelaunch;
+	}
+
+	private void delegate(string dir, string[] args) onAlreadyRunningAppRelaunch;
+
 	override void on_context_initialized() { }
 
 	override void on_before_child_process_launch(RC!cef_command_line_t) { }
@@ -434,8 +440,40 @@ class BrowserProcessHandler : CEF!cef_browser_process_handler_t {
 	override cef_client_t* get_default_client() { return null; }
 	override void on_register_custom_preferences(cef_preferences_type_t, cef_preference_registrar_t*) {}
 
-	override int on_already_running_app_relaunch(RC!(cef_command_line_t), const(cef_string_utf16_t)*) nothrow {
-		return 0;
+	override int on_already_running_app_relaunch(RC!(cef_command_line_t) command_line, const(cef_string_utf16_t)* current_directory) nothrow {
+		if(onAlreadyRunningAppRelaunch) {
+
+			string[] argList;
+
+			if(command_line.has_arguments()) {
+				cef_string_list_t thing = libcef.string_list_alloc();
+
+				command_line.get_arguments(thing);
+
+				auto count = libcef.string_list_size(thing);
+				foreach(i; 0 .. count) {
+					cef_string_utf16_t v;
+
+					libcef.string_list_value(thing, i, &v);
+
+					argList ~= toGC(&v);
+				}
+				libcef.string_list_free(thing);
+			}
+
+			try {
+				onAlreadyRunningAppRelaunch(
+					toGC(current_directory),
+					argList
+				);
+			} catch(Exception e) {
+
+			}
+
+			return 1;
+		} else {
+			return 0;
+		}
 	}
 	override cef_request_context_handler_t* get_default_request_context_handler() nothrow {
 		return null;
@@ -477,7 +515,7 @@ public struct CefApp {
 
 	@disable this(this);
 	@disable new();
-	this(void delegate(cef_settings_t* settings) setSettings) {
+	this(void delegate(cef_settings_t* settings) setSettings, void delegate(string dir, string[] args) onAlreadyRunningAppRelaunch) {
 
 		if(!libcef.loadDynamicLibrary())
 			throw new Exception("failed to load cef dll");
@@ -509,10 +547,10 @@ public struct CefApp {
 			setSettings(&settings);
 
 
-		auto app = new class CEF!cef_app_t {
+		auto app = new class(onAlreadyRunningAppRelaunch) CEF!cef_app_t {
 			BrowserProcessHandler bph;
-			this() {
-				bph = new BrowserProcessHandler();
+			this(void delegate(string dir, string[] args) onAlreadyRunningAppRelaunch) {
+				bph = new BrowserProcessHandler(onAlreadyRunningAppRelaunch);
 			}
 			override void on_before_command_line_processing(const(cef_string_t)*, RC!cef_command_line_t) {}
 
