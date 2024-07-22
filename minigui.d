@@ -15038,7 +15038,9 @@ class FilePicker : Dialog {
 			for(int i = 0; i < sa.length; i++) {
 				if(i == sb.length)
 					return 1;
-				return sa[i] - sb[i];
+				auto diff = sa[i] - sb[i];
+				if(diff)
+					return diff;
 			}
 
 			return 0;
@@ -15144,7 +15146,7 @@ class FilePicker : Dialog {
 				if(current.length >= 2 && current[0 ..2] == "./")
 					current = current[2 .. $];
 
-				auto commonPrefix = loadFiles(".", current ~ "*");
+				auto commonPrefix = loadFiles(currentDirectory, current ~ "*");
 
 				if(commonPrefix.length)
 					lineEdit.content = commonPrefix;

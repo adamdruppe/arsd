@@ -509,7 +509,7 @@ public struct Selection {
 
 		keep_searching:
 		windowBuffer[0 .. endingSpot - currentSpot] = layouter.text[currentSpot .. endingSpot];
-		auto result = predicate(windowBuffer[0 .. endingSpot - currentSpot]); 
+		auto result = predicate(windowBuffer[0 .. endingSpot - currentSpot]);
 		if(result !is null) {
 			// we're done, it was found
 			auto offsetStart = result is null ? currentSpot : cast(int) (result.ptr - windowBuffer.ptr);
