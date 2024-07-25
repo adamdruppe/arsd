@@ -33,7 +33,8 @@
 
   The library suits well for anything from rendering scalable icons in your editor application to prototyping a game.
 
-  NanoVega.SVG supports a wide range of SVG features, but something may be missing. Your's Captain Obvious.
+  NanoVega.SVG supports a wide range of SVG features, but several are be missing. Among the most notable
+  known missing features: `<use>`, `<text>`, `<def>` for shapes (it does work for gradients), `<script>` and animations. Note that `<clipPath>` is new and may be buggy (but anything in here may be buggy!) and the css support is fairly rudimentary.
 
 
   The shapes in the SVG images are transformed by the viewBox and converted to specified units.
@@ -105,8 +106,12 @@
 
 	}
   ---
+
+  TODO: maybe merge https://github.com/memononen/nanosvg/pull/94 too
  */
 module arsd.svg;
+
+alias NSVGclipPathIndex = ubyte;
 
 private import core.stdc.math : fabs, fabsf, atan2f, acosf, cosf, sinf, tanf, sqrt, sqrtf, floorf, ceilf, fmodf;
 //private import iv.vfs;
@@ -409,6 +414,11 @@ struct NSVG {
     }
   }
 
+  static struct Clip {
+    NSVGclipPathIndex* index;	// Array of clip path indices (of related NSVGimage).
+    NSVGclipPathIndex count;	// Number of clip paths in this set.
+  }
+
   ///
   static struct Shape {
     @disable this (this);
@@ -427,6 +437,7 @@ struct NSVG {
     /*Flags*/ubyte flags;     /// Logical or of NSVG_FLAGS_* flags
     float[4] bounds;          /// Tight bounding box of the shape [minx,miny,maxx,maxy].
     NSVG.Path* paths;         /// Linked list of paths in the image.
+    NSVG.Clip clip;
     NSVG.Shape* next;         /// Pointer to next shape, or null if last element.
 
     @property bool visible () const pure nothrow @safe @nogc { pragma(inline, true); return ((flags&Visible) != 0); } ///
@@ -469,9 +480,17 @@ struct NSVG {
     }
   }
 
+  static struct ClipPath {
+    char[64] id; // Unique id of this clip path (from SVG).
+    NSVGclipPathIndex index; // Unique internal index of this clip path.
+    NSVG.Shape* shapes; // Linked list of shapes in this clip path.
+    NSVG.ClipPath* next; // Pointer to next clip path or NULL.
+  }
+
   float width;        /// Width of the image.
   float height;       /// Height of the image.
   NSVG.Shape* shapes; /// Linked list of shapes in the image.
+  NSVG.ClipPath* clipPaths;	/// Linked list of clip paths in the image.
 
   /// delegate can accept:
   ///   NSVG.Shape*
@@ -1030,6 +1049,7 @@ struct Attrib {
   ubyte hasFill;
   ubyte hasStroke;
   ubyte visible;
+  NSVGclipPathIndex clipPathCount;
 }
 
 version(nanosvg_crappy_stylesheet_parser) {
@@ -1054,6 +1074,10 @@ struct Parser {
   float dpi;
   bool pathFlag;
   bool defsFlag;
+
+  NSVG.ClipPath* clipPath;
+  NSVGclipPathIndex[255] clipPathStack; // note the  type of clipPathIndex = ubyte
+
   int canvaswdt = -1;
   int canvashgt = -1;
   version(nanosvg_crappy_stylesheet_parser) {
@@ -1658,6 +1682,19 @@ void nsvg__addShape (Parser* p) {
   shape.paths = p.plist;
   p.plist = null;
 
+
+  shape.clip.count = attr.clipPathCount;
+  if (shape.clip.count > 0) {
+      import core.stdc.stdlib : malloc;
+      import core.stdc.string : memcpy;
+      shape.clip.index = xcalloc!NSVGclipPathIndex(attr.clipPathCount);
+
+      if (shape.clip.index is null) goto error;
+
+      memcpy(shape.clip.index, p.clipPathStack.ptr,
+             attr.clipPathCount * NSVGclipPathIndex.sizeof);
+  }
+
   // Calculate shape bounds
   shape.bounds.ptr[0] = shape.paths.bounds.ptr[0];
   shape.bounds.ptr[1] = shape.paths.bounds.ptr[1];
@@ -1705,18 +1742,29 @@ void nsvg__addShape (Parser* p) {
   // Set flags
   shape.flags = (attr.visible ? NSVG.Visible : 0x00);
 
-  // Add to tail
-  if (p.image.shapes is null)
-    p.image.shapes = shape;
-  else
-    p.shapesTail.next = shape;
+  if (p.clipPath !is null) {
+        shape.next = p.clipPath.shapes;
+        p.clipPath.shapes = shape;
+  } else {
+      // Add to tail
+      if (p.image.shapes is null)
+        p.image.shapes = shape;
+      else
+        p.shapesTail.next = shape;
 
-  p.shapesTail = shape;
+      p.shapesTail = shape;
+  }
 
   return;
 
 error:
-  if (shape) xfree(shape);
+  if (shape) {
+    if(shape.clip.index) {
+        import core.stdc.stdlib;
+        free(shape.clip.index);
+    }
+    xfree(shape);
+  }
 }
 
 void nsvg__addPath (Parser* p, bool closed) {
@@ -1838,6 +1886,40 @@ error:
     xfree(path);
   }
 }
+
+static NSVG.ClipPath* nsvg__createClipPath(const char* name, NSVGclipPathIndex index)
+{
+	NSVG.ClipPath* clipPath = xalloc!(NSVG.ClipPath);
+	if (clipPath is null) return null;
+	// memset(clipPath, 0, sizeof(NSVGclipPath));
+        import core.stdc.string;
+	strncpy(clipPath.id.ptr, name, 63);
+	clipPath.id[63] = '\0';
+	clipPath.index = index;
+	return clipPath;
+}
+
+static NSVG.ClipPath* nsvg__findClipPath(Parser* p, const char* name)
+{
+	NSVGclipPathIndex i = 0;
+	NSVG.ClipPath** link;
+
+        import core.stdc.string;
+
+	link = &p.image.clipPaths;
+	while (*link !is null) {
+		if (strcmp((*link).id.ptr, name) == 0) {
+			break;
+		}
+		link = &(*link).next;
+		i++;
+	}
+	if (*link is null) {
+		*link = nsvg__createClipPath(name, i);
+	}
+	return *link;
+}
+
 
 // We roll our own string to float because the std library one uses locale and messes things up.
 // special hack: stop at '\0' (actually, it stops on any non-digit, so no special code is required)
@@ -2579,6 +2661,13 @@ bool nsvg__parseAttr (Parser* p, const(char)[] name, const(char)[] value) {
   } else if (name == "transform") {
     nsvg__parseTransform(xform.ptr, value);
     nsvg__xformPremultiply(attr.xform.ptr, xform.ptr);
+  } else if (name == "clip-path") {
+    if(value.length > 4 && value[0 .. 4] == "url(" && attr.clipPathCount < 255) {
+        char[64] clipName;
+        nsvg__parseUrl(clipName[], value);
+        NSVG.ClipPath* clipPath= nsvg__findClipPath(p, clipName.ptr);
+        p.clipPathStack[attr.clipPathCount++] = clipPath.index;
+    }
   } else if (name == "stop-color") {
     attr.stopColor = nsvg__parseColor(value);
   } else if (name == "stop-opacity") {
@@ -3412,6 +3501,14 @@ void nsvg__startElement (void* ud, const(char)[] el, AttrList attr) {
     p.defsFlag = true;
   } else if (el == "svg") {
     nsvg__parseSVG(p, attr);
+  } else if (el == "clipPath") {
+    nsvg__pushAttr(p);
+    foreach(a; attr) {
+        if(a == "id") {
+            p.clipPath = nsvg__findClipPath(p, a.ptr);
+            break;
+        }
+    }
   }
 }
 
@@ -3421,6 +3518,18 @@ void nsvg__endElement (void* ud, const(char)[] el) {
        if (el == "g") nsvg__popAttr(p);
   else if (el == "path") p.pathFlag = false;
   else if (el == "defs") p.defsFlag = false;
+  else if (el == "clipPath") {
+    if(p.clipPath !is null) {
+        NSVG.Shape* shape = p.clipPath.shapes;
+        while(shape !is null) {
+            shape.fill.type = NSVG.PaintType.Color;
+            shape.stroke.type = NSVG.PaintType.None;
+            shape = shape.next;
+        }
+        p.clipPath = null;
+    }
+    nsvg__popAttr(p);
+  }
   else if (el == "style") { version(nanosvg_crappy_stylesheet_parser) p.inStyle = false; }
 }
 
@@ -3532,12 +3641,10 @@ void nsvg__scaleGradient (NSVG.Gradient* grad, float tx, float ty, float sx, flo
 }
 
 void nsvg__scaleToViewbox (Parser* p, const(char)[] units) {
-  NSVG.Shape* shape;
-  NSVG.Path* path;
-  float tx = void, ty = void, sx = void, sy = void, us = void, avgs = void;
+  NSVG.ClipPath* clipPath;
+  float tx = void, ty = void, sx = void, sy = void, us = void;
+
   float[4] bounds = void;
-  float[6] t = void;
-  float* pt;
 
   // Guess image size if not set completely.
   nsvg__imageBounds(p, bounds.ptr);
@@ -3586,8 +3693,29 @@ void nsvg__scaleToViewbox (Parser* p, const(char)[] units) {
   // Transform
   sx *= us;
   sy *= us;
+
+  nsvg__transformShapes(p.image.shapes, tx, ty, sx, sy);
+
+  clipPath = p.image.clipPaths;
+  while(clipPath !is null) {
+        nsvg__transformShapes(clipPath.shapes, tx, ty, sx, sy);
+        clipPath = clipPath.next;
+  }
+}
+
+void nsvg__transformShapes(NSVG.Shape* shapes, float tx, float ty, float sx, float sy) {
+
+  float avgs;
+  NSVG.Shape* shape;
+  NSVG.Path* path;
+
+  float[4] bounds = void;
+  float[6] t = void;
+  float* pt;
+
+
   avgs = (sx+sy)/2.0f;
-  for (shape = p.image.shapes; shape !is null; shape = shape.next) {
+  for (shape = shapes; shape !is null; shape = shape.next) {
     shape.bounds.ptr[0] = (shape.bounds.ptr[0]+tx)*sx;
     shape.bounds.ptr[1] = (shape.bounds.ptr[1]+ty)*sy;
     shape.bounds.ptr[2] = (shape.bounds.ptr[2]+tx)*sx;
@@ -3666,20 +3794,41 @@ public NSVG* nsvgParse (const(char)[] input, const(char)[] units="px", float dpi
   return ret;
 }
 
-///
-public void kill (NSVG* image) {
-  import core.stdc.string : memset;
-  NSVG.Shape* snext, shape;
-  if (image is null) return;
-  shape = image.shapes;
+private void deleteShapes(NSVG.Shape* shape) {
+  NSVG.Shape* snext;
   while (shape !is null) {
     snext = shape.next;
     nsvg__deletePaths(shape.paths);
     nsvg__deletePaint(&shape.fill);
     nsvg__deletePaint(&shape.stroke);
+
+    if(shape.clip.index)
+        xfree(shape.clip.index);
+
     xfree(shape);
     shape = snext;
   }
+}
+
+private void deleteClipPaths(NSVG.ClipPath* path) {
+    NSVG.ClipPath* pnext;
+    while(path !is null) {
+        pnext = path.next;
+        deleteShapes(path.shapes);
+        xfree(path);
+        path = pnext;
+    }
+}
+
+///
+public void kill (NSVG* image) {
+  import core.stdc.string : memset;
+
+  if (image is null) return;
+
+    deleteShapes(image.shapes);
+    deleteClipPaths(image.clipPaths);
+
   memset(image, 0, (*image).sizeof);
   xfree(image);
 }
@@ -3838,9 +3987,19 @@ struct NSVGrasterizerS {
   ubyte* scanline;
   int cscanline;
 
+  NSVGscanlineFunction fscanline;
+
+  ubyte* stencil;
+  int stencilSize;
+  int stencilStride;
+
   ubyte* bitmap;
   int width, height, stride;
 }
+
+alias NSVGscanlineFunction = void function(
+    ubyte* dst, int count, ubyte* cover, int x, int y,
+    float tx, float ty, float scale, const(NSVGcachedPaint)* cache);
 
 
 ///
@@ -3875,6 +4034,7 @@ public void kill (NSVGrasterizer r) {
   if (r.points) xfree(r.points);
   if (r.points2) xfree(r.points2);
   if (r.scanline) xfree(r.scanline);
+  if (r.stencil) xfree(r.stencil);
 
   xfree(r);
 }
@@ -4781,7 +4941,20 @@ uint nsvg__applyOpacity (uint c, float u) {
 
 int nsvg__div255() (int x) { pragma(inline, true); return ((x+1)*257)>>16; }
 
-void nsvg__scanlineSolid (ubyte* dst, int count, ubyte* cover, int x, int y, float tx, float ty, float scale, const(NSVGcachedPaint)* cache) {
+void nsvg__scanlineBit(
+    ubyte* row, int count, ubyte* cover, int x, int y,
+    float tx, float ty, float scale, const(NSVGcachedPaint)* cache)
+{
+    int x1 = x + count;
+    for(; x < x1; x++) {
+        row[x/8] |= 1 << (x % 8);
+    }
+}
+
+void nsvg__scanlineSolid (ubyte* row, int count, ubyte* cover, int x, int y, float tx, float ty, float scale, const(NSVGcachedPaint)* cache) {
+
+  ubyte* dst = row + x*4;
+
   if (cache.type == NSVG.PaintType.Color) {
     int cr = cache.colors[0]&0xff;
     int cg = (cache.colors[0]>>8)&0xff;
@@ -4904,7 +5077,7 @@ void nsvg__scanlineSolid (ubyte* dst, int count, ubyte* cover, int x, int y, flo
   }
 }
 
-void nsvg__rasterizeSortedEdges (NSVGrasterizer r, float tx, float ty, float scale, const(NSVGcachedPaint)* cache, char fillRule) {
+void nsvg__rasterizeSortedEdges (NSVGrasterizer r, float tx, float ty, float scale, const(NSVGcachedPaint)* cache, char fillRule, const(NSVG.Clip)* clip) {
   NSVGactiveEdge* active = null;
   int s;
   int e = 0;
@@ -4986,7 +5159,18 @@ void nsvg__rasterizeSortedEdges (NSVGrasterizer r, float tx, float ty, float sca
     if (xmin < 0) xmin = 0;
     if (xmax > r.width-1) xmax = r.width-1;
     if (xmin <= xmax) {
-      nsvg__scanlineSolid(&r.bitmap[y*r.stride]+xmin*4, xmax-xmin+1, &r.scanline[xmin], xmin, y, tx, ty, scale, cache);
+      //nsvg__scanlineSolid(&r.bitmap[y*r.stride]+xmin*4, xmax-xmin+1, &r.scanline[xmin], xmin, y, tx, ty, scale, cache);
+      int i, j;
+      for(i = 0; i < clip.count; i++) {
+        ubyte* stencil = &r.stencil[r.stencilSize * clip.index[i] + y * r.stencilStride];
+        for(j = xmin; j <= xmax; j++) {
+            if(((stencil[j/8]>> (j % 8)) & 1) == 0) {
+                r.scanline[j] = 0;
+            }
+        }
+      }
+
+      r.fscanline(&r.bitmap[y * r.stride], xmax-xmin+1, &r.scanline[xmin], xmin, y, tx, ty, scale, cache);
     }
   }
 
@@ -5125,6 +5309,46 @@ extern(C) {
  *   stride = number of bytes per scaleline in the destination buffer
  */
 public void rasterize (NSVGrasterizer r, const(NSVG)* image, float tx, float ty, float scale, ubyte* dst, int w, int h, int stride=-1) {
+  for (int i = 0; i < h; i++) {
+    import core.stdc.string : memset;
+    memset(&dst[i*stride], 0, w*4);
+  }
+
+  rasterizeClipPaths(r, image, w, h, tx, ty, scale);
+  rasterizeShapes(r, image.shapes, tx, ty, scale, dst,w, h, stride, &nsvg__scanlineSolid);
+
+  nsvg__unpremultiplyAlpha(dst, w, h, stride);
+}
+
+private void rasterizeClipPaths(NSVGrasterizer r, const(NSVG)* image, int w, int h, float tx, float ty, float scale) {
+    const(NSVG.ClipPath)* clipPath = image.clipPaths;
+    int clipPathCount = 0;
+
+    if(clipPath is null) {
+        r.stencil = null;
+        return;
+    }
+
+    while(clipPath !is null) {
+        clipPathCount++;
+        clipPath = clipPath.next;
+    }
+
+    r.stencilStride = w / 8 + (w % 8 != 0 ? 1 : 0);
+    r.stencilSize = h * r.stencilStride;
+    import core.stdc.stdlib;
+    r.stencil = cast(ubyte*) realloc(r.stencil, r.stencilSize * clipPathCount);
+    if(r.stencil is null) return;
+    r.stencil[0 .. r.stencilSize * clipPathCount] = 0;
+
+    clipPath = image.clipPaths;
+    while(clipPath !is null) {
+        rasterizeShapes(r, clipPath.shapes, tx, ty, scale, &r.stencil[r.stencilSize * clipPath.index], w, h, r.stencilStride, &nsvg__scanlineBit);
+        clipPath = clipPath.next;
+    }
+}
+
+private void rasterizeShapes (NSVGrasterizer r, const(NSVG.Shape)* shapes, float tx, float ty, float scale, ubyte* dst, int w, int h, int stride, NSVGscanlineFunction fscanline) {
   const(NSVG.Shape)* shape = null;
   NSVGedge* e = null;
   NSVGcachedPaint cache;
@@ -5135,6 +5359,7 @@ public void rasterize (NSVGrasterizer r, const(NSVG)* image, float tx, float ty,
   r.width = w;
   r.height = h;
   r.stride = stride;
+  r.fscanline = fscanline;
 
   if (w > r.cscanline) {
     import core.stdc.stdlib : realloc;
@@ -5143,12 +5368,11 @@ public void rasterize (NSVGrasterizer r, const(NSVG)* image, float tx, float ty,
     if (r.scanline is null) assert(0, "nanosvg: out of memory");
   }
 
-  for (i = 0; i < h; i++) {
-    import core.stdc.string : memset;
-    memset(&dst[i*stride], 0, w*4);
-  }
+  /+
 
   for (shape = image.shapes; shape !is null; shape = shape.next) {
+  +/
+  for (shape = shapes; shape !is null; shape = shape.next) {
     if (!(shape.flags&NSVG.Visible)) continue;
 
     if (shape.fill.type != NSVG.PaintType.None) {
@@ -5170,12 +5394,13 @@ public void rasterize (NSVGrasterizer r, const(NSVG)* image, float tx, float ty,
       }
 
       // Rasterize edges
-      qsort(r.edges, r.nedges, NSVGedge.sizeof, &nsvg__cmpEdge);
+      if(r.nedges != 0)
+        qsort(r.edges, r.nedges, NSVGedge.sizeof, &nsvg__cmpEdge);
 
       // now, traverse the scanlines and find the intersections on each scanline, use non-zero rule
       nsvg__initPaint(&cache, &shape.fill, shape.opacity);
 
-      nsvg__rasterizeSortedEdges(r, tx, ty, scale, &cache, shape.fillRule);
+      nsvg__rasterizeSortedEdges(r, tx, ty, scale, &cache, shape.fillRule, &shape.clip);
     }
     if (shape.stroke.type != NSVG.PaintType.None && (shape.strokeWidth*scale) > 0.01f) {
       //import core.stdc.stdlib : qsort; // not @nogc
@@ -5198,21 +5423,21 @@ public void rasterize (NSVGrasterizer r, const(NSVG)* image, float tx, float ty,
       }
 
       // Rasterize edges
-      qsort(r.edges, r.nedges, NSVGedge.sizeof, &nsvg__cmpEdge);
+      if(r.nedges != 0)
+        qsort(r.edges, r.nedges, NSVGedge.sizeof, &nsvg__cmpEdge);
 
       // now, traverse the scanlines and find the intersections on each scanline, use non-zero rule
       nsvg__initPaint(&cache, &shape.stroke, shape.opacity);
 
-      nsvg__rasterizeSortedEdges(r, tx, ty, scale, &cache, NSVG.FillRule.NonZero);
+      nsvg__rasterizeSortedEdges(r, tx, ty, scale, &cache, NSVG.FillRule.NonZero, &shape.clip);
     }
   }
-
-  nsvg__unpremultiplyAlpha(dst, w, h, stride);
 
   r.bitmap = null;
   r.width = 0;
   r.height = 0;
   r.stride = 0;
+  r.fscanline = null;
 }
 
 } // nothrow @trusted @nogc
