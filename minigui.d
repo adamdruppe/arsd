@@ -132,8 +132,11 @@ the virtual functions remain as the default calculated values. then the reads go
 	layout engine tries to automatically fit things in, similar to a css flexbox.
 
 	FOR BEST RESULTS: be sure to link with the appropriate subsystem command
-	`-L/SUBSYSTEM:WINDOWS:5.0`, for example, because otherwise you'll get a
-	console and other visual bugs.
+	`-L/SUBSYSTEM:WINDOWS` and -L/entry:mainCRTStartup`. If using ldc instead
+	of dmd, use `-L/entry:wmainCRTStartup` instead of `mainCRTStartup`; note the "w".
+
+	Otherwise you'll get a console and possibly other visual bugs. But if you do use
+	the subsystem:windows, note that Phobos' writeln will crash the program!
 
 	HTML_To_Classes:
 	$(SMALL_TABLE
@@ -9397,7 +9400,7 @@ private class TableViewWidgetInner : Widget {
 
 	override void registerMovement() {
 		super.registerMovement();
-		// FIXME: actual column width. it might need to be done per-pixel instead of per-colum
+		// FIXME: actual column width. it might need to be done per-pixel instead of per-column
 		smw.setViewableArea(this.width, this.height / lh);
 	}
 

@@ -10130,8 +10130,10 @@ q"css
 
 			ol.automatic-data-display {
 				margin: 0px;
+				/*
 				list-style-position: inside;
 				padding: 0px;
+				*/
 			}
 
 			dl.automatic-data-display {

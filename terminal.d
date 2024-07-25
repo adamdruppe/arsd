@@ -9579,6 +9579,14 @@ auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 		static import sdpy = arsd.simpledisplay;
 		Terminal* terminal;
 		RealTimeConsoleInput* rtti;
+
+		// FIXME hack to work around bug in opend compiler (i think)
+		version(D_OpenD)
+			alias mutableRefInit = imported!"core.attribute".mutableRefInit;
+		else
+			enum mutableRefInit;
+
+		@mutableRefInit
 		typeof(RealTimeConsoleInput.init.integrateWithSimpleDisplayEventLoop(null)) listener;
 		this(sdpy.SimpleWindow window) {
 			terminal = new Terminal(ConsoleOutputType.linear);
