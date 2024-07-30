@@ -86,6 +86,10 @@ version(ArsdUseCustomRuntime)
 }
 else
 {
+	version(DigitalMars) {
+		version=OSXCocoa;
+	}
+
 	version = HasFile;
 	version = HasSocket;
 	version = HasThread;
@@ -179,10 +183,6 @@ version(Windows) {
 	version=Arsd_core_kqueue;
 
 	import core.sys.darwin.sys.event;
-
-	version(DigitalMars) {
-		version=OSXCocoa;
-	}
 }
 
 version(OSXCocoa)
