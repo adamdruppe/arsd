@@ -50,37 +50,9 @@
 
   Example Usage:
 
-  ---
-    // Load
-    NSVG* image = nsvgParseFromFile("test.svg", "px", 96);
-    printf("size: %f x %f\n", image.width, image.height);
-    // Use...
-    image.forEachShape((in ref NSVG.Shape shape) {
-      if (!shape.visible) return;
-      shape.forEachPath((in ref NSVG.Path path) {
-        // this will issue final `LineTo` for closed pathes
-        path.forEachCommand!true(delegate (NSVG.Command cmd, const(float)[] args) nothrow @trusted @nogc {
-          final switch (cmd) {
-            case NSVG.Command.MoveTo: nvg.moveTo(args); break;
-            case NSVG.Command.LineTo: nvg.lineTo(args); break;
-            case NSVG.Command.QuadTo: nvg.quadTo(args); break;
-            case NSVG.Command.BezierTo: nvg.bezierTo(args); break;
-          }
-        });
-      });
-    });
+  The easiest way to use it is to rasterize a SVG to a [arsd.color.TrueColorImage], and from there you can work with it
+  same as any other memory image. For example, to turn a SVG into a png:
 
-    NSVGrasterizer rast = nsvgCreateRasterizer();
-    // Allocate memory for image
-    ubyte* img = malloc(w*h*4);
-    // Rasterize
-    rasterize(rast, image, 0, 0, 1, img, w, h, w*4);
-
-    // Delete
-    image.kill();
-  ---
-
-  To turn a SVG into a png:
   ---
 	import arsd.svg;
 	import arsd.png;
@@ -105,6 +77,104 @@
 
 
 	}
+  ---
+
+  You can also dig into the individual commands of the svg without rasterizing it.
+  Note that this is fairly complicated - svgs have a lot of settings, and even this
+  example only does the basics.
+
+
+  ---
+import core.stdc.stdio;
+import core.stdc.stdlib;
+import arsd.svg;
+import arsd.nanovega;
+
+void main() {
+
+    // we'll create a NanoVega window to display the image
+    int w = 800;
+    int h = 600;
+    auto window = new NVGWindow(w, h, "SVG Test");
+
+    // Load the file and can look at its info
+    NSVG* image = nsvgParseFromFile("/home/me/svgs/arsd.svg", "px", 96);
+    printf("size: %f x %f\n", image.width, image.height);
+
+    // and then use the data when the window asks us to redraw
+    // note that is is far from complete; svgs can have shapes, clips, caps, joins...
+    // we're only doing the bare minimum here.
+    window.redrawNVGScene = delegate(nvg) {
+
+        // clear the screen with white so we can see the images on top of it
+        nvg.beginPath();
+        nvg.fillColor = NVGColor.white;
+        nvg.rect(0, 0, window.width, window.height);
+        nvg.fill();
+        nvg.closePath();
+
+        image.forEachShape((in ref NSVG.Shape shape) {
+            if (!shape.visible) return;
+
+            nvg.beginPath();
+
+            // load the stroke
+            nvg.strokeWidth = shape.strokeWidth;
+            debug import std.stdio;
+
+            final switch(shape.stroke.type) {
+                case NSVG.PaintType.None:
+                    // no stroke
+                break;
+                case NSVG.PaintType.Color:
+                    with(shape.stroke)
+                        nvg.strokeColor = NVGColor(r, g, b, a);
+                    debug writefln("%08x", shape.fill.color);
+                    break;
+                case NSVG.PaintType.LinearGradient:
+                case NSVG.PaintType.RadialGradient:
+                    // FIXME: set the nvg stroke paint to shape.stroke.gradient
+            }
+
+            // load the fill
+            final switch(shape.fill.type) {
+                case NSVG.PaintType.None:
+                    // no fill set
+                break;
+                case NSVG.PaintType.Color:
+                    with(shape.fill)
+                        nvg.fillColor = NVGColor(r, g, b, a);
+                    break;
+                case NSVG.PaintType.LinearGradient:
+                case NSVG.PaintType.RadialGradient:
+                    // FIXME: set the nvg fill paint to shape.stroke.gradient
+            }
+
+            shape.forEachPath((in ref NSVG.Path path) {
+                // this will issue final `LineTo` for closed pathes
+                path.forEachCommand!true(delegate (NSVG.Command cmd, const(float)[] args) nothrow @trusted @nogc {
+                    debug writeln(cmd, args);
+                    final switch (cmd) {
+                        case NSVG.Command.MoveTo: nvg.moveTo(args); break;
+                        case NSVG.Command.LineTo: nvg.lineTo(args); break;
+                        case NSVG.Command.QuadTo: nvg.quadTo(args); break;
+                        case NSVG.Command.BezierTo: nvg.bezierTo(args); break;
+                    }
+                });
+            });
+
+            nvg.fill();
+            nvg.stroke();
+
+            nvg.closePath();
+        });
+    };
+
+    window.eventLoop(0);
+
+    // Delete the image
+    image.kill();
+}
   ---
 
   TODO: maybe merge https://github.com/memononen/nanosvg/pull/94 too
