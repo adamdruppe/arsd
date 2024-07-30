@@ -86,7 +86,7 @@ version(ArsdUseCustomRuntime)
 }
 else
 {
-	version(DigitalMars) {
+	version(OSX) version(DigitalMars) {
 		version=OSXCocoa;
 	}
 

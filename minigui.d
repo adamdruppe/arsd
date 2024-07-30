@@ -9429,7 +9429,7 @@ private class TableViewWidgetInner : Widget {
 					}
 					if(column.width != 0) // no point drawing an invisible column
 					tvw.getData(row, cast(int) columnNumber, (in char[] info) {
-						// auto clip = painter.setClipRectangle(
+						auto clip = painter.setClipRectangle(Rectangle(Point(startX - smw.position.x, y), Point(endX - smw.position.x, y + lh)));
 
 						void dotext(WidgetPainter painter) {
 							painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x, y + lh), column.alignment);
@@ -9473,6 +9473,10 @@ private class TableViewWidgetInner : Widget {
 	mixin OverrideStyle!Style;
 
 	private static class HeaderWidget : Widget {
+		/+
+			maybe i should do a splitter thing on top of the other widgets
+			so the splitter itself isn't really drawn but still replies to mouse events?
+		+/
 		this(TableViewWidgetInner tvw, Widget parent) {
 			super(parent);
 			this.tvw = tvw;
