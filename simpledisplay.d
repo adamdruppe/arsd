@@ -3762,7 +3762,7 @@ private:
 	}
 
 	// for all windows in nativeMapping
-	package static void processAllCustomEvents () {
+	package static void processAllCustomEvents () @system {
 
 		cleanupQueue.process();
 
@@ -18706,7 +18706,7 @@ extern(System) nothrow @nogc {
 		private __gshared /*glXCreateContextAttribsARB_fna*/void* glXCreateContextAttribsARBFn = cast(void*)1; //HACK!
 
 		// this made public so we don't have to get it again and again
-		public bool glXCreateContextAttribsARB_present () {
+		public bool glXCreateContextAttribsARB_present () @system {
 			if (glXCreateContextAttribsARBFn is cast(void*)1) {
 				// get it
 				glXCreateContextAttribsARBFn = cast(void*)glbindGetProcAddress("glXCreateContextAttribsARB");
@@ -18716,7 +18716,7 @@ extern(System) nothrow @nogc {
 		}
 
 		// this made public so we don't have to get it again and again
-		public GLXContext glXCreateContextAttribsARB (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list) {
+		public GLXContext glXCreateContextAttribsARB (Display *dpy, GLXFBConfig config, GLXContext share_context, /*Bool*/int direct, const(int)* attrib_list) @system {
 			if (!glXCreateContextAttribsARB_present()) assert(0, "glXCreateContextAttribsARB is not present");
 			return (cast(glXCreateContextAttribsARB_fna)glXCreateContextAttribsARBFn)(dpy, config, share_context, direct, attrib_list);
 		}

@@ -90,7 +90,7 @@ class MP3Decoder {
 			I realize these are all breaking changes, but the fix is easy and the new functionality,
 			the [seek] function among others, is worth it. To me anyway, and I hope for you too.
 	+/
-	this (int delegate (ubyte[] buf) reader, int delegate(ulong where) seeker) {
+	this (int delegate (ubyte[] buf) reader, int delegate(ulong where) seeker) @system {
 		if (reader is null)
 			throw new Exception("reader is null");
 		if (seeker is null)
@@ -338,7 +338,7 @@ alias uint64_t = ulong;
 alias int16_t = short;
 alias int32_t = int;
 
-enum MINIMP3_MAX_SAMPLES_PER_FRAME = (1152*2);
+@safe enum MINIMP3_MAX_SAMPLES_PER_FRAME = (1152*2);
 
 struct mp3dec_frame_info_t
 {

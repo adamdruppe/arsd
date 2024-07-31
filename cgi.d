@@ -4667,7 +4667,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 }
 
 /// Returns the default listening port for the current cgi configuration. 8085 for embedded httpd, 4000 for scgi, irrelevant for others.
-ushort defaultListeningPort() {
+ushort defaultListeningPort() @safe {
 	version(netman_httpd)
 		return 8080;
 	else version(embedded_httpd_processes)
@@ -4681,7 +4681,7 @@ ushort defaultListeningPort() {
 }
 
 /// Default host for listening. 127.0.0.1 for scgi, null (aka all interfaces) for all others. If you want the server directly accessible from other computers on the network, normally use null. If not, 127.0.0.1 is a bit better. Settable with default handlers with --listening-host command line argument.
-string defaultListeningHost() {
+string defaultListeningHost() @safe {
 	version(netman_httpd)
 		return null;
 	else version(embedded_httpd_processes)
