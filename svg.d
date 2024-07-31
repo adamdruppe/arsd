@@ -34,7 +34,7 @@
   The library suits well for anything from rendering scalable icons in your editor application to prototyping a game.
 
   NanoVega.SVG supports a wide range of SVG features, but several are be missing. Among the most notable
-  known missing features: `<use>`, `<text>`, `<def>` for shapes (it does work for gradients), `<script>` and animations. Note that `<clipPath>` is new and may be buggy (but anything in here may be buggy!) and the css support is fairly rudimentary.
+  known missing features: `<use>`, `<text>`, `<def>` for shapes (it does work for gradients), `<script>`, `<style>` (minimal inline style attributes work, but style blocks do not), and animations. Note that `<clipPath>` is new and may be buggy (but anything in here may be buggy!) and the css support is fairly rudimentary.
 
 
   The shapes in the SVG images are transformed by the viewBox and converted to specified units.
@@ -3524,9 +3524,13 @@ void nsvg__startElement (void* ud, const(char)[] el, AttrList attr) {
       nsvg__parseGradient(p, attr, NSVG.PaintType.RadialGradient);
     } else if (el == "stop") {
       nsvg__parseGradientStop(p, attr);
+    } else if (el == "clipPath" || (el == "path" && p.clipPath !is null)) {
+      goto processAnyway;
     }
     return;
   }
+
+  processAnyway:
 
   if (el == "g") {
     nsvg__pushAttr(p);
@@ -3573,9 +3577,13 @@ void nsvg__startElement (void* ud, const(char)[] el, AttrList attr) {
     nsvg__parseSVG(p, attr);
   } else if (el == "clipPath") {
     nsvg__pushAttr(p);
-    foreach(a; attr) {
+    foreach(idx, a; attr) {
         if(a == "id") {
-            p.clipPath = nsvg__findClipPath(p, a.ptr);
+		char[64] buffer = void;
+		auto copy = attr[idx + 1];
+		buffer[0 .. copy.length] = copy[];
+		buffer[copy.length] = 0;
+            p.clipPath = nsvg__findClipPath(p, buffer.ptr);
             break;
         }
     }
@@ -3904,6 +3912,29 @@ public void kill (NSVG* image) {
 }
 
 } // nothrow @trusted @nogc
+
+public NSVG* nsvgParseWithPreprocessor()(const(char)[] input, const(char)[] units="px", float dpi=96, int canvaswdt=-1, int canvashgt=-1) {
+	import arsd.dom;
+	auto document = new XmlDocument(input.idup);
+
+	foreach(e; document.querySelectorAll("use")) {
+		e.replaceWith(document.requireSelector(e.getAttribute("xlink:href")).cloneNode(true).removeAttribute("id"));
+	}
+
+	foreach(e; document.querySelectorAll("style")) {
+		auto ss = new StyleSheet(e.innerHTML);
+		ss.apply(document);
+	}
+
+	foreach(e; document.root.tree) {
+		foreach(p; e.computedStyle.properties)
+			e.style[p.name] = p.value;
+	}
+
+	auto fixedup = document.toString();
+	import std.file; std.file.write("use-hacked.svg", fixedup);
+	return nsvgParse(fixedup, units, dpi, canvaswdt, canvashgt);
+}
 
 
 ///
