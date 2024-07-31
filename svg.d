@@ -61,8 +61,8 @@
 	    // Load
 	    NSVG* image = nsvgParseFromFile("test.svg", "px", 96);
 
-	    int w = 200;
-	    int h = 200;
+	    int w = cast(int) image.width;
+	    int h = cast(int) image.height;
 
 	    NSVGrasterizer rast = nsvgCreateRasterizer();
 	    // Allocate memory for image
