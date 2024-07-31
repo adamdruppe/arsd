@@ -3932,7 +3932,7 @@ public NSVG* nsvgParseWithPreprocessor()(const(char)[] input, const(char)[] unit
 	}
 
 	auto fixedup = document.toString();
-	import std.file; std.file.write("use-hacked.svg", fixedup);
+	// import std.file; std.file.write("use-hacked.svg", fixedup);
 	return nsvgParse(fixedup, units, dpi, canvaswdt, canvashgt);
 }
 
