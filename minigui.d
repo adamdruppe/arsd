@@ -12054,9 +12054,11 @@ version(custom_widgets)
 		mixin ExperimentalTextComponent;
 	}
 
-version(win32_widgets)
+version(win32_widgets) {
 	alias EditableTextWidgetParent = Widget; ///
-else version(custom_widgets) {
+	version=use_new_text_system;
+	import arsd.textlayouter;
+} else version(custom_widgets) {
 	version(trash_text) {
 		alias EditableTextWidgetParent = ScrollableWidget; ///
 	} else {
@@ -12558,24 +12560,14 @@ class TextDisplayHelper : Widget {
 		});
 	}
 
-	static class Style : Widget.Style {
-		override WidgetBackground background() {
-			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
-		}
-
-		override Color foregroundColor() {
-			return WidgetPainter.visualTheme.foregroundColor;
-		}
-
-		override FrameStyle borderStyle() {
-			return FrameStyle.sunk;
-		}
-
-		override MouseCursor cursor() {
-			return GenericCursor.Text;
-		}
+	// we want to delegate all the Widget.Style stuff up to the other class that the user can see
+	override void useStyleProperties(scope void delegate(scope .Widget.Style props) dg) {
+		// this should be the upper container - first parent is a ScrollMessageWidget content area container, then ScrollMessageWidget itself, next parent is finally the EditableTextWidgetParent
+		if(parent && parent.parent && parent.parent.parent)
+			parent.parent.parent.useStyleProperties(dg);
+		else
+			super.useStyleProperties(dg);
 	}
-	mixin OverrideStyle!Style;
 
 	override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultTextHeight))).height; }
 	override int maxHeight() {
@@ -12707,21 +12699,32 @@ class TextWidget : Widget {
 /// Contains the implementation of text editing
 abstract class EditableTextWidget : EditableTextWidgetParent {
 	this(Widget parent) {
+		version(custom_widgets)
+			this(true, parent);
+		else
+			this(false, parent);
+	}
+
+	private bool useCustomWidget;
+
+	this(bool useCustomWidget, Widget parent) {
+		this.useCustomWidget = useCustomWidget;
+
 		super(parent);
 
-		version(custom_widgets)
+		if(useCustomWidget)
 			setupCustomTextEditing();
 	}
 
 	private bool wordWrapEnabled_;
 	void wordWrapEnabled(bool enabled) {
-		version(win32_widgets) {
-			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
-		} else version(custom_widgets) {
+		if(useCustomWidget) {
 			wordWrapEnabled_ = enabled;
 			version(use_new_text_system)
-			textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
-		} else static assert(false);
+				textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
+		} else version(win32_widgets) {
+			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
+		}
 	}
 
 	override int minWidth() { return scaleWithDpi(16); }
@@ -12729,20 +12732,30 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	override int widthShrinkiness() { return 1; }
 
 	version(use_new_text_system)
-	override int maxHeight() { return tdh.maxHeight; }
+	override int maxHeight() {
+		if(useCustomWidget)
+			return tdh.maxHeight;
+		else
+			return super.maxHeight();
+	}
 
 	version(use_new_text_system)
-	override void focus() { if(tdh) tdh.focus(); else super.focus(); }
+	override void focus() {
+		if(useCustomWidget && tdh)
+			tdh.focus();
+		else
+			super.focus();
+	}
 
 	void selectAll() {
-		version(win32_widgets)
-			SendMessage(hwnd, EM_SETSEL, 0, -1);
-		else version(custom_widgets) {
+		if(useCustomWidget) {
 			version(use_new_text_system)
 				tdh.selectAll();
-			else
+			else version(trash_text)
 				textLayout.selectAll();
 			redraw();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, EM_SETSEL, 0, -1);
 		}
 	}
 
@@ -12750,7 +12763,13 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		TextDisplayHelper tdh;
 
 	@property string content() {
-		version(win32_widgets) {
+		if(useCustomWidget) {
+			version(use_new_text_system) {
+				return textLayout.getTextString();
+			} else version(trash_text) {
+				return textLayout.getPlainText();
+			}
+		} else version(win32_widgets) {
 			wchar[4096] bufferstack;
 			wchar[] buffer;
 			auto len = GetWindowTextLength(hwnd);
@@ -12764,18 +12783,12 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				return makeUtf8StringFromWindowsString(buffer[0 .. l]);
 			else
 				return null;
-		} else version(custom_widgets) {
-			version(use_new_text_system) {
-				return textLayout.getTextString();
-			} else
-				return textLayout.getPlainText();
-		} else static assert(false);
+		}
+
+		assert(0);
 	}
 	@property void content(string s) {
-		version(win32_widgets) {
-			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
-			SetWindowTextW(hwnd, bfr.ptr);
-		} else version(custom_widgets) {
+		if(useCustomWidget) {
 			version(use_new_text_system) {
 				selectAll();
 				textLayout.selection.replaceContent(s);
@@ -12786,7 +12799,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				// tdh.scrollForCaret();
 
 				redraw();
-			} else {
+			} else version(trash_text) {
 				textLayout.clear();
 				textLayout.addText(s);
 
@@ -12804,17 +12817,19 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 				*/
 				redraw();
 			}
+		} else version(win32_widgets) {
+			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
+			SetWindowTextW(hwnd, bfr.ptr);
 		}
-		else static assert(false);
 	}
 
 	void addText(string txt) {
-		version(custom_widgets) {
+		if(useCustomWidget) {
 			version(use_new_text_system) {
 				textLayout.appendText(txt);
 				tdh.adjustScrollbarSizes();
 				redraw();
-			} else {
+			} else if(trash_text) {
 				textLayout.addText(txt);
 
 				{
@@ -12840,7 +12855,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 			// restore the previous selection
 			SendMessageW( hwnd, EM_SETSEL, StartPos, EndPos );
-		} else static assert(0);
+		}
 	}
 
 	version(custom_widgets)
@@ -12870,78 +12885,81 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		return font;
 	}
 
-	version(win32_widgets) { /* will do it with Windows calls in the classes */ }
-	else version(custom_widgets) {
-		// FIXME
-		version(use_new_text_system) {
-			TextLayouter textLayout;
+	version(use_new_text_system) {
+		TextLayouter textLayout;
 
-			void setupCustomTextEditing() {
-				textLayout = new TextLayouter(defaultTextStyle());
+		void setupCustomTextEditing() {
+			textLayout = new TextLayouter(defaultTextStyle());
 
-				auto smw = new ScrollMessageWidget(this);
-				if(!showingHorizontalScroll)
-					smw.horizontalScrollBar.hide();
-				if(!showingVerticalScroll)
-					smw.verticalScrollBar.hide();
-				this.tabStop = false;
-				smw.tabStop = false;
-				tdh = textDisplayHelperFactory(textLayout, smw);
+			auto smw = new ScrollMessageWidget(this);
+			if(!showingHorizontalScroll)
+				smw.horizontalScrollBar.hide();
+			if(!showingVerticalScroll)
+				smw.verticalScrollBar.hide();
+			this.tabStop = false;
+			smw.tabStop = false;
+			tdh = textDisplayHelperFactory(textLayout, smw);
 
-				this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
-					if(textLayout) {
-						if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
-							// the dpi change can change the font, so this informs the layouter that it has changed too
-							style.font_ = getUsedFont();
+			this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
+				if(textLayout) {
+					if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
+						// the dpi change can change the font, so this informs the layouter that it has changed too
+						style.font_ = getUsedFont();
 
-							// arsd.core.writeln(this.parentWindow.win.actualDpi);
-						}
+						// arsd.core.writeln(this.parentWindow.win.actualDpi);
 					}
-				});
-			}
-
-		} else {
-
-			static if(SimpledisplayTimerAvailable)
-				Timer caretTimer;
-			etc.TextLayout textLayout;
-
-			void setupCustomTextEditing() {
-				textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
-				textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
-			}
-
-			override void paint(WidgetPainter painter) {
-				if(parentWindow.win.closed) return;
-
-				textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
-
-				/*
-				painter.outlineColor = Color.white;
-				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
-				*/
-
-				painter.outlineColor = Color.black;
-				// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
-
-				textLayout.caretShowingOnScreen = false;
-
-				textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
-			}
+				}
+			});
 		}
 
-		static class Style : Widget.Style {
-			override FrameStyle borderStyle() {
-				return FrameStyle.sunk;
-			}
-			override MouseCursor cursor() {
-				return GenericCursor.Text;
-			}
+	} else version(trash_text) {
+		static if(SimpledisplayTimerAvailable)
+			Timer caretTimer;
+		etc.TextLayout textLayout;
+
+		void setupCustomTextEditing() {
+			textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
+			textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
 		}
-		mixin OverrideStyle!Style;
+
+		override void paint(WidgetPainter painter) {
+			if(parentWindow.win.closed) return;
+
+			textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
+
+			/*
+			painter.outlineColor = Color.white;
+			painter.fillColor = Color.white;
+			painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
+			*/
+
+			painter.outlineColor = Color.black;
+			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
+
+			textLayout.caretShowingOnScreen = false;
+
+			textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
+		}
 	}
-	else static assert(false);
+
+	static class Style : Widget.Style {
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+		}
+
+		override Color foregroundColor() {
+			return WidgetPainter.visualTheme.foregroundColor;
+		}
+
+		override FrameStyle borderStyle() {
+			return FrameStyle.sunk;
+		}
+
+		override MouseCursor cursor() {
+			return GenericCursor.Text;
+		}
+	}
+	mixin OverrideStyle!Style;
 
 	version(trash_text)
 	version(custom_widgets)
@@ -13050,6 +13068,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		override void defaultEventHandler_blur(Event ev) {
 			super.defaultEventHandler_blur(ev);
 
+			if(!useCustomWidget)
 			if(this.content != lastContentBlur) {
 				auto evt = new ChangeEvent!string(this, &this.content);
 				evt.dispatch();
@@ -13134,11 +13153,8 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 ///
 class LineEdit : EditableTextWidget {
-	// FIXME: hack
-	version(custom_widgets) {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
-	}
 
 	override int flexBasisWidth() { return 250; }
 
@@ -13157,6 +13173,13 @@ class LineEdit : EditableTextWidget {
 				});
 			}
 		} else static assert(false);
+	}
+
+	private this(bool useCustomWidget, Widget parent) {
+		if(!useCustomWidget)
+			this(parent);
+		else
+			super(true, parent);
 	}
 
 	version(use_new_text_system)
@@ -13179,6 +13202,13 @@ class LineEdit : EditableTextWidget {
 	+/
 }
 
+/// ditto
+class CustomLineEdit : LineEdit {
+	this(Widget parent) {
+		super(true, parent);
+	}
+}
+
 /++
 	A [LineEdit] that displays `*` in place of the actual characters.
 
@@ -13191,10 +13221,8 @@ class LineEdit : EditableTextWidget {
 		Added January 24, 2021
 +/
 class PasswordEdit : EditableTextWidget {
-	version(custom_widgets) {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
-	}
 
 	override int flexBasisWidth() { return 250; }
 
@@ -13244,20 +13272,39 @@ class PasswordEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "",
 				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
-			version(trash_text)
-			setupCustomTextEditing();
-			addEventListener(delegate(CharEvent ev) {
-				if(ev.character == '\n')
-					ev.preventDefault();
-			});
+			version(trash_text) {
+				setupCustomTextEditing();
+
+				// should this be under trash text? i think so.
+				addEventListener(delegate(CharEvent ev) {
+					if(ev.character == '\n')
+						ev.preventDefault();
+				});
+			}
 		} else static assert(false);
 	}
+
+	private this(bool useCustomWidget, Widget parent) {
+		if(!useCustomWidget)
+			this(parent);
+		else
+			super(true, parent);
+	}
+
 	version(win32_widgets) {
 		mixin Padding!q{2};
 		override int minHeight() { return borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, defaultLineHeight))).height; }
 		override int maxHeight() { return minHeight; }
 	}
 }
+
+/// ditto
+class CustomPasswordEdit : PasswordEdit {
+	this(Widget parent) {
+		super(true, parent);
+	}
+}
+
 
 ///
 class TextEdit : EditableTextWidget {
@@ -13272,6 +13319,14 @@ class TextEdit : EditableTextWidget {
 			setupCustomTextEditing();
 		} else static assert(false);
 	}
+
+	private this(bool useCustomWidget, Widget parent) {
+		if(!useCustomWidget)
+			this(parent);
+		else
+			super(true, parent);
+	}
+
 	override int maxHeight() { return int.max; }
 	override int heightStretchiness() { return 7; }
 
@@ -13279,6 +13334,12 @@ class TextEdit : EditableTextWidget {
 	override int flexBasisHeight() { return 25; }
 }
 
+/// ditto
+class CustomTextEdit : TextEdit {
+	this(Widget parent) {
+		super(true, parent);
+	}
+}
 
 /+
 /++
