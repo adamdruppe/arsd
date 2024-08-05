@@ -85,16 +85,17 @@ class PostgreSql : Database {
 	*/
 
 	ResultSet executePreparedStatement(T...)(string name, T args) {
-		char*[args.length] argsStrings;
+		const(char)*[args.length] argsStrings;
 
 		foreach(idx, arg; args) {
 			// FIXME: optimize to remove allocations here
+			import std.conv;
 			static if(!is(typeof(arg) == typeof(null)))
 				argsStrings[idx] = toStringz(to!string(arg));
 			// else make it null
 		}
 
-		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argStrings.ptr, 0, null, 0);
+		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argsStrings.ptr, null, null, 0);
 
 		int ress = PQresultStatus(res);
 		if(ress != PGRES_TUPLES_OK
