@@ -1664,8 +1664,10 @@ class HttpRequest {
 			return socket;
 		}
 
+		// stuff used by advanceConnections
 		SocketSet readSet;
 		SocketSet writeSet;
+		private ubyte[] reusableBuffer;
 
 		/+
 			Generic event loop registration:
@@ -1731,7 +1733,9 @@ class HttpRequest {
 			if(writeSet is null)
 				writeSet = new SocketSet();
 
-			ubyte[2048] buffer;
+			if(reusableBuffer is null)
+				reusableBuffer = new ubyte[](32 * 1024);
+			ubyte[] buffer = reusableBuffer;
 
 			HttpRequest[16] removeFromPending;
 			size_t removeFromPendingCount = 0;
