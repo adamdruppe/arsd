@@ -1051,6 +1051,25 @@ class HttpRequest {
 		this.timeoutFromInactivity = MonoTime.currTime + this.requestParameters.timeoutFromInactivity;
 	}
 
+	/++
+		Set to `true` to gzip the request body when sending to the server. This is often not supported, and thus turned off
+		by default.
+
+
+		If a server doesn't support this, you MAY get an http error or it might just do the wrong thing.
+		By spec, it is supposed to be code "415 Unsupported Media Type", but there's no guarantee they
+		will do that correctly since many servers will simply have never considered this possibility. Request
+		compression is quite rare, so before using this, ensure your server supports it by checking its documentation
+		or asking its administrator. (Or running a test, but remember, it might just do the wrong thing and not issue
+		an appropriate error, or the config may change in the future.)
+
+		History:
+			Added August 6, 2024 (dub v11.5)
+	+/
+	void gzipBody(bool want) {
+		this.requestParameters.gzipBody = want;
+	}
+
 	private MonoTime timeoutFromInactivity;
 
 	private Uri where;
@@ -1299,10 +1318,20 @@ class HttpRequest {
 		foreach(header; requestParameters.headers)
 			headers ~= header ~ "\r\n";
 
+		const(ubyte)[] bodyToSend = requestParameters.bodyData;
+		if(requestParameters.gzipBody) {
+			headers ~= "Content-Encoding: gzip\r\n";
+			auto c = new Compress(HeaderFormat.gzip);
+
+			auto data = c.compress(bodyToSend);
+			data ~= c.flush();
+			bodyToSend = cast(ubyte[]) data;
+		}
+
 		headers ~= "\r\n";
 
 		// FIXME: separate this for 100 continue
-		sendBuffer = cast(ubyte[]) headers ~ requestParameters.bodyData;
+		sendBuffer = cast(ubyte[]) headers ~ bodyToSend;
 
 		// import std.stdio; writeln("******* ", cast(string) sendBuffer);
 
@@ -2183,6 +2212,8 @@ class HttpRequest {
 						break;
 						case "content-length":
 							bodyReadingState.contentLengthRemaining = to!int(value);
+							// preallocate the buffer for a bit of a performance boost
+							responseData.content.reserve(bodyReadingState.contentLengthRemaining);
 						break;
 						case "transfer-encoding":
 							// note that if it is gzipped, it zips first, then chunks the compressed stream.
@@ -2712,6 +2743,8 @@ struct HttpRequestParameters {
 	ubyte[] bodyData; ///
 
 	string unixSocketPath; ///
+
+	bool gzipBody; ///
 }
 
 interface IHttpClient {
