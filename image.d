@@ -14,6 +14,8 @@
 +/
 module arsd.image;
 
+// might dynamically load this thing: https://developers.google.com/speed/webp/docs/api
+
 public import arsd.color;
 public import arsd.png;
 public import arsd.jpeg;
@@ -36,6 +38,7 @@ MemoryImage readSvg(string filename) {
 
 MemoryImage readSvg(const(ubyte)[] rawData) {
     // Load
+    // NSVG* image = nsvgParseWithPreprocessor(cast(const(char)[]) rawData);
     NSVG* image = nsvgParse(cast(const(char)[]) rawData);
 
     if(image is null)
