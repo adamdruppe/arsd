@@ -13420,8 +13420,210 @@ class TextDisplay : EditableTextWidget {
 	}
 
 	mixin OverrideStyle!Style;
-
 }
+
+// FIXME: if a item currently has keyboard focus, even if it is scrolled away, we could keep that item active
+/++
+	A scrollable viewer for an array of widgets. The widgets inside a list item can be whatever you want, and you can have any number of total items you want because only the visible widgets need to actually exist and load their data at a time, giving constantly predictable performance.
+
+
+	When you use this, you must subclass it and implement minimally `itemFactory` and `itemSize`, optionally also `layoutMode`.
+
+	Your `itemFactory` must return a subclass of `GenericListViewItem` that implements the abstract method to load item from your list on-demand.
+
+	Note that some state in reused widget objects may either be preserved or reset when the user isn't expecting it. It is your responsibility to handle this when you load an item (try to save it when it is unloaded, then set it when reloaded), but my recommendation would be to have minimal extra state. For example, avoid having a scrollable widget inside a list, since the scroll state might change as it goes out and into view. Instead, I'd suggest making the list be a loader for a details pane on the side.
+
+	History:
+		Added August 12, 2024 (dub v11.6)
++/
+abstract class GenericListViewWidget : Widget {
+	/++
+
+	+/
+	this(Widget parent) {
+		super(parent);
+
+		smw = new ScrollMessageWidget(this);
+		smw.addDefaultKeyboardListeners();
+		smw.addDefaultWheelListeners(itemSize.height, itemSize.width);
+
+		inner = new GenericListViewWidgetInner(this, smw);
+	}
+
+	private ScrollMessageWidget smw;
+	private GenericListViewWidgetInner inner;
+
+	abstract GenericListViewItem itemFactory(Widget parent);
+	// in device-dependent pixels
+	/++
+
+	+/
+	abstract Size itemSize(); // use 0 to indicate it can stretch?
+
+	enum LayoutMode {
+		rows,
+		columns,
+		gridRowsFirst,
+		gridColumnsFirst
+	}
+	LayoutMode layoutMode() {
+		return LayoutMode.rows;
+	}
+
+	private int itemCount_;
+
+	/++
+		Sets the count of available items in the list. This will not allocate any items, but it will adjust the scroll bars and try to load items up to this count on-demand as they appear visible.
+	+/
+	void setItemCount(int count) {
+		smw.setTotalArea(inner.width, count * itemSize().height);
+		smw.setViewableArea(inner.width, inner.height);
+		this.itemCount_ = count;
+	}
+
+	/++
+		Returns the current count of items expected to available in the list.
+	+/
+	int itemCount() {
+		return this.itemCount_;
+	}
+
+	/++
+		Call these when the watched data changes. It will cause any visible widgets affected by the change to reload and redraw their data.
+
+		Note you must $(I also) call [setItemCount] if the total item count has changed.
+	+/
+	void notifyItemsChanged(int index, int count = 1) {
+	}
+	/// ditto
+	void notifyItemsInserted(int index, int count = 1) {
+	}
+	/// ditto
+	void notifyItemsRemoved(int index, int count = 1) {
+	}
+	/// ditto
+	void notifyItemsMoved(int movedFromIndex, int movedToIndex, int count = 1) {
+	}
+
+	private GenericListViewItem[] items;
+}
+
+/++
+
++/
+abstract class GenericListViewItem : Widget {
+	/++
+	+/
+	this(Widget parent) {
+		super(parent);
+	}
+
+	private int _currentIndex = -1;
+
+	private void showItemPrivate(int idx) {
+		showItem(idx);
+		_currentIndex = idx;
+	}
+
+	/++
+		Implement this to show an item from your data backing to the list.
+
+		Note that even if you are showing the requested index already, you should still try to reload it because it is possible the index now points to a different item (e.g. an item was added so all the indexes have changed) or if data has changed in this index and it is requesting you to update it prior to a repaint.
+	+/
+	abstract void showItem(int idx);
+
+	/++
+		Maintained by the library after calling [showItem] so the object knows which data index it currently has.
+
+		It may be -1, indicating nothing is currently loaded (or a load failed, and the current data is potentially inconsistent).
+
+		Inside the call to `showItem`, `currentIndexLoaded` is the old index, and the argument to `showItem` is the new index. You might use that to save state to the right place as needed before you overwrite it with the new item.
+	+/
+	final int currentIndexLoaded() {
+		return _currentIndex;
+	}
+}
+
+private class GenericListViewWidgetInner : Widget {
+	this(GenericListViewWidget glvw, ScrollMessageWidget smw) {
+		super(smw);
+		this.glvw = glvw;
+		this.tabStop = false;
+
+		reloadVisible();
+
+		smw.addEventListener("scroll", () {
+			reloadVisible();
+		});
+	}
+
+	override void registerMovement() {
+		super.registerMovement();
+		if(glvw && glvw.smw)
+			glvw.smw.setViewableArea(this.width, this.height);
+	}
+
+	void reloadVisible() {
+		auto y = glvw.smw.position.y / glvw.itemSize.height;
+		int offset = glvw.smw.position.y % glvw.itemSize.height;
+
+		if(offset || y >= glvw.itemCount())
+			y--;
+		if(y < 0)
+			y = 0;
+
+		recomputeChildLayout();
+
+		foreach(item; glvw.items) {
+			if(y < glvw.itemCount()) {
+				item.showItemPrivate(y);
+				item.show();
+			} else {
+				item.hide();
+			}
+			y++;
+		}
+
+		this.redraw();
+	}
+
+	private GenericListViewWidget glvw;
+
+	private bool inRcl;
+	override void recomputeChildLayout() {
+		if(inRcl)
+			return;
+		inRcl = true;
+		scope(exit)
+			inRcl = false;
+
+		auto ih = glvw.itemSize().height;
+
+		auto itemCount = this.height / ih + 2; // extra for partial display before and after
+		bool hadNew;
+		while(glvw.items.length < itemCount) {
+			// FIXME: free the old items? maybe just set length
+			glvw.items ~= glvw.itemFactory(this);
+			hadNew = true;
+		}
+
+		if(hadNew)
+			reloadVisible();
+
+		int y = -(glvw.smw.position.y % ih);
+		foreach(child; children) {
+			child.x = 0;
+			child.y = y;
+			y += glvw.itemSize().height;
+			child.width = this.width;
+			child.height = ih;
+
+			child.recomputeChildLayout();
+		}
+	}
+}
+
+
 
 ///
 class MessageBox : Window {
