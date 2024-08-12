@@ -9655,24 +9655,68 @@ struct ScreenPainter {
 	}
 
 	/++
-		start and finish are units of degrees * 64
+		Draws an arc inside the bounding box given by `upperLeft`, `width`, and `height`, from the angle (`start` / 64) degrees for (`length` / 64) degrees of rotation.
+
+
+		If `length` is positive, it travels counter-clockwise from `start`. If negative, it goes clockwise.  `start` == 0 at the three o'clock position of the bounding box - the center of the line at the right-hand side of the screen.
+
+		The arc is outlined with the current pen and filled with the current fill. On Windows, the line segments back to the middle are also drawn unless you have a full length ellipse.
+
+		Bugs:
+			They still don't exactly match in outlining the arc with straight lines (Windows does, Linux doesn't for now).
+
+			The arc outline on Linux sometimes goes over the target.
+
+			The fill on Windows sometimes stops short.
 
 		History:
-			The Windows implementation didn't match the Linux implementation until September 24, 2021.
+			This function was broken af, totally inconsistent on platforms until September 24, 2021.
 
-			They still don't exactly match in outlining the arc with straight lines (Windows does, Linux doesn't for now).
+			The interpretation of the final argument was incorrectly documented and implemented until August 2, 2024.
 	+/
-	void drawArc(Point upperLeft, int width, int height, int start, int finish) {
+	void drawArc(Point upperLeft, int width, int height, int start, int length) {
 		if(impl is null) return;
 		// FIXME: not actually implemented
 		if(isClipped(upperLeft, width, height)) return;
 		transform(upperLeft);
-		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, finish);
+		impl.drawArc(upperLeft.x, upperLeft.y, width, height, start, length);
 	}
 
 	/// this function draws a circle with the drawEllipse() function above, it requires the upper left point and the radius
 	void drawCircle(Point upperLeft, int diameter) {
 		drawEllipse(upperLeft, Point(upperLeft.x + diameter, upperLeft.y + diameter));
+	}
+
+	/++
+		Draws a rectangle with rounded corners. It is outlined with the current foreground pen and filled with the current background brush.
+
+
+		Bugs:
+			Not implemented on Mac; it will instead draw a non-rounded rectangle for now.
+
+		History:
+			Added August 3, 2024
+	+/
+	void drawRectangleRounded(Rectangle rect, int borderRadius) {
+		drawRectangleRounded(rect.upperLeft, rect.lowerRight, borderRadius);
+	}
+
+	/// ditto
+	void drawRectangleRounded(Point upperLeft, Size size, int borderRadius) {
+		drawRectangleRounded(upperLeft, upperLeft + Point(size.width, size.height), borderRadius);
+	}
+
+	/// ditto
+	void drawRectangleRounded(Point upperLeft, Point lowerRight, int borderRadius) {
+		if(borderRadius <= 0) {
+			drawRectangle(upperLeft, lowerRight);
+			return;
+		}
+
+		transform(upperLeft);
+		transform(lowerRight);
+
+		impl.drawRectangleRounded(upperLeft, lowerRight, borderRadius);
 	}
 
 	/// .
@@ -11748,28 +11792,57 @@ version(Windows) {
 			gdi.Rectangle(hdc, x, y, x + width, y + height);
 		}
 
+		void drawRectangleRounded(Point upperLeft, Point lowerRight, int borderRadius) {
+			RoundRect(
+				hdc,
+				upperLeft.x, upperLeft.y,
+				lowerRight.x, lowerRight.y,
+				borderRadius, borderRadius
+			);
+		}
+
 		/// Arguments are the points of the bounding rectangle
 		void drawEllipse(int x1, int y1, int x2, int y2) {
 			Ellipse(hdc, x1, y1, x2, y2);
 		}
 
-		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
-			if((start % (360*64)) == (finish % (360*64)))
+		void drawArc(int x1, int y1, int width, int height, int start, int length) {
+			//if(length > 360*64)
+				//length = 360*64;
+
+			if((start == 0 && length == 360*64)) {
 				drawEllipse(x1, y1, x1 + width, y1 + height);
-			else {
+			} else {
 				import core.stdc.math;
-				float startAngle = cast(float) start / 64.0 / 180.0 * 3.14159265358979323;
-				float endAngle = cast(float) finish / 64.0 / 180.0 * 3.14159265358979323;
 
-				auto c1 = cast(int) roundf(cos(startAngle) * width / 2 + x1 + width / 2);
-				auto c2 = cast(int) roundf(-sin(startAngle) * height / 2 + y1 + height / 2);
-				auto c3 = cast(int) roundf(cos(endAngle) * width / 2 + x1 + width / 2);
-				auto c4 = cast(int) roundf(-sin(endAngle) * height / 2 + y1 + height / 2);
+				bool clockwise = false;
+				if(length < 0) {
+					clockwise = true;
+					length = -length;
+				}
 
-				if(_activePen.color.a)
-					Arc(hdc, x1, y1, x1 + width + 1, y1 + height + 1, c1, c2, c3, c4);
-				if(_fillColor.a)
-					Pie(hdc, x1, y1, x1 + width + 1, y1 + height + 1, c1, c2, c3, c4);
+				double startAngle = cast(double) start / 64.0 / 180.0 * 3.14159265358979323;
+				double endAngle = cast(double) (start + length) / 64.0 / 180.0 * 3.14159265358979323;
+
+				auto c1 = cast(int) (cos(startAngle) * width / 2.0 + double(x1) + double(width) / 2.0);
+				auto c2 = cast(int) (-sin(startAngle) * height / 2.0 + double(y1) + double(height) / 2.0);
+				auto c3 = cast(int) (cos(endAngle) * width / 2.0 + double(x1) + double(width) / 2.0);
+				auto c4 = cast(int) (-sin(endAngle) * height / 2.0 + double(y1) + double(height) / 2.0);
+
+				if(clockwise) {
+					auto t1 = c1;
+					auto t2 = c2;
+					c1 = c3;
+					c2 = c4;
+					c3 = t1;
+					c4 = t2;
+				}
+
+				//if(_activePen.color.a)
+					//Arc(hdc, x1, y1, x1 + width + 0, y1 + height + 0, c1, c2, c3, c4);
+				//if(_fillColor.a)
+
+				Pie(hdc, x1, y1, x1 + width + 0, y1 + height + 0, c1, c2, c3, c4);
 			}
 		}
 
@@ -13296,20 +13369,46 @@ version(X11) {
 				XDrawRectangle(display, d, gc, x + _activePen.width / 2, y + _activePen.width / 2, width - 1 - _activePen.width / 2, height - 1 - _activePen.width / 2);
 		}
 
+		void drawRectangleRounded(Point upperLeft, Point lowerRight, int borderRadius) {
+			int[4] radii = borderRadius;
+			auto r = Rectangle(upperLeft, lowerRight);
+
+			if(backgroundIsNotTransparent) {
+				swapColors();
+				// FIXME these overlap and thus draw the pixels multiple times
+				XFillRectangle(display, d, gc, r.left, r.top + borderRadius/2, r.width, r.height - borderRadius);
+				XFillRectangle(display, d, gc, r.left + borderRadius/2, r.top, r.width - borderRadius, r.height);
+				swapColors();
+			}
+
+			drawLine(r.left + borderRadius / 2, r.top, r.right - borderRadius / 2, r.top);
+			drawLine(r.left + borderRadius / 2, r.bottom-1, r.right - borderRadius / 2, r.bottom-1);
+			drawLine(r.left, r.top + borderRadius / 2, r.left, r.bottom - borderRadius / 2);
+			drawLine(r.right - 1, r.top + borderRadius / 2, r.right - 1, r.bottom - borderRadius / 2);
+
+			//drawRectangle(r.left + borderRadius/2, r.top, r.width - borderRadius, r.height);
+
+			drawArc(r.upperLeft.x, r.upperLeft.y, radii[0], radii[0], 90*64, 90*64);
+			drawArc(r.upperRight.x - radii[1], r.upperRight.y, radii[1] - 1, radii[1], 0*64, 90*64);
+			drawArc(r.lowerLeft.x, r.lowerLeft.y - radii[2], radii[2], radii[2] - 1, 180*64, 90*64);
+			drawArc(r.lowerRight.x - radii[3], r.lowerRight.y - radii[3], radii[3] - 1, radii[3] - 1, 270*64, 90*64);
+		}
+
+
 		/// Arguments are the points of the bounding rectangle
 		void drawEllipse(int x1, int y1, int x2, int y2) {
 			drawArc(x1, y1, x2 - x1, y2 - y1, 0, 360 * 64);
 		}
 
 		// NOTE: start and finish are in units of degrees * 64
-		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
+		void drawArc(int x1, int y1, int width, int height, int start, int length) {
 			if(backgroundIsNotTransparent) {
 				swapColors();
-				XFillArc(display, d, gc, x1, y1, width, height, start, finish);
+				XFillArc(display, d, gc, x1, y1, width, height, start, length);
 				swapColors();
 			}
 			if(foregroundIsNotTransparent) {
-				XDrawArc(display, d, gc, x1, y1, width, height, start, finish);
+				XDrawArc(display, d, gc, x1, y1, width, height, start, length);
 
 				// Windows draws the straight lines on the edges too so FIXME sort of
 			}
@@ -18540,6 +18639,10 @@ version(OSXCocoa) {
 			CGContextStrokeLineSegments(context, linePoints.ptr, linePoints.length);
 		}
 
+		void drawRectangleRounded(Point upperLeft, Point lowerRight, int borderRadius) {
+			drawRectangle(upperLeft.x, upperLeft.y, lowerRight.x - upperLeft.x, lowerRight.y - upperLeft.y); // FIXME not rounded
+		}
+
 		void drawRectangle(int x, int y, int width, int height) {
 			CGContextBeginPath(context);
 			auto rect = CGRect(CGPoint(x, y), CGSize(width, height));
@@ -18554,11 +18657,16 @@ version(OSXCocoa) {
 			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
 		}
 
-		void drawArc(int x1, int y1, int width, int height, int start, int finish) {
+		void drawArc(int x1, int y1, int width, int height, int start, int length) {
 			// @@@BUG@@@ Does not support elliptic arc (width != height).
 			CGContextBeginPath(context);
+			int clockwise = 0;
+			if(length < 0) {
+				clockwise = 1;
+				length = -length;
+			}
 			CGContextAddArc(context, x1+width*0.5f, y1+height*0.5f, width,
-							start*PI/(180*64), finish*PI/(180*64), 0);
+							start*PI/(180*64), (start+length)*PI/(180*64), clockwise);
 			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
 		}
 

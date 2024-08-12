@@ -2816,6 +2816,7 @@ enum FrameStyle {
 	solid, ///
 	dotted, ///
 	fantasy, /// a style based on a popular fantasy video game
+	rounded, /// a rounded rectangle
 }
 
 version(custom_widgets)
@@ -2847,6 +2848,8 @@ int getBorderWidth(FrameStyle style) {
 			return 1;
 		case FrameStyle.fantasy:
 			return 3;
+		case FrameStyle.rounded:
+			return 2;
 	}
 }
 
@@ -2861,6 +2864,7 @@ int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fram
 			painter.outlineColor = background;
 		break;
 		case FrameStyle.solid:
+		case FrameStyle.rounded:
 			painter.pen = Pen(border, 1);
 		break;
 		case FrameStyle.dotted:
@@ -2872,30 +2876,34 @@ int draw3dFrame(int x, int y, int width, int height, ScreenPainter painter, Fram
 	}
 
 	painter.fillColor = background;
-	painter.drawRectangle(Point(x + 0, y + 0), width, height);
 
+	if(style == FrameStyle.rounded) {
+		painter.drawRectangleRounded(Point(x, y), Size(width, height), 6);
+	} else {
+		painter.drawRectangle(Point(x + 0, y + 0), width, height);
 
-	if(style == FrameStyle.sunk || style == FrameStyle.risen) {
-		// 3d effect
-		auto vt = WidgetPainter.visualTheme;
+		if(style == FrameStyle.sunk || style == FrameStyle.risen) {
+			// 3d effect
+			auto vt = WidgetPainter.visualTheme;
 
-		painter.outlineColor = (style == FrameStyle.sunk) ? vt.darkAccentColor : vt.lightAccentColor;
-		painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
-		painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
+			painter.outlineColor = (style == FrameStyle.sunk) ? vt.darkAccentColor : vt.lightAccentColor;
+			painter.drawLine(Point(x + 0, y + 0), Point(x + width, y + 0));
+			painter.drawLine(Point(x + 0, y + 0), Point(x + 0, y + height - 1));
 
-		// inner layer
-		//right, bottom
-		painter.outlineColor = (style == FrameStyle.sunk) ? vt.lightAccentColor : vt.darkAccentColor;
-		painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
-		painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
-		// left, top
-		painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
-		painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
-		painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
-	} else if(style == FrameStyle.fantasy) {
-		painter.pen = Pen(Color.white, 1, Pen.Style.Solid);
-		painter.fillColor = Color.transparent;
-		painter.drawRectangle(Point(x + 1, y + 1), Point(x + width - 1, y + height - 1));
+			// inner layer
+			//right, bottom
+			painter.outlineColor = (style == FrameStyle.sunk) ? vt.lightAccentColor : vt.darkAccentColor;
+			painter.drawLine(Point(x + width - 2, y + 2), Point(x + width - 2, y + height - 2));
+			painter.drawLine(Point(x + 2, y + height - 2), Point(x + width - 2, y + height - 2));
+			// left, top
+			painter.outlineColor = (style == FrameStyle.sunk) ? Color.black : Color.white;
+			painter.drawLine(Point(x + 1, y + 1), Point(x + width, y + 1));
+			painter.drawLine(Point(x + 1, y + 1), Point(x + 1, y + height - 2));
+		} else if(style == FrameStyle.fantasy) {
+			painter.pen = Pen(Color.white, 1, Pen.Style.Solid);
+			painter.fillColor = Color.transparent;
+			painter.drawRectangle(Point(x + 1, y + 1), Point(x + width - 1, y + height - 1));
+		}
 	}
 
 	return borderWidth;
@@ -3492,6 +3500,9 @@ version(win32_widgets) {
 				}
 
 
+				if(iMessage == WM_CTLCOLOREDIT) {
+
+				}
 				if(iMessage == WM_CTLCOLORBTN || iMessage == WM_CTLCOLORSTATIC) {
 					SetBkMode(cast(HDC) wParam, TRANSPARENT);
 					return cast(typeof(return)) GetSysColorBrush(COLOR_3DFACE); // this is the window background color...
@@ -13402,13 +13413,14 @@ class TextDisplay : EditableTextWidget {
 
 			smw.verticalScrollBar.setPosition = 0;
 		}
-
-		class Style : Widget.Style {
-			// just want the generic look for these
-		}
-
-		mixin OverrideStyle!Style;
 	}
+
+	class Style : Widget.Style {
+		// just want the generic look for these
+	}
+
+	mixin OverrideStyle!Style;
+
 }
 
 ///
