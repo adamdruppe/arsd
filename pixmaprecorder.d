@@ -4,8 +4,8 @@
 	Distributed under the Boost Software License, Version 1.0.
  +/
 /++
-	$(B Pixmap Recorder) is a helper library for rendering video files from
-	[arsd.pixmappaint.Pixmap|Pixmap] frames, by piping them to
+	$(B Pixmap Recorder) is an auxiliary library for rendering video files from
+	[arsd.pixmappaint.Pixmap|Pixmap] frames by piping them to
 	[FFmpeg](https://ffmpeg.org/about.html).
 
 	$(SIDEBAR
