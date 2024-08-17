@@ -72,6 +72,7 @@ import arsd.pixmappaint;
 import std.format;
 import std.path : buildPath;
 import std.process;
+import std.range : OutputRange;
 import std.sumtype;
 import std.stdio : File;
 
@@ -100,7 +101,7 @@ private @safe {
 	alias RecorderOutput = SumType!(string, File);
 }
 
-final class PixmapRecorder {
+final class PixmapRecorder : OutputRange!Pixmap {
 
 @safe:
 
