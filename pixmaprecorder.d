@@ -396,7 +396,7 @@ final class PixmapRecorder {
 	 +/
 	int close() {
 		if (!this.isOpen) {
-			return;
+			return 0;
 		}
 
 		_input.writeEnd.flush();
