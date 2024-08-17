@@ -394,8 +394,10 @@ final class PixmapRecorder {
 		Returns:
 			The status code provided by the FFmpeg program.
 	 +/
-	int close()
-	in (this.isOpen) {
+	int close() {
+		if (!this.isOpen) {
+			return;
+		}
 
 		_input.writeEnd.flush();
 		_input.writeEnd.close();
