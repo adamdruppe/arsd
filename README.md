@@ -28,7 +28,7 @@ Future release, likely May 2024 or later.
 
 Nothing is planned for it at this time.
 
-arsd.pixmappresenter and arsd.pixmappaint were added.
+arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
 ## 11.0
 
