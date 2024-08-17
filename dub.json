@@ -695,6 +695,18 @@
 			"dflags-gdc": ["-fmodule-file=arsd.pixmappaint=$PACKAGE_DIR/pixmappaint.d"]
 		},
 		{
+			"name": "pixmaprecorder",
+			"description": "Video rendering extension for Pixmap Paint. Fancy wrapper for piping frame data to FFmpeg.",
+			"targetType": "library",
+			"sourceFiles": ["pixmaprecorder.d"],
+			"dependencies": {
+				"arsd-official:pixmappaint":"*"
+			},
+			"dflags-dmd": ["-mv=arsd.pixmaprecorder=$PACKAGE_DIR/pixmaprecorder.d"],
+			"dflags-ldc": ["--mv=arsd.pixmaprecorder=$PACKAGE_DIR/pixmaprecorder.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.pixmaprecorder=$PACKAGE_DIR/pixmaprecorder.d"]
+		},
+		{
 			"name": "pixmappresenter",
 			"description": "High-level display library. Designed to blit fully-rendered frames to the screen.",
 			"targetType": "library",
