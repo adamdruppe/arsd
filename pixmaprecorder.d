@@ -84,17 +84,7 @@ private @safe {
 		return stderr;
 	}
 
-	auto stdoutFauxSafe() @trusted {
-		import std.stdio : stderr;
-
-		return stderr;
-	}
-
 	auto stderr() {
-		return stderrFauxSafe;
-	}
-
-	auto stdout() {
 		return stderrFauxSafe;
 	}
 
