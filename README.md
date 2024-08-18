@@ -1,3 +1,7 @@
+# arsd – Adam Ruppe's Software Development
+
+Generated documentation: <https://arsd-official.dpldocs.info>
+
 > [!IMPORTANT]
 > As of January 1, 2024, this repo is written in the [OpenD Programming Language](https://dpldocs.info/opend/). This is very similar to, but NOT the same as Walter Bright's version of the D Programming Language.
 >
