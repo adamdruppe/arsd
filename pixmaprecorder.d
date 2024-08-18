@@ -27,6 +27,8 @@
 		inclusion a matter of viability for distributors.
 	)
 
+	### Tips and tricks
+
 	$(TIP
 		The FFmpeg binary to be used can be specified by the optional
 		constructor parameter `ffmpegExecutablePath`.
@@ -51,9 +53,46 @@
 		[PixmapRecorder.advancedFFmpegAdditionalOutputArgs|additional-output-args property].
 	)
 
-	## Examples
+	$(TIP
+		Combining this module with [arsd.pixmappresenter|Pixmap Presenter]
+		is really straightforward.
 
-	### Getting started
+		In the most simplistic case, setup a [PixmapRecorder] before running
+		the presenter.
+		Then call
+		[PixmapRecorder.put|pixmapRecorder.record(presenter.framebuffer)]
+		at the end of the drawing callback in the eventloop.
+
+		---
+		auto recorder = new PixmapRecorder(60, /* … */);
+		scope(exit) {
+			const recorderStatus = recorder.stopRecording();
+		}
+
+		return presenter.eventLoop(delegate() {
+			// […]
+			recorder.record(presenter.framebuffer);
+			return LoopCtrl.redrawIn(16);
+		}
+		---
+	)
+
+	$(TIP
+		To use this module with [arsd.color] (which includes the image file
+		loading functionality provided by other arsd modules),
+		convert the
+		[arsd.color.TrueColorImage|TrueColorImage] or
+		[arsd.color.MemoryImage|MemoryImage] to a
+		[arsd.pixmappaint.Pixmap|Pixmap] first by calling
+		[arsd.pixmappaint.Pixmap.fromTrueColorImage|Pixmap.fromTrueColorImage()]
+		or
+		[arsd.pixmappaint.Pixmap.fromMemoryImage|Pixmap.fromMemoryImage()]
+		respectively.
+	)
+
+	### Examples
+
+	#### Getting started
 
 	1. Install FFmpeg (the CLI version).
 		- Debian derivatives (with FFmpeg in their repos): `apt install ffmpeg`
@@ -106,7 +145,7 @@ import arsd.pixmappaint;
 import std.format;
 import std.path : buildPath;
 import std.process;
-import std.range : OutputRange;
+import std.range : isOutputRange, OutputRange;
 import std.sumtype;
 import std.stdio : File;
 
@@ -135,7 +174,7 @@ private @safe {
 	FFmpeg will render an actual video file from the frame data.
 	This uses the CLI version of FFmpeg, no linking required.
  +/
-final class PixmapRecorder : OutputRange!Pixmap {
+final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
 @safe:
 
@@ -302,6 +341,9 @@ final class PixmapRecorder : OutputRange!Pixmap {
 		return _input.writeEnd.isOpen;
 	}
 
+	/// ditto
+	alias isRecording = isOpen;
+
 	private string[] buildFFmpegCommand() pure {
 		// Build resolution as understood by FFmpeg.
 		const string resolutionString = format!"%sx%s"(
@@ -362,7 +404,7 @@ final class PixmapRecorder : OutputRange!Pixmap {
 			There’s usually no need to call this manually.
 		)
 	 +/
-	void open(Size resolution)
+	void open(const Size resolution)
 	in (!this.isOpen) {
 		// Save resolution for sanity checks.
 		_resolution = resolution;
@@ -418,7 +460,7 @@ final class PixmapRecorder : OutputRange!Pixmap {
 			This function automatically calls [open|open()] if necessary.
 		)
 	 +/
-	void put(Pixmap frame) {
+	void put(const Pixmap frame) {
 		if (!this.isOpen) {
 			this.open(frame.size);
 		} else {
@@ -427,6 +469,9 @@ final class PixmapRecorder : OutputRange!Pixmap {
 
 		_input.writeEnd.rawWrite(frame.data);
 	}
+
+	/// ditto
+	alias record = put;
 
 	/++
 		Ends the recording process.
@@ -454,4 +499,10 @@ final class PixmapRecorder : OutputRange!Pixmap {
 
 	/// ditto
 	alias stopRecording = close;
+}
+
+// self-test
+private {
+	static assert(isOutputRange!(PixmapRecorder, Pixmap));
+	static assert(isOutputRange!(PixmapRecorder, const(Pixmap)));
 }
