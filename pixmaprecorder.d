@@ -176,8 +176,6 @@ private @safe {
  +/
 final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
-@safe:
-
 	private {
 		string _ffmpegExecutablePath;
 		double _frameRate;
@@ -191,6 +189,8 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 		Size _resolution;
 		bool _outputIsOurs = false;
 	}
+
+@safe:
 
 	private this(
 		string ffmpegExecutablePath,
