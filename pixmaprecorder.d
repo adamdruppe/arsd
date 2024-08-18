@@ -10,7 +10,7 @@
 
 	$(SIDEBAR
 		Piping frame data into an independent copy of FFmpeg
-		enables this library to be used with a wide range of verions of said
+		enables this library to be used with a wide range of versions of said
 		third-party program
 		and (hopefully) helps to reduce the potential for breaking changes.
 
@@ -35,7 +35,7 @@
 
 		It defaults to `ffmpeg`; this will trigger the usual lookup procedures
 		of the system the application runs on.
-		On POSIX this usually means to search for FFmpeg in the directories
+		On POSIX this usually means searching for FFmpeg in the directories
 		specified by the environment variable PATH.
 		On Windows it will also look for an executable file with that name in
 		the current working directory.
@@ -57,7 +57,7 @@
 		Combining this module with [arsd.pixmappresenter|Pixmap Presenter]
 		is really straightforward.
 
-		In the most simplistic case, setup a [PixmapRecorder] before running
+		In the most simplistic case, set up a [PixmapRecorder] before running
 		the presenter.
 		Then call
 		[PixmapRecorder.put|pixmapRecorder.record(presenter.framebuffer)]
@@ -172,7 +172,7 @@ private @safe {
 
 	This is a convenience wrapper for piping pixmaps into FFmpeg.
 	FFmpeg will render an actual video file from the frame data.
-	This uses the CLI version of FFmpeg, no linking required.
+	This uses the CLI version of FFmpeg, no linking is required.
  +/
 final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
@@ -211,16 +211,16 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
 		$(WARNING
 			FFmpeg cannot produce certain formats in pipes.
-			Look out for error message such as:
+			Look out for error messages such as:
 
 			$(BLOCKQUOTE
-				`[mp4 @ 0xdead1337beef] muxer does not support non seekable output`
+				`[mp4 @ 0xdead1337beef] muxer does not support non-seekable output`
 			)
 
 			This is not a limitation of this library (but rather one of FFmpeg).
 
 			Nevertheless, it’s still possible to use the affected formats.
-			Let FFmpeg output the video to file path instead;
+			Let FFmpeg output the video to the file path instead;
 			check out the other constructor overloads.
 		)
 
@@ -228,7 +228,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 			frameRate     = Framerate of the video output; in frames per second.
 			output        = File handle to write the video output to.
 			outputFormat  = Video (container) format to output.
-			                This is value passed to FFmpeg via the `-f` option.
+			                This value is passed to FFmpeg via the `-f` option.
 			log           = Target file for the stderr log output of FFmpeg.
 			                This is where error messages are written to.
 			ffmpegExecutablePath  = Path to the FFmpeg executable
@@ -274,9 +274,9 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 			                FFmpeg will use this to autodetect the format
 			                when no `outputFormat` is provided.
 			log           = Target file for the stderr log output of FFmpeg.
-			                This is where error messages are written to.
+			                This is where error messages are written to, as well.
 			outputFormat  = Video (container) format to output.
-			                This is value passed to FFmpeg via the `-f` option.
+			                This value is passed to FFmpeg via the `-f` option.
 			                If `null`, the format is not provided and FFmpeg
 			                will try to autodetect the format from the filename
 			                of the `outputPath`.
@@ -298,8 +298,8 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 	in ((outputFormat is null) || outputFormat != "")
 	in (ffmpegExecutablePath != "") {
 
-		// Sanitize output path
-		// if it would get confused with a command-line arg.
+		// Sanitize the output path
+		// if it were to get confused with a command-line arg.
 		// Otherwise a relative path like `-my.mkv` would make FFmpeg complain
 		// about an “Unrecognized option 'out.mkv'”.
 		if (outputPath[0] == '-') {
@@ -317,7 +317,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
 	/++
 		$(I Advanced users only:)
-		Additional command-line arguments passed to FFmpeg.
+		Additional command-line arguments to be passed to FFmpeg.
 
 		$(WARNING
 			The values provided through this property function are not
@@ -326,7 +326,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
 		$(PITFALL
 			If code makes use of this and FFmpeg errors,
-			check the arguments provided here this first.
+			check the arguments provided here first.
 		)
 	 +/
 	void advancedFFmpegAdditionalOutputArgs(string[] args) {
@@ -396,7 +396,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 		
 		$(SIDEBAR
 			Variable/dynamic resolution is neither supported by this library
-			nor most real-world applications.
+			nor by most real-world applications.
 		)
 
 		$(NOTE
