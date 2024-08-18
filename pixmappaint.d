@@ -2,6 +2,9 @@
 	== pixmappaint ==
 	Copyright Elias Batek (0xEAB) 2024.
 	Distributed under the Boost Software License, Version 1.0.
++/
+/++
+	Pixmap image manipulation
 
 	$(WARNING
 		$(B Early Technology Preview.)
