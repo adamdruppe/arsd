@@ -9,20 +9,39 @@
 	[FFmpeg](https://ffmpeg.org/about.html).
 
 	$(SIDEBAR
-		Piping frame data to an independent copy of FFmpeg enables this library
-		to be used with a wide range of verions of said third-party program
-		and (hopefully) helps to reduce the chances of breaking changes.
+		Piping frame data into an independent copy of FFmpeg
+		enables this library to be used with a wide range of verions of said
+		third-party program
+		and (hopefully) helps to reduce the potential for breaking changes.
 
 		It also allows end-users to upgrade their possibilities by swapping the
 		accompanying copy FFmpeg.
+
 		This could be useful in cases where software distributors can only
 		provide limited functionality in their bundled binaries because of
 		legal requirements like patent licenses.
+		Keep in mind, support for more formats can be added to FFmpeg by
+		linking it against external libraries; such can also come with
+		additional distribution requirements that must be considered.
+		These things might be perceived as extra burdens and can make their
+		inclusion a matter of viability for distributors.
 	)
 
 	$(TIP
-		The value of the `outputFormat` parameter of the constructor overloads
-		is passed to FFmpeg via the `-f` option.
+		The FFmpeg binary to be used can be specified by the optional
+		constructor parameter `ffmpegExecutablePath`.
+
+		It defaults to `ffmpeg`; this will trigger the usual lookup procedures
+		of the system the application runs on.
+		On POSIX this usually means to search for FFmpeg in the directories
+		specified by the environment variable PATH.
+		On Windows it will also look for an executable file with that name in
+		the current working directory.
+	)
+
+	$(TIP
+		The value of the `outputFormat` parameter of various constructor
+		overloads is passed to FFmpeg via the `-f` (“format”) option.
 
 		Run `ffmpeg -formats` to get a list of available formats.
 	)
@@ -31,6 +50,21 @@
 		To pass additional options to FFmpeg, use the
 		[PixmapRecorder.advancedFFmpegAdditionalOutputArgs|additional-output-args property].
 	)
+
+	## Examples
+
+	### Getting started
+
+	1. Install FFmpeg (the CLI version).
+		- Debian derivatives (with FFmpeg in their repos): `apt install ffmpeg`
+		- Homebew: `brew install ffmpeg`
+		- Chocolatey: `choco install ffmpeg`
+		- Links to pre-built binaries can be found on <https://ffmpeg.org/download.html>.
+	2. Determine where you’ve installed FFmpeg to.
+	   Ideally, it’s somewhere within “PATH” so it can be run from the
+	   command-line by just doing `ffmpeg`.
+	   Otherwise, you’ll need the specific path to the executable to pass it
+	   to the constructor of [PixmapRecorder].
 
 	---
 	import arsd.pixmaprecorder;
@@ -91,6 +125,16 @@ private @safe {
 	alias RecorderOutput = SumType!(string, File);
 }
 
+/++
+	Video file encoder
+
+	Feed in video data frame by frame to encode video files
+	in one of the various formats supported by FFmpeg.
+
+	This is a convenience wrapper for piping pixmaps into FFmpeg.
+	FFmpeg will render an actual video file from the frame data.
+	This uses the CLI version of FFmpeg, no linking required.
+ +/
 final class PixmapRecorder : OutputRange!Pixmap {
 
 @safe:
@@ -124,20 +168,21 @@ final class PixmapRecorder : OutputRange!Pixmap {
 	}
 
 	/++
-		Prepares a recorder for encoding video frames
-		into the specified file pipe.
+		Prepares a recorder for encoding a video file into the provided pipe.
 
 		$(WARNING
-			Certain formats cannot be produced in pipes by FFmpeg.
-			Look out for error message like such:
+			FFmpeg cannot produce certain formats in pipes.
+			Look out for error message such as:
 
-			($BLOCKQUOTE
+			$(BLOCKQUOTE
 				`[mp4 @ 0xdead1337beef] muxer does not support non seekable output`
 			)
 
 			This is not a limitation of this library (but rather one of FFmpeg).
+
+			Nevertheless, it’s still possible to use the affected formats.
 			Let FFmpeg output the video to file path instead;
-			check out the other overloads of this constructor.
+			check out the other constructor overloads.
 		)
 
 		Params:
@@ -149,7 +194,8 @@ final class PixmapRecorder : OutputRange!Pixmap {
 			                This is where error messages are written to.
 			ffmpegExecutablePath  = Path to the FFmpeg executable
 			                        (e.g. `ffmpeg`, `ffmpeg.exe` or `/usr/bin/ffmpeg`).
-			/* Keep this table in sync with the ones of other overloads. */
+
+		$(COMMENT Keep this table in sync with the ones of other overloads.)
 	 +/
 	public this(
 		double frameRate,
@@ -173,8 +219,14 @@ final class PixmapRecorder : OutputRange!Pixmap {
 	}
 
 	/++
-		Prepares a recorder for encoding video frames
-		into a video file saved to the specified path.
+		Prepares a recorder for encoding a video file
+		saved to the specified path.
+
+		$(TIP
+			This allows FFmpeg to seek through the output file
+			and enables the creation of file formats otherwise not supported
+			when using piped output.
+		)
 
 		Params:
 			frameRate     = Framerate of the video output; in frames per second.
@@ -191,7 +243,8 @@ final class PixmapRecorder : OutputRange!Pixmap {
 			                of the `outputPath`.
 			ffmpegExecutablePath  = Path to the FFmpeg executable
 			                        (e.g. `ffmpeg`, `ffmpeg.exe` or `/usr/bin/ffmpeg`).
-			/* Keep this table in sync with the ones of other overloads. */
+
+		$(COMMENT Keep this table in sync with the ones of other overloads.)
 	 +/
 	public this(
 		double frameRate,
@@ -232,7 +285,7 @@ final class PixmapRecorder : OutputRange!Pixmap {
 			validated and passed verbatim to FFmpeg.
 		)
 
-		$(PITFAL
+		$(PITFALL
 			If code makes use of this and FFmpeg errors,
 			check the arguments provided here this first.
 		)
@@ -359,7 +412,7 @@ final class PixmapRecorder : OutputRange!Pixmap {
 	alias startRecording = close;
 
 	/++
-		Provides the next video frame to encode.
+		Supplies the next frame to the video encoder.
 
 		$(TIP
 			This function automatically calls [open|open()] if necessary.
