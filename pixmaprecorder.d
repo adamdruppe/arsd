@@ -8,6 +8,7 @@
 	[arsd.pixmappaint.Pixmap|Pixmap] frames by piping them to
 	[FFmpeg](https://ffmpeg.org/about.html).
 
+
 	$(SIDEBAR
 		Piping frame data into an independent copy of FFmpeg
 		enables this library to be used with a wide range of versions of said
@@ -73,7 +74,7 @@
 			// […]
 			recorder.record(presenter.framebuffer);
 			return LoopCtrl.redrawIn(16);
-		}
+		});
 		---
 	)
 
@@ -94,16 +95,21 @@
 
 	#### Getting started
 
-	1. Install FFmpeg (the CLI version).
-		- Debian derivatives (with FFmpeg in their repos): `apt install ffmpeg`
-		- Homebew: `brew install ffmpeg`
-		- Chocolatey: `choco install ffmpeg`
-		- Links to pre-built binaries can be found on <https://ffmpeg.org/download.html>.
-	2. Determine where you’ve installed FFmpeg to.
-	   Ideally, it’s somewhere within “PATH” so it can be run from the
-	   command-line by just doing `ffmpeg`.
-	   Otherwise, you’ll need the specific path to the executable to pass it
-	   to the constructor of [PixmapRecorder].
+	$(NUMBERED_LIST
+		* Install FFmpeg (the CLI version).
+		$(LIST
+			* Debian derivatives (with FFmpeg in their repos): `apt install ffmpeg`
+			* Homebew: `brew install ffmpeg`
+			* Chocolatey: `choco install ffmpeg`
+			* Links to pre-built binaries can be found on <https://ffmpeg.org/download.html>.
+		)
+
+		* Determine where you’ve installed FFmpeg to.
+		   Ideally, it’s somewhere within “PATH” so it can be run from the
+		   command-line by just doing `ffmpeg`.
+		   Otherwise, you’ll need the specific path to the executable to pass it
+		   to the constructor of [PixmapRecorder].
+	)
 
 	---
 	import arsd.pixmaprecorder;
@@ -393,7 +399,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 
 		This function sets the video resolution for the encoding process.
 		All frames to record must match it.
-		
+
 		$(SIDEBAR
 			Variable/dynamic resolution is neither supported by this library
 			nor by most real-world applications.
