@@ -1777,7 +1777,10 @@ final class AudioPcmOutThreadImplementation : Thread {
 	public void unsuspend() {
 		suspended_ = false;
 		suspendWanted = false;
-		event.set();
+		static if(__traits(hasMember, event, "setIfInitialized"))
+			event.setIfInitialized();
+		else
+			event.set();
 	}
 
 	/// ditto
