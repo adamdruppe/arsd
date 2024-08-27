@@ -178,6 +178,7 @@
 				"arsd-official:core":"*",
 				"arsd-official:minigui":"*",
 				"arsd-official:joystick":"*",
+				"arsd-official:ttf":"*",
 				"arsd-official:simpleaudio":"*",
 				"arsd-official:gamehelpers":"*"
 			},
