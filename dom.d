@@ -957,7 +957,7 @@ class Document : FileResource, DomParent {
 					}
 
 					string tagName = readTagName();
-					string[string] attributes;
+					AttributesHolder attributes;
 
 					Ele addTag(bool selfClosed) {
 						if(selfClosed)
@@ -2299,8 +2299,13 @@ class Element : DomParent {
 	/// The name of the tag. Remember, changing this doesn't change the dynamic type of the object.
 	string tagName;
 
-	/// This is where the attributes are actually stored. You should use getAttribute, setAttribute, and hasAttribute instead.
-	string[string] attributes;
+	/++
+		This is where the attributes are actually stored. You should use getAttribute, setAttribute, and hasAttribute instead.
+
+		History:
+			`AttributesHolder` replaced `string[string]` on August 22, 2024
+	+/
+	AttributesHolder attributes;
 
 	/// In XML, it is valid to write <tag /> for all elements with no children, but that breaks HTML, so I don't do it here.
 	/// Instead, this flag tells if it should be. It is based on the source document's notation and a html element list.
@@ -2500,8 +2505,8 @@ class Element : DomParent {
 	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
 		tagName = _tagName;
-		if(_attributes !is null)
-			attributes = _attributes;
+		foreach(k, v; _attributes)
+			attributes[k] = v;
 		selfClosed = _selfClosed;
 
 		version(dom_node_indexes)
@@ -2522,8 +2527,8 @@ class Element : DomParent {
 	+/
 	this(string _tagName, string[string] _attributes = null, const string[] selfClosedElements = htmlSelfClosedElements) {
 		tagName = _tagName;
-		if(_attributes !is null)
-			attributes = _attributes;
+		foreach(k, v; _attributes)
+			attributes[k] = v;
 		selfClosed = tagName.isInArray(selfClosedElements);
 
 		// this is meant to reserve some memory. It makes a small, but consistent improvement.
@@ -2848,11 +2853,7 @@ class Element : DomParent {
 	string getAttribute(string name) const {
 		if(parentDocument && parentDocument.loose)
 			name = name.toLower();
-		auto e = name in attributes;
-		if(e)
-			return *e;
-		else
-			return null;
+		return attributes.get(name, null);
 	}
 
 	/**
@@ -3999,9 +4000,18 @@ class Element : DomParent {
 	string writeTagOnly(Appender!string where = appender!string()) const {
 	+/
 
-	/// This is the actual implementation used by toString. You can pass it a preallocated buffer to save some time.
-	/// Note: the ordering of attributes in the string is undefined.
-	/// Returns the string it creates.
+	/++
+		This is the actual implementation used by toString. You can pass it a preallocated buffer to save some time.
+		Note: the ordering of attributes in the string is undefined.
+		Returns the string it creates.
+
+		Implementation_Notes:
+			The order of attributes printed by this function is undefined, as permitted by the XML spec. You should NOT rely on any implementation detail noted here.
+
+			However, in practice, between June 14, 2019 and August 22, 2024, it actually did sort attributes by key name. After August 22, 2024, it changed to track attribute append order and will print them back out in the order in which the keys were first seen.
+
+			This is subject to change again at any time. Use [toPrettyString] if you want a defined output (toPrettyString always sorts by name for consistent diffing).
+	+/
 	string writeToAppender(Appender!string where = appender!string()) const {
 		assert(tagName !is null);
 
@@ -4012,10 +4022,13 @@ class Element : DomParent {
 		where.put("<");
 		where.put(tagName);
 
+		/+
 		import std.algorithm : sort;
 		auto keys = sort(attributes.keys);
 		foreach(n; keys) {
 			auto v = attributes[n]; // I am sorting these for convenience with another project. order of AAs is undefined, so I'm allowed to do it.... and it is still undefined, I might change it back later.
+		+/
+		foreach(n, v; attributes) {
 			//assert(v !is null);
 			where.put(" ");
 			where.put(n);
@@ -4432,7 +4445,217 @@ struct AttributeSet {
 	mixin JavascriptStyleDispatch!();
 }
 
+private struct InternalAttribute {
+	// variable length structure
+	private InternalAttribute* next;
+	private uint totalLength;
+	private ushort keyLength;
+	private char[0] chars;
 
+	// this really should be immutable tbh
+	inout(char)[] key() inout {
+		return chars.ptr[0 .. keyLength];
+	}
+
+	inout(char)[] value() inout {
+		return chars.ptr[keyLength .. totalLength];
+	}
+
+	static InternalAttribute* make(in char[] key, in char[] value) {
+		auto data = new ubyte[](InternalAttribute.sizeof + key.length + value.length);
+		auto obj = cast(InternalAttribute*) data.ptr;
+
+		obj.totalLength = cast(uint) (key.length + value.length);
+		obj.keyLength = cast(ushort) key.length;
+		if(key.length != obj.keyLength)
+			throw new Exception("attribute key overflow");
+		if(key.length + value.length != obj.totalLength)
+			throw new Exception("attribute length overflow");
+
+		obj.key[] = key[];
+		obj.value[] = value[];
+
+		return obj;
+	}
+}
+
+import core.exception;
+
+struct AttributesHolder {
+	private @system InternalAttribute* attributes;
+
+	/+
+		It is legal to do foo["key", "default"] to call it with no error...
+	+/
+	string opIndex(scope const char[] key) const {
+		auto thing = attributes;
+		auto found = find(key);
+		if(found is null)
+			throw new RangeError(key.idup); // FIXME
+		return cast(string) found.value;
+	}
+
+	string get(scope const char[] key, string returnedIfKeyNotFound = null) const {
+		auto attr = this.find(key);
+		if(attr is null)
+			return returnedIfKeyNotFound;
+		else
+			return cast(string) attr.value;
+	}
+
+	private string[] keys() const {
+		string[] ret;
+		foreach(k, v; this)
+			ret ~= k;
+		return ret;
+	}
+
+	/+
+		If this were to return a string* it'd be tricky cuz someone could try to rebind it, which is impossible.
+
+		This is a breaking change. You can get a similar result though with [get].
+	+/
+	bool opBinaryRight(string op : "in")(scope const char[] key) const {
+		return find(key) !is null;
+	}
+
+	private inout(InternalAttribute)* find(scope const char[] key) inout @trusted {
+		inout(InternalAttribute)* current = attributes;
+		while(current) {
+			if(current.key == key)
+				return current;
+			current = current.next;
+		}
+		return null;
+	}
+
+	void remove(scope const char[] key) @trusted {
+		if(attributes is null)
+			return;
+		auto current = attributes;
+		InternalAttribute* previous;
+		while(current) {
+			if(current.key == key)
+				break;
+			previous = current;
+			current = current.next;
+		}
+		if(current is null)
+			return;
+		if(previous is null)
+			attributes = current.next;
+		else
+			previous.next = current.next;
+	}
+
+	void opIndexAssign(scope const char[] value, scope const char[] key) {
+		if(attributes is null) {
+			attributes = InternalAttribute.make(key, value);
+			return;
+		}
+		auto current = attributes;
+
+		if(current.key == key) {
+			if(current.value != value) {
+				auto replacement = InternalAttribute.make(key, value);
+				attributes = replacement;
+				replacement.next = current.next;
+			}
+			return;
+		}
+
+		while(current.next) {
+			if(current.next.key == key) {
+				if(current.next.value == value)
+					return; // replacing immutable value with self, no change
+				break;
+			}
+			current = current.next;
+		}
+		assert(current !is null);
+
+		auto replacement = InternalAttribute.make(key, value);
+		if(current.next !is null)
+			replacement.next = current.next.next;
+		current.next = replacement;
+	}
+
+	int opApply(int delegate(string key, string value) dg) const @trusted {
+		const(InternalAttribute)* current = attributes;
+		while(current !is null) {
+			if(auto res = dg(cast(string) current.key, cast(string) current.value))
+				return res;
+			current = current.next;
+		}
+		return 0;
+	}
+}
+
+unittest {
+	AttributesHolder holder;
+	holder["one"] = "1";
+	holder["two"] = "2";
+	holder["three"] = "3";
+
+	{
+		assert("one" in holder);
+		assert("two" in holder);
+		assert("three" in holder);
+		assert("four" !in holder);
+
+		int count;
+		foreach(k, v; holder) {
+			switch(count) {
+				case 0: assert(k == "one" && v == "1"); break;
+				case 1: assert(k == "two" && v == "2"); break;
+				case 2: assert(k == "three" && v == "3"); break;
+				default: assert(0);
+			}
+			count++;
+		}
+	}
+
+	holder["two"] = "dos";
+
+	{
+		assert("one" in holder);
+		assert("two" in holder);
+		assert("three" in holder);
+		assert("four" !in holder);
+
+		int count;
+		foreach(k, v; holder) {
+			switch(count) {
+				case 0: assert(k == "one" && v == "1"); break;
+				case 1: assert(k == "two" && v == "dos"); break;
+				case 2: assert(k == "three" && v == "3"); break;
+				default: assert(0);
+			}
+			count++;
+		}
+	}
+
+	holder["four"] = "4";
+
+	{
+		assert("one" in holder);
+		assert("two" in holder);
+		assert("three" in holder);
+		assert("four" in holder);
+
+		int count;
+		foreach(k, v; holder) {
+			switch(count) {
+				case 0: assert(k == "one" && v == "1"); break;
+				case 1: assert(k == "two" && v == "dos"); break;
+				case 2: assert(k == "three" && v == "3"); break;
+				case 3: assert(k == "four" && v == "4"); break;
+				default: assert(0);
+			}
+			count++;
+		}
+	}
+}
 
 /// for style, i want to be able to set it with a string like a plain attribute,
 /// but also be able to do properties Javascript style.
@@ -4441,10 +4664,20 @@ struct AttributeSet {
 struct ElementStyle {
 	this(Element parent) {
 		_element = parent;
+		_attribute = _element.getAttribute("style");
+		originalAttribute = _attribute;
+	}
+
+	~this() {
+		if(_attribute !is originalAttribute)
+			_element.setAttribute("style", _attribute);
 	}
 
 	Element _element;
+	string _attribute;
+	string originalAttribute;
 
+	/+
 	@property ref inout(string) _attribute() inout {
 		auto s = "style" in _element.attributes;
 		if(s is null) {
@@ -4456,6 +4689,7 @@ struct ElementStyle {
 		assert(s !is null);
 		return *s;
 	}
+	+/
 
 	alias _attribute this; // this is meant to allow element.style = element.style ~ " string "; to still work.
 
@@ -7841,6 +8075,13 @@ package bool isInArray(T)(T item, T[] arr) {
 
 private string[string] aadup(in string[string] arr) {
 	string[string] ret;
+	foreach(k, v; arr)
+		ret[k] = v;
+	return ret;
+}
+
+private AttributesHolder aadup(const AttributesHolder arr) {
+	AttributesHolder ret;
 	foreach(k, v; arr)
 		ret[k] = v;
 	return ret;
