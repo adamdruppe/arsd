@@ -580,21 +580,23 @@ public import arsd.joystick;
 SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 	auto window = new SimpleWindow(width, height, title, OpenGlOptions.yes);
 
-	window.setAsCurrentOpenGlContext();
+	window.visibleForTheFirstTime = () {
+		window.setAsCurrentOpenGlContext();
 
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glClearColor(0,0,0,0);
-	glDepthFunc(GL_LEQUAL);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glClearColor(0,0,0,0);
+		glDepthFunc(GL_LEQUAL);
 
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho(0, width, height, 0, 0, 1);
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glOrtho(0, width, height, 0, 0, 1);
 
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_TEXTURE_2D);
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glDisable(GL_DEPTH_TEST);
+		glEnable(GL_TEXTURE_2D);
+	};
 
 	window.windowResized = (newWidth, newHeight) {
 		int x, y, w, h;
@@ -612,6 +614,7 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 			y = 0;
 		}
 
+		window.setAsCurrentOpenGlContext();
 		glViewport(x, y, w, h);
 		window.redrawOpenGlSceneSoon();
 	};

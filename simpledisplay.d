@@ -12035,6 +12035,9 @@ version(Windows) {
 				CW_USEDEFAULT, CW_USEDEFAULT, width, height,
 				parent is null ? null : parent.impl.hwnd, null, hInstance, null);
 
+			if(!hwnd)
+				throw new WindowsApiException("CreateWindowEx", GetLastError());
+
 			if ((customizationFlags & WindowFlags.extraComposite) != 0)
 				setOpacity(255);
 
@@ -12046,6 +12049,8 @@ version(Windows) {
 
 			HDC hdc = GetDC(hwnd);
 
+			if(!hdc)
+				throw new WindowsApiException("GetDC", GetLastError());
 
 			version(without_opengl) {}
 			else {
