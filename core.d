@@ -3598,7 +3598,7 @@ struct UserProvidedBuffer(T) {
 		}
 	}
 
-	package(arsd) T[] slice() return {
+	package(arsd) T[] slice() {
 		return buffer[0 .. actualLength];
 	}
 }
