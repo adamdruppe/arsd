@@ -28,12 +28,12 @@
 			"configurations": [
 				{
 					"name": "normal",
-					"libs-windows": ["gdi32", "ole32"]
+					"libs-windows": ["dwmapi", "gdi32", "ole32"]
 				},
 				{
 					"name": "without-opengl",
 					"versions": ["without_opengl"],
-					"libs-windows": ["gdi32", "ole32"]
+					"libs-windows": ["dwmapi", "gdi32", "ole32"]
 				},
 				{
 					"name": "cocoa",
