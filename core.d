@@ -434,7 +434,7 @@ struct SimplifiedUtcTimestamp {
 		if(t is null)
 			return "null time";
 
-		return buffer[0 .. strftime(buffer.ptr, buffer.length, "%FT%H:%M:%SZ", t)].idup;
+		return buffer[0 .. strftime(buffer.ptr, buffer.length, "%Y-%m-%dT%H:%M:%SZ", t)].idup;
 	}
 
 	version(Windows)
