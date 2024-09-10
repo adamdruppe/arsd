@@ -4453,17 +4453,25 @@ private struct InternalAttribute {
 	private char[0] chars;
 
 	// this really should be immutable tbh
-	inout(char)[] key() inout {
+	inout(char)[] key() inout return {
 		return chars.ptr[0 .. keyLength];
 	}
 
-	inout(char)[] value() inout {
+	inout(char)[] value() inout return {
 		return chars.ptr[keyLength .. totalLength];
 	}
 
 	static InternalAttribute* make(in char[] key, in char[] value) {
-		auto data = new ubyte[](InternalAttribute.sizeof + key.length + value.length);
-		auto obj = cast(InternalAttribute*) data.ptr;
+		// old code was
+		//auto data = new ubyte[](InternalAttribute.sizeof + key.length + value.length);
+		//GC.addRange(data.ptr, data.length); // MUST add the range to scan it!
+
+		import core.memory;
+		// but this code is a bit better, notice we did NOT set the NO_SCAN attribute because of the presence of the next pointer
+		// (this can sometimes be a pessimization over the separate strings but meh, most of these attributes are supposed to be small)
+		auto obj = cast(InternalAttribute*) GC.calloc(InternalAttribute.sizeof + key.length + value.length);
+
+		// assert(key.length > 0);
 
 		obj.totalLength = cast(uint) (key.length + value.length);
 		obj.keyLength = cast(ushort) key.length;
@@ -4477,6 +4485,8 @@ private struct InternalAttribute {
 
 		return obj;
 	}
+
+	// FIXME: disable default ctor and op new
 }
 
 import core.exception;
@@ -4485,10 +4495,21 @@ struct AttributesHolder {
 	private @system InternalAttribute* attributes;
 
 	/+
+	invariant() {
+		const(InternalAttribute)* wtf = attributes;
+		while(wtf) {
+			assert(wtf != cast(void*) 1);
+			assert(wtf.keyLength != 0);
+			import std.stdio; writeln(wtf.key, "=", wtf.value);
+			wtf = wtf.next;
+		}
+	}
+	+/
+
+	/+
 		It is legal to do foo["key", "default"] to call it with no error...
 	+/
 	string opIndex(scope const char[] key) const {
-		auto thing = attributes;
 		auto found = find(key);
 		if(found is null)
 			throw new RangeError(key.idup); // FIXME
@@ -4522,6 +4543,7 @@ struct AttributesHolder {
 	private inout(InternalAttribute)* find(scope const char[] key) inout @trusted {
 		inout(InternalAttribute)* current = attributes;
 		while(current) {
+			// assert(current > cast(void*) 1);
 			if(current.key == key)
 				return current;
 			current = current.next;
@@ -4546,9 +4568,11 @@ struct AttributesHolder {
 			attributes = current.next;
 		else
 			previous.next = current.next;
+		// assert(previous.next != cast(void*) 1);
+		// assert(attributes != cast(void*) 1);
 	}
 
-	void opIndexAssign(scope const char[] value, scope const char[] key) {
+	void opIndexAssign(scope const char[] value, scope const char[] key) @trusted {
 		if(attributes is null) {
 			attributes = InternalAttribute.make(key, value);
 			return;
@@ -4560,6 +4584,8 @@ struct AttributesHolder {
 				auto replacement = InternalAttribute.make(key, value);
 				attributes = replacement;
 				replacement.next = current.next;
+		// assert(replacement.next != cast(void*) 1);
+		// assert(attributes != cast(void*) 1);
 			}
 			return;
 		}
@@ -4578,6 +4604,8 @@ struct AttributesHolder {
 		if(current.next !is null)
 			replacement.next = current.next.next;
 		current.next = replacement;
+		// assert(current.next != cast(void*) 1);
+		// assert(replacement.next != cast(void*) 1);
 	}
 
 	int opApply(int delegate(string key, string value) dg) const @trusted {
