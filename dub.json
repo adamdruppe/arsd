@@ -70,12 +70,12 @@
 
 				"bindbc-freetype": {
 					"version": "*",
-					"optional": true,
+					"optional": true
 				},
 				"bindbc-opengl": {
 					"version": "*",
-					"optional": true,
-				},
+					"optional": true
+				}
 			},
 			"libs-posix": ["freetype", "fontconfig"],
 			"sourceFiles": ["nanovega.d", "blendish.d"]
