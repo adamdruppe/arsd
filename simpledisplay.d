@@ -1229,7 +1229,7 @@ version(Windows) {
 			DWM_WINDOW_CORNER_PREFERENCE value,
 			out CornerStyle result,
 		) @safe pure nothrow @nogc {
-			switch(value) with (DWM_WINDOW_CORNER_PREFERENCE) {
+			switch (value) with (DWM_WINDOW_CORNER_PREFERENCE) {
 				case DWMWCP_DEFAULT:
 					result = CornerStyle.automatic;
 					return true;
@@ -1237,8 +1237,10 @@ version(Windows) {
 					result = CornerStyle.rectangular;
 					return true;
 				case DWMWCP_ROUND:
-				case DWMWCP_ROUNDSMALL:
 					result = CornerStyle.rounded;
+					return true;
+				case DWMWCP_ROUNDSMALL:
+					result = CornerStyle.roundedSlightly;
 					return true;
 				default:
 					return false;
@@ -1249,7 +1251,7 @@ version(Windows) {
 			CornerStyle value,
 			out DWM_WINDOW_CORNER_PREFERENCE result,
 		) @safe pure nothrow @nogc {
-			final switch(value) with (DWM_WINDOW_CORNER_PREFERENCE) {
+			final switch (value) with (DWM_WINDOW_CORNER_PREFERENCE) {
 				case CornerStyle.automatic:
 					result = DWMWCP_DEFAULT;
 					return true;
@@ -1258,6 +1260,9 @@ version(Windows) {
 					return true;
 				case CornerStyle.rounded:
 					result = DWMWCP_ROUND;
+					return true;
+				case CornerStyle.roundedSlightly:
+					result = DWMWCP_ROUNDSMALL;
 					return true;
 			}
 		}
@@ -1908,6 +1913,11 @@ enum CornerStyle {
 		Prefer rounded window corners
 	 +/
 	rounded,
+
+	/++
+		Prefer slightly-rounded window corners
+	 +/
+	roundedSlightly,
 }
 
 /++
