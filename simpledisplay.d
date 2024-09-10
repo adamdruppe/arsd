@@ -3984,8 +3984,6 @@ private:
 	 +/
 	public CornerStyle cornerStyle() @trusted {
 		version(Windows) {
-			import std.format;
-
 			DWM_WINDOW_CORNER_PREFERENCE dwmCorner;
 			const apiResult = DwmGetWindowAttribute(
 				this.hwnd,
@@ -4002,17 +4000,12 @@ private:
 					return _fauxCornerStyle;
 				}
 
-				const exMsg = format("DwmGetWindowAttribute() failed with error 0x%x.", apiResult);
-				throw new Exception(exMsg);
+				throw new WindowsApiException("DwmGetWindowAttribute", apiResult);
 			}
 
 			CornerStyle corner;
 			if (!dwmCorner.fromDWM(corner)) {
-				const exMsg = format(
-					"DwmGetWindowAttribute() reported an unfamiliar corner preference: %s",
-					dwmCorner,
-				);
-				throw new Exception(exMsg);
+				throw ArsdException!"DwmGetWindowAttribute unfamiliar corner preference"(dwmCorner);
 			}
 			return corner;
 		} else {
@@ -4023,8 +4016,6 @@ private:
 	/// ditto
 	public void cornerStyle(const CornerStyle corner) @trusted {
 		version(Windows) {
-			import std.format;
-
 			DWM_WINDOW_CORNER_PREFERENCE dwmCorner;
 			if (!corner.toDWM(dwmCorner)) {
 				assert(false, "This should have been impossible because of a final switch.");
@@ -4046,8 +4037,7 @@ private:
 					return;
 				}
 
-				const exMsg = format("DwmSetWindowAttribute() failed with error 0x%x.", apiResult);
-				throw new Exception(exMsg);
+				throw new WindowsApiException("DwmSetWindowAttribute", apiResult);
 			}
 		} else {
 			_fauxCornerStyle = corner;
