@@ -408,8 +408,26 @@ struct PresenterConfig {
 
 	///
 	static struct Window {
+		///
 		string title = "ARSD Pixmap Presenter";
+
+		///
 		Size size;
+
+		/++
+			Window corner style
+
+			$(NOTE
+				At the time of writing, this is only implemented on Windows.
+				It has no effect elsewhere for now but does no harm either.
+
+				Windows: Requires Windows 11 or later.
+			)
+
+			History:
+				Added September 10, 2024.
+		 +/
+		CornerStyle corners = CornerStyle.rectangular;
 	}
 }
 
@@ -911,6 +929,7 @@ final class PixmapPresenter {
 			);
 
 			window.windowResized = &this.windowResized;
+			window.cornerStyle = config.window.corners;
 
 			// alloc objects
 			_poc = new PresenterObjectsContainer(
