@@ -1164,6 +1164,106 @@ version(Windows) {
 	// for AlphaBlend... a breaking change....
 	version(CRuntime_DigitalMars) { } else
 		pragma(lib, "msimg32");
+
+	// core.sys.windows.dwmapi
+	private {
+		/++
+			See_also:
+				https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetwindowattribute
+		 +/
+		extern extern(Windows) HRESULT DwmGetWindowAttribute(
+			HWND hwnd,
+			DWORD dwAttribute,
+			PVOID pvAttribute,
+			DWORD cbAttribute
+		) nothrow @nogc;
+
+		/++
+			See_also:
+				https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmsetwindowattribute
+		 +/
+		extern extern(Windows) HRESULT DwmSetWindowAttribute(
+			HWND hwnd,
+			DWORD dwAttribute,
+			LPCVOID pvAttribute,
+			DWORD cbAttribute
+		) nothrow @nogc;
+
+		/++
+			See_also:
+				https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+		 +/
+		enum DWMWINDOWATTRIBUTE {
+			// incomplete, only declare what we need
+
+			/++
+				Usage:
+					pvAttribute → `DWM_WINDOW_CORNER_PREFERENCE*`
+
+				$(NOTE
+					Requires Windows 11 or later.
+				)
+			 +/
+			DWMWA_WINDOW_CORNER_PREFERENCE = 33,
+		}
+
+		/++
+			See_also:
+				https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_window_corner_preference
+		 +/
+		enum DWM_WINDOW_CORNER_PREFERENCE {
+			/// System decision
+			DWMWCP_DEFAULT = 0,
+
+			/// Never
+			DWMWCP_DONOTROUND = 1,
+
+			// If "appropriate"
+			DWMWCP_ROUND = 2,
+
+			// If "appropriate", but smaller radius
+			DWMWCP_ROUNDSMALL = 3
+		}
+
+		bool fromDWM(
+			DWM_WINDOW_CORNER_PREFERENCE value,
+			out CornerStyle result,
+		) @safe pure nothrow @nogc {
+			switch(value) with (DWM_WINDOW_CORNER_PREFERENCE) {
+				case DWMWCP_DEFAULT:
+					result = CornerStyle.automatic;
+					return true;
+				case DWMWCP_DONOTROUND:
+					result = CornerStyle.rectangular;
+					return true;
+				case DWMWCP_ROUND:
+				case DWMWCP_ROUNDSMALL:
+					result = CornerStyle.rounded;
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		bool toDWM(
+			CornerStyle value,
+			out DWM_WINDOW_CORNER_PREFERENCE result,
+		) @safe pure nothrow @nogc {
+			final switch(value) with (DWM_WINDOW_CORNER_PREFERENCE) {
+				case CornerStyle.automatic:
+					result = DWMWCP_DEFAULT;
+					return true;
+				case CornerStyle.rectangular:
+					result = DWMWCP_DONOTROUND;
+					return true;
+				case CornerStyle.rounded:
+					result = DWMWCP_ROUND;
+					return true;
+			}
+		}
+
+		pragma(lib, "dwmapi");
+	}
 } else version (linux) {
 	//k8: this is hack for rdmd. sorry.
 	static import core.sys.linux.epoll;
@@ -1788,6 +1888,26 @@ enum BlockingMode {
 		to trigger the event loop return.
 	+/
 	onlyIfNotNested       = 0x10,
+}
+
+/++
+	Window corner visuals preference
+ +/
+enum CornerStyle {
+	/++
+		Use the default style automatically applied by the system or its window manager/compositor.
+	 +/
+	automatic,
+
+	/++
+		Prefer rectangular window corners
+	 +/
+	rectangular,
+
+	/++
+		Prefer rounded window corners
+	 +/
+	rounded,
 }
 
 /++
@@ -3833,6 +3953,94 @@ private:
 		// writeln(width, " ", height);
 			setAsCurrentOpenGlContextNT();
 			glViewport(0, 0, width, height);
+		}
+	}
+
+	// TODO: Implement on non-Windows platforms (where available).
+	private CornerStyle _fauxCornerStyle = CornerStyle.automatic;
+
+	/++
+		Style of the window's corners
+
+		$(WARNING
+			Currently only implemented on Windows targets.
+			Has no visual effect elsewhere.
+
+			Windows: Requires Windows 11 or later.
+		)
+
+		History:
+			Added September 09, 2024.
+	 +/
+	public CornerStyle cornerStyle() @trusted {
+		version(Windows) {
+			import std.format;
+
+			DWM_WINDOW_CORNER_PREFERENCE dwmCorner;
+			const apiResult = DwmGetWindowAttribute(
+				this.hwnd,
+				DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
+				&dwmCorner,
+				typeof(dwmCorner).sizeof
+			);
+
+			if (apiResult != S_OK) {
+				// Unsupported?
+				if (apiResult == E_INVALIDARG) {
+					// Feature unsupported; Windows version probably too old.
+					// Requires Windows 11 (build 22000) or later.
+					return _fauxCornerStyle;
+				}
+
+				const exMsg = format("DwmGetWindowAttribute() failed with error 0x%x.", apiResult);
+				throw new Exception(exMsg);
+			}
+
+			CornerStyle corner;
+			if (!dwmCorner.fromDWM(corner)) {
+				const exMsg = format(
+					"DwmGetWindowAttribute() reported an unfamiliar corner preference: %s",
+					dwmCorner,
+				);
+				throw new Exception(exMsg);
+			}
+			return corner;
+		} else {
+			return _fauxCornerStyle;
+		}
+	}
+
+	/// ditto
+	public void cornerStyle(const CornerStyle corner) @trusted {
+		version(Windows) {
+			import std.format;
+
+			DWM_WINDOW_CORNER_PREFERENCE dwmCorner;
+			if (!corner.toDWM(dwmCorner)) {
+				assert(false, "This should have been impossible because of a final switch.");
+			}
+
+			const apiResult = DwmSetWindowAttribute(
+				this.hwnd,
+				DWMWINDOWATTRIBUTE.DWMWA_WINDOW_CORNER_PREFERENCE,
+				&dwmCorner,
+				typeof(dwmCorner).sizeof
+			);
+
+			if (apiResult != S_OK) {
+				// Unsupported?
+				if (apiResult == E_INVALIDARG) {
+					// Feature unsupported; Windows version probably too old.
+					// Requires Windows 11 (build 22000) or later.
+					_fauxCornerStyle = corner;
+					return;
+				}
+
+				const exMsg = format("DwmSetWindowAttribute() failed with error 0x%x.", apiResult);
+				throw new Exception(exMsg);
+			}
+		} else {
+			_fauxCornerStyle = corner;
 		}
 	}
 }
