@@ -535,6 +535,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	public void setup(PresenterObjectsContainer* pro) {
 		_poc = pro;
+		_poc.window.suppressAutoOpenglViewport = true;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
 		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
@@ -726,6 +727,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 	public void setup(PresenterObjectsContainer* poc) {
 		_poc = poc;
+		_poc.window.suppressAutoOpenglViewport = true;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
 		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
