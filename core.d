@@ -3708,6 +3708,9 @@ package(arsd) __gshared CleanupQueue cleanupQueue;
 		slow could lock up the event loop. It now guarantees other things will
 		get a chance to run between timer calls, even if that means not keeping up
 		with the requested interval.
+
+		Originally part of arsd.simpledisplay, this code was integrated into
+		arsd.core on May 26, 2024 (committed on June 10).
 +/
 version(HasTimer)
 class Timer {

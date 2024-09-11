@@ -192,7 +192,12 @@ alias Pixmap = arsd.pixmappaint.Pixmap;
 alias WindowResizedCallback = void delegate(Size);
 
 // is the Timer class available on this platform?
-private enum hasTimer = is(Timer == class);
+private enum hasTimer = is(arsd.simpledisplay.Timer == class);
+
+// resolve symbol clash on “Timer” (arsd.core vs arsd.simpledisplay)
+static if (hasTimer) {
+	private alias Timer = arsd.simpledisplay.Timer;
+}
 
 // viewport math
 private @safe pure nothrow @nogc {
