@@ -548,7 +548,7 @@ class Document : FileResource, DomParent {
 		loose = !caseSensitive;
 
 		bool sawImproperNesting = false;
-		bool paragraphHackfixRequired = false;
+		bool nonNestableHackRequired = false;
 
 		int getLineNumber(sizediff_t p) {
 			int line = 1;
@@ -1039,12 +1039,12 @@ class Document : FileResource, DomParent {
 
 						bool closed = selfClosed;
 
-						void considerHtmlParagraphHack(Element n) {
+						void considerHtmlNonNestableElementHack(Element n) {
 							assert(!strict);
-							if(e.tagName == "p" && e.tagName == n.tagName) {
+							if(!canNestElementsInHtml(e.tagName, n.tagName)) {
 								// html lets you write <p> para 1 <p> para 1
 								// but in the dom tree, they should be siblings, not children.
-								paragraphHackfixRequired = true;
+								nonNestableHackRequired = true;
 							}
 						}
 
@@ -1066,7 +1066,7 @@ class Document : FileResource, DomParent {
 									piecesBeforeRoot ~= n.element;
 							} else if(n.type == 0) {
 								if(!strict)
-									considerHtmlParagraphHack(n.element);
+									considerHtmlNonNestableElementHack(n.element);
 								processNodeWhileParsing(e, n.element);
 							} else if(n.type == 1) {
 								bool found = false;
@@ -1078,7 +1078,7 @@ class Document : FileResource, DomParent {
 										// this is so we don't drop several levels of awful markup
 										if(n.element) {
 											if(!strict)
-												considerHtmlParagraphHack(n.element);
+												considerHtmlNonNestableElementHack(n.element);
 											processNodeWhileParsing(e, n.element);
 											n.element = null;
 										}
@@ -1119,7 +1119,7 @@ class Document : FileResource, DomParent {
 								} else {
 									if(n.element) {
 										if(!strict)
-											considerHtmlParagraphHack(n.element);
+											considerHtmlNonNestableElementHack(n.element);
 										processNodeWhileParsing(e, n.element);
 									}
 								}
@@ -1251,7 +1251,7 @@ class Document : FileResource, DomParent {
 				parseUtf8(`<html><head></head><body></body></html>`); // fill in a dummy document in loose mode since that's what browsers do
 		}
 
-		if(paragraphHackfixRequired) {
+		if(nonNestableHackRequired) {
 			assert(!strict); // this should never happen in strict mode; it ought to never set the hack flag...
 
 			// in loose mode, we can see some "bad" nesting (it's valid html, but poorly formed xml).
@@ -1265,7 +1265,7 @@ class Document : FileResource, DomParent {
 				if(ele.parentNode is null)
 					continue;
 
-				if(ele.tagName == "p" && ele.parentNode.tagName == ele.tagName) {
+				if(!canNestElementsInHtml(ele.parentNode.tagName, ele.tagName)) {
 					auto shouldBePreviousSibling = ele.parentNode;
 					auto holder = shouldBePreviousSibling.parentNode; // this is the two element's mutual holder...
 					if (auto p = holder in insertLocations) {
@@ -1774,6 +1774,25 @@ unittest {
 +/
 unittest {
 	auto xml = new XmlDocument(`<my-stuff>hello</my-stuff>`);
+}
+
+bool canNestElementsInHtml(string parentTagName, string childTagName) {
+	switch(parentTagName) {
+		case "p":
+			switch(childTagName) {
+				case "p", "dl", "dt", "dd":
+					return false;
+				default: return true;
+			}
+		case "dt", "dd":
+			switch(childTagName) {
+				case "dd", "dt":
+					return false;
+				default: return true;
+			}
+		default:
+			return true;
+	}
 }
 
 interface DomParent {
@@ -4147,6 +4166,7 @@ class Element : DomParent {
 	}
 
 }
+
 // computedStyle could argubaly be removed to bring size down
 //pragma(msg, __traits(classInstanceSize, Element));
 //pragma(msg, Element.tupleof);
