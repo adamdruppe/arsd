@@ -497,7 +497,7 @@ class EmailMessage {
 		if(to.length)
 			headers ~= "To: " ~ to.toProtocolString(this.linesep);
 		if(cc.length)
-			headers ~= "Cc: " ~ to.toProtocolString(this.linesep);
+			headers ~= "Cc: " ~ cc.toProtocolString(this.linesep);
 
 		if(from.length)
 			headers ~= "From: " ~ from.toProtocolString(this.linesep);
