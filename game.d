@@ -575,12 +575,12 @@ import arsd.simpledisplay : Timer;
 public import arsd.joystick;
 
 /++
-	Creates a simple 2d opengl simpledisplay window. It sets the matrix for pixel coordinates and enables alpha blending and textures.
+	Creates a simple 2d (old-style) opengl simpledisplay window. It sets the matrix for pixel coordinates and enables alpha blending and textures.
 +/
 SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 	auto window = new SimpleWindow(width, height, title, OpenGlOptions.yes);
 
-	window.visibleForTheFirstTime = () {
+	//window.visibleForTheFirstTime = () {
 		window.setAsCurrentOpenGlContext();
 
 		glEnable(GL_BLEND);
@@ -596,7 +596,7 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 		glLoadIdentity();
 		glDisable(GL_DEPTH_TEST);
 		glEnable(GL_TEXTURE_2D);
-	};
+	//};
 
 	window.windowResized = (newWidth, newHeight) {
 		int x, y, w, h;
@@ -648,6 +648,7 @@ abstract class GameHelperBase {
 		currentScreen.drawFrame(interpolateToNextFrame);
 	}
 
+	// in frames
 	ushort snesRepeatRate() { return ushort.max; }
 	ushort snesRepeatDelay() { return snesRepeatRate(); }
 
@@ -1553,17 +1554,19 @@ interface BasicDrawing {
 
 /++
 	NOT fully compatible with simpledisplay's screenpainter, but emulates some of its api.
+
+	I want it to be runtime swappable between the fancy opengl and a backup one for my remote X purposes.
 +/
-class ScreenPainter : BasicDrawing {
+class ScreenPainterImpl : BasicDrawing {
 	Color outlineColor;
 	Color fillColor;
 
 	import arsd.ttf;
 
 	SimpleWindow window;
-	OpenGlLimitedFont!() font;
+	OpenGlLimitedFontBase!() font;
 
-	this(SimpleWindow window, OpenGlLimitedFont!() font) {
+	this(SimpleWindow window, OpenGlLimitedFontBase!() font) {
 		this.window = window;
 		this.font = font;
 	}
@@ -1616,4 +1619,32 @@ class ScreenPainter : BasicDrawing {
 	void drawText(Rectangle boundingBox, scope const char[] text, Color color) {
 		font.drawString(boundingBox.upperLeft.tupleof, text, color);
 	}
+
+	protected int refcount;
+
+	void flush() {
+
+	}
+}
+
+struct ScreenPainter {
+	ScreenPainterImpl impl;
+
+	this(ScreenPainterImpl impl) {
+		this.impl = impl;
+		impl.refcount++;
+	}
+
+	this(this) {
+		if(impl)
+			impl.refcount++;
+	}
+
+	~this() {
+		if(impl)
+			if(--impl.refcount == 0)
+				impl.flush();
+	}
+
+	alias impl this;
 }
