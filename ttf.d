@@ -138,9 +138,10 @@ struct TtfFont {
 	// ~this() {}
 }
 
-/// Version of OpenGL you want it to use. Currently only one option.
+/// Version of OpenGL you want it to use. Currently only two options.
 enum OpenGlFontGLVersion {
-	old /// old style glBegin/glEnd stuff
+	old, /// old style glBegin/glEnd stuff
+	shader, /// newer style shader stuff
 }
 
 /+
@@ -160,20 +161,17 @@ struct DrawingTextContext {
 	const int bottom; /// ditto
 }
 
-/++
-	Note that the constructor calls OpenGL functions and thus this must be called AFTER
-	the context creation, e.g. on simpledisplay's window first visible delegate.
+abstract class OpenGlLimitedFontBase() {
+	void createShaders() {}
+	abstract uint glFormat();
+	abstract void startDrawing(Color color);
+	abstract void addQuad(
+		float s0, float t0, float x0, float y0,
+		float s1, float t1, float x1, float y1
+	);
+	abstract void finishDrawing();
 
-	Any text with characters outside the range you bake in the constructor are simply
-	ignored - that's why it is called "limited" font. The [TtfFont] struct can generate
-	any string on-demand which is more flexible, and even faster for strings repeated
-	frequently, but slower for frequently-changing or one-off strings. That's what this
-	class is made for.
 
-	History:
-		Added April 24, 2020
-+/
-class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
 // FIXME: does this kern?
 // FIXME: it would be cool if it did per-letter transforms too like word art. make it tangent to some baseline
 
@@ -225,9 +223,7 @@ class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
 		bool actuallyDraw = color != Color.transparent;
 
 		if(actuallyDraw) {
-			glBindTexture(GL_TEXTURE_2D, _tex);
-
-			glColor4f(cast(float)color.r/255.0, cast(float)color.g/255.0, cast(float)color.b/255.0, cast(float)color.a / 255.0);
+			startDrawing(color);
 		}
 
 		bool newWord = true;
@@ -330,19 +326,14 @@ class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
 			auto t1 = b.y1 * iph;
 
 			if(actuallyDraw) {
-				glBegin(GL_QUADS); 
-					glTexCoord2f(s0, t0); 		glVertex2i(x0, y0);
-					glTexCoord2f(s1, t0); 		glVertex2i(x1, y0); 
-					glTexCoord2f(s1, t1); 		glVertex2i(x1, y1); 
-					glTexCoord2f(s0, t1); 		glVertex2i(x0, y1); 
-				glEnd();
+				addQuad(s0, t0, x0, y0, s1, t1, x1, y1);
 			}
 
 			context.x += b.xadvance;
 		}
 
 		if(actuallyDraw)
-		glBindTexture(GL_TEXTURE_2D, 0); // unbind the texture
+			finishDrawing();
 	}
 
 	private {
@@ -414,27 +405,180 @@ class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) {
 		this.descent = descent;
 		this.line_gap = line_gap;
 
+		assert(openGLCurrentContext() !is null);
+
 		glGenTextures(1, &_tex);
 		glBindTexture(GL_TEXTURE_2D, _tex);
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		
+
 		glTexImage2D(
 			GL_TEXTURE_2D,
 			0,
-			GL_ALPHA,
+			glFormat,
 			width,
 			height,
 			0,
-			GL_ALPHA,
+			glFormat,
 			GL_UNSIGNED_BYTE,
 			buffer.ptr);
 
-		assert(!glGetError());
+		checkGlError();
 
 		glBindTexture(GL_TEXTURE_2D, 0);
+
+		createShaders();
 	}
+
+
+}
+
+/++
+	Note that the constructor calls OpenGL functions and thus this must be called AFTER
+	the context creation, e.g. on simpledisplay's window first visible delegate.
+
+	Any text with characters outside the range you bake in the constructor are simply
+	ignored - that's why it is called "limited" font. The [TtfFont] struct can generate
+	any string on-demand which is more flexible, and even faster for strings repeated
+	frequently, but slower for frequently-changing or one-off strings. That's what this
+	class is made for.
+
+	History:
+		Added April 24, 2020
++/
+final class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) : OpenGlLimitedFontBase!() {
+	import arsd.color;
+	import arsd.simpledisplay;
+
+	public this(const ubyte[] ttfData, float fontPixelHeight, dchar firstChar = 32, dchar lastChar = 127) {
+		super(ttfData, fontPixelHeight, firstChar, lastChar);
+	}
+
+
+	override uint glFormat() {
+		// on new-style opengl this is the required value
+		static if(ver == OpenGlFontGLVersion.shader)
+			return GL_RED;
+		else
+			return GL_ALPHA;
+
+	}
+
+	static if(ver == OpenGlFontGLVersion.shader) {
+		private OpenGlShader shader;
+		private static struct Vertex {
+			this(float a, float b, float c, float d, float e = 0.0) {
+				t[0] = a;
+				t[1] = b;
+				xyz[0] = c;
+				xyz[1] = d;
+				xyz[2] = e;
+			}
+			float[2] t;
+			float[3] xyz;
+		}
+		private GlObject!Vertex glo;
+		// GL_DYNAMIC_DRAW FIXME
+		private Vertex[] vertixes;
+		private uint[] indexes;
+
+		public BasicMatrix!(4, 4) mymatrix;
+		public BasicMatrix!(4, 4) projection;
+
+		override void createShaders() {
+			mymatrix.loadIdentity();
+			projection.loadIdentity();
+
+			shader = new OpenGlShader(
+				OpenGlShader.Source(GL_VERTEX_SHADER, `
+					#version 330 core
+
+					`~glo.generateShaderDefinitions()~`
+
+					out vec2 texCoord;
+
+					uniform mat4 mymatrix;
+					uniform mat4 projection;
+
+					void main() {
+						gl_Position = projection * mymatrix * vec4(xyz, 1.0);
+						texCoord = t;
+					}
+				`),
+				OpenGlShader.Source(GL_FRAGMENT_SHADER, `
+					#version 330 core
+
+					in vec2 texCoord;
+
+					out vec4 FragColor;
+
+					uniform vec4 color;
+					uniform sampler2D tex;
+
+					void main() {
+						FragColor = color * vec4(1, 1, 1, texture(tex, texCoord).r);
+					}
+				`),
+			);
+		}
+	}
+
+	override void startDrawing(Color color) {
+		glBindTexture(GL_TEXTURE_2D, _tex);
+
+		static if(ver == OpenGlFontGLVersion.shader) {
+			shader.use();
+			shader.uniforms.color() = OGL.vec4f(cast(float)color.r/255.0, cast(float)color.g/255.0, cast(float)color.b/255.0, cast(float)color.a / 255.0);
+
+			shader.uniforms.mymatrix() = OGL.mat4x4f(mymatrix.data);
+			shader.uniforms.projection() = OGL.mat4x4f(projection.data);
+		} else {
+			glColor4f(cast(float)color.r/255.0, cast(float)color.g/255.0, cast(float)color.b/255.0, cast(float)color.a / 255.0);
+		}
+	}
+	override void addQuad(
+		float s0, float t0, float x0, float y0,
+		float s1, float t1, float x1, float y1
+	) {
+		static if(ver == OpenGlFontGLVersion.shader) {
+			auto idx = cast(int) vertixes.length;
+			vertixes ~= [
+				Vertex(s0, t0, x0, y0),
+				Vertex(s1, t0, x1, y0),
+				Vertex(s1, t1, x1, y1),
+				Vertex(s0, t1, x0, y1),
+			];
+
+			indexes ~= [
+				idx + 0,
+				idx + 1,
+				idx + 3,
+				idx + 1,
+				idx + 2,
+				idx + 3,
+			];
+		} else {
+			glBegin(GL_QUADS); 
+				glTexCoord2f(s0, t0); 		glVertex2f(x0, y0);
+				glTexCoord2f(s1, t0); 		glVertex2f(x1, y0); 
+				glTexCoord2f(s1, t1); 		glVertex2f(x1, y1); 
+				glTexCoord2f(s0, t1); 		glVertex2f(x0, y1); 
+			glEnd();
+		}
+	}
+	override void finishDrawing() {
+		static if(ver == OpenGlFontGLVersion.shader) {
+			glo = new typeof(glo)(vertixes, indexes);
+			glo.draw();
+			vertixes = vertixes[0..0];
+			vertixes.assumeSafeAppend();
+			indexes = indexes[0..0];
+			indexes.assumeSafeAppend();
+		}
+		glBindTexture(GL_TEXTURE_2D, 0); // unbind the texture
+	}
+
 }
 
 
