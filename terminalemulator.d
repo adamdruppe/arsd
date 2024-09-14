@@ -1,8 +1,25 @@
-/**
+/++
+	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
+
+	You'll have to subclass TerminalEmulator and implement the abstract functions as well as write a drawing function for it.
+
+	See minigui_addons/terminal_emulator_widget in arsd repo or nestedterminalemulator.d or main.d in my terminal-emulator repo for how I did it.
+
+	History:
+		Written September/October 2013ish. Moved to arsd 2020-03-26.
++/
+module arsd.terminalemulator;
+
+/+
+	FIXME
+	terminal optimization:
+        first invalidated + last invalidated to slice the array
+        when looking for things that need redrawing.
+
 	FIXME: writing a line in color then a line in ordinary does something
 	wrong.
 
-	 # huh if i do underline then change color it undoes the underline
+	 huh if i do underline then change color it undoes the underline
 
 	FIXME: make shift+enter send something special to the application
 		and shift+space, etc.
@@ -19,19 +36,7 @@
 
 	FIXME: the save stack stuff should do cursor style too
 
-	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
 
-	You'll have to subclass TerminalEmulator and implement the abstract functions as well as write a drawing function for it.
-
-	See nestedterminalemulator.d or main.d for how I did it.
-*/
-module arsd.terminalemulator;
-
-/+
-	FIXME
-	terminal optimization:
-        first invalidated + last invalidated to slice the array
-        when looking for things that need redrawing.
 +/
 
 import arsd.color;
