@@ -22,6 +22,8 @@
 +/
 module arsd.discord;
 
+// FIXME: Secure Connect Failed sometimes on trying to reconnect, should prolly just try again after a short period, or ditch the whole thing if reconnectAndResume and try fresh
+
 // FIXME: User-Agent: DiscordBot ($url, $versionNumber)
 
 import arsd.http2;
@@ -665,8 +667,13 @@ class DiscordGatewayConnection {
 		if(heartbeatTimer)
 			heartbeatTimer.cancel();
 
-		if(closeEvent.code == 1006 || closeEvent.code == 1001)
+		if(closeEvent.code == 1006 || closeEvent.code == 1001) {
 			reconnectAndResume();
+		} else {
+			// otherwise, unless we were asked by the api user to close, let's try reconnecting
+			// since discord just does discord things.
+			connect();
+		}
 	}
 
 	/++
@@ -741,6 +748,9 @@ class DiscordGatewayConnection {
 		websocket.onmessage = &handleWebsocketMessage;
 		websocket.onclose = &handleWebsocketClose;
 
+		// FIXME: if the connect fails we should set a timer and try
+		// again, but if it fails then, quit. at least if it is not a websocket reply
+		// cuz it could be discord went down or something.
 		this.websocket_.connect();
 
 		var resumeData = var.emptyObject;
@@ -916,7 +926,6 @@ class DiscordGatewayConnection {
 
 		websocket.onmessage = &handleWebsocketMessage;
 		websocket.onclose = &handleWebsocketClose;
-
 
 		websocket.connect();
 
