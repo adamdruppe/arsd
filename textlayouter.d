@@ -1212,6 +1212,8 @@ class TextLayouter {
 		Starts from the given selection and moves in the direction to find next.
 
 		Returns true if found.
+
+		NOT IMPLEMENTED use a selection instead
 	+/
 	FindResult find(int selectionId, in const(char)[] text, bool direction, bool wraparound) {
 		return FindResult.NotFound;
@@ -1754,6 +1756,25 @@ class TextLayouter {
 			return true;
 		}, Rectangle(p, Size(0, 0)));
 		return idx;
+	}
+
+	/++
+
+		History:
+			Added September 13, 2024
+	+/
+	const(TextStyle) styleAtPoint(Point p) {
+		TextStyle s;
+		getInternalSegments(delegate bool(size_t segmentIndex, scope ref Segment segment) {
+			if(segment.boundingBox.contains(p)) {
+				s = stylePalette[segment.styleInformationIndex];
+				return false;
+			}
+
+			return true;
+		}, Rectangle(p, Size(1, 1)));
+
+		return s;
 	}
 
 	private StyleHandle getInsertionStyleAt(int offset) {

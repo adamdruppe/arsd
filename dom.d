@@ -3078,7 +3078,7 @@ class Element : DomParent {
 		/* done */
 
 
-			_computedStyle = new CssStyle(null, style); // gives at least something to work with
+			_computedStyle = computedStyleFactory(this);
 		}
 		return _computedStyle;
 	}
@@ -7640,6 +7640,24 @@ Element[] removeDuplicates(Element[] input) {
 
 // done with CSS selector handling
 
+/++
+	This delegate is called if you call [Element.computedStyle] to attach an object to the element
+	that holds stylesheet information. You can rebind it to something else to return a subclass
+	if you want to hold more per-element extension data than the normal computed style object holds
+	(e.g. layout info as well).
+
+	The default is `return new CssStyle(null, element.style);`
+
+	History:
+		Added September 13, 2024 (dub v11.6)
++/
+CssStyle function(Element e) computedStyleFactory = &defaultComputedStyleFactory;
+
+/// ditto
+CssStyle defaultComputedStyleFactory(Element e) {
+	return new CssStyle(null, e.style); // gives at least something to work with
+}
+
 
 // FIXME: use the better parser from html.d
 /// This is probably not useful to you unless you're writing a browser or something like that.
@@ -7726,7 +7744,7 @@ class CssStyle {
 		if(value is null)
 			return getValue(name);
 		else
-			return setValue(name, value, 0x02000000 /* inline specificity */);
+			return setValue(name, value, Specificity(0x02000000) /* inline specificity */);
 	}
 
 	/// takes dash style name
@@ -8709,11 +8727,13 @@ void fillForm(T)(Form form, T obj, string name) {
 
 	History:
 		Added March 25, 2022 (dub v10.8)
+
+		The `stripLeadingAndTrailing` argument was added September 13, 2024 (dub v11.6).
 +/
-string normalizeWhitespace(string text) {
+string normalizeWhitespace(string text, bool stripLeadingAndTrailing = true) {
 	string ret;
 	ret.reserve(text.length);
-	bool lastWasWhite = true;
+	bool lastWasWhite = stripLeadingAndTrailing;
 	foreach(char ch; text) {
 		if(ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
 			if(lastWasWhite)
@@ -8727,12 +8747,23 @@ string normalizeWhitespace(string text) {
 		ret ~= ch;
 	}
 
-	return ret.stripRight;
+	if(stripLeadingAndTrailing)
+		return ret.stripRight;
+	else {
+		/+
+		if(lastWasWhite && (ret.length == 0 || ret[$-1] != ' '))
+			ret ~= ' ';
+		+/
+		return ret;
+	}
 }
 
 unittest {
 	assert(normalizeWhitespace("    foo   ") == "foo");
 	assert(normalizeWhitespace("    f\n \t oo   ") == "f oo");
+	assert(normalizeWhitespace("    foo   ", false) == " foo ");
+	assert(normalizeWhitespace(" foo ", false) == " foo ");
+	assert(normalizeWhitespace("\nfoo", false) == " foo");
 }
 
 unittest {

@@ -1560,10 +1560,22 @@ class Widget : ReflectableProperties {
 	+/
 	final @property inout(Window) parentWindow() inout @nogc nothrow pure { return _parentWindow; }
 	private @property void parentWindow(Window parent) {
+		auto old = _parentWindow;
 		_parentWindow = parent;
+		newParentWindow(old, _parentWindow);
 		foreach(child; children)
 			child.parentWindow = parent; // please note that this is recursive
 	}
+
+	/++
+		Called when the widget has been added to or remove from a parent window.
+
+		Note that either oldParent and/or newParent may be null any time this is called.
+
+		History:
+			Added September 13, 2024
+	+/
+	protected void newParentWindow(Window oldParent, Window newParent) {}
 
 	/++
 		Returns the list of the widget's children.
@@ -12093,6 +12105,7 @@ class TextDisplayHelper : Widget {
 		with(l.selection()) {
 			if(!isEmpty()) {
 				getPrimarySelection(parentWindow.win, (in char[] txt) {
+					// import std.stdio; writeln("txt: ", txt, " sel: ", getContentString);
 					if(txt.length) {
 						preservedPrimaryText = txt.idup;
 						// writeln(preservedPrimaryText);
@@ -12424,6 +12437,8 @@ class TextDisplayHelper : Widget {
 			if(ce.button == MouseButton.middle) {
 				parentWindow.win.getPrimarySelection((txt) {
 					doStateCheckpoint();
+
+					// import arsd.core; writeln(txt);writeln(l.selection.getContentString);writeln(preservedPrimaryText);
 
 					if(txt == l.selection.getContentString && preservedPrimaryText.length)
 						l.selection.replaceContent(preservedPrimaryText);
@@ -12910,7 +12925,10 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			this.tabStop = false;
 			smw.tabStop = false;
 			tdh = textDisplayHelperFactory(textLayout, smw);
+		}
 
+		override void newParentWindow(Window old, Window n) {
+			if(n is null) return;
 			this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
 				if(textLayout) {
 					if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
@@ -13453,6 +13471,9 @@ abstract class GenericListViewWidget : Widget {
 	private ScrollMessageWidget smw;
 	private GenericListViewWidgetInner inner;
 
+	/++
+
+	+/
 	abstract GenericListViewItem itemFactory(Widget parent);
 	// in device-dependent pixels
 	/++
@@ -13508,9 +13529,7 @@ abstract class GenericListViewWidget : Widget {
 	private GenericListViewItem[] items;
 }
 
-/++
-
-+/
+/// ditto
 abstract class GenericListViewItem : Widget {
 	/++
 	+/
@@ -13541,6 +13560,52 @@ abstract class GenericListViewItem : Widget {
 	+/
 	final int currentIndexLoaded() {
 		return _currentIndex;
+	}
+}
+
+///
+unittest {
+	import arsd.minigui;
+
+	import std.conv;
+
+	void main() {
+		auto mw = new MainWindow();
+
+		static class MyListViewItem : GenericListViewItem {
+			this(Widget parent) {
+				super(parent);
+
+				label = new TextLabel("unloaded", TextAlignment.Left, this);
+				button = new Button("Click", this);
+
+				button.addEventListener("triggered", (){
+					messageBox(text("clicked ", currentIndexLoaded()));
+				});
+			}
+			override void showItem(int idx) {
+				label.label = "Item " ~ to!string(idx);
+			}
+
+			TextLabel label;
+			Button button;
+		}
+
+		auto widget = new class GenericListViewWidget {
+			this() {
+				super(mw);
+			}
+			override GenericListViewItem itemFactory(Widget parent) {
+				return new MyListViewItem(parent);
+			}
+			override Size itemSize() {
+				return Size(0, scaleWithDpi(80));
+			}
+		};
+
+		widget.setItemCount(5000);
+
+		mw.loop();
 	}
 }
 
