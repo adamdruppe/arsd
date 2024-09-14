@@ -4573,7 +4573,7 @@ struct EventLoopImpl {
 					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 0);
 
 					if(customSignalFD != -1)
-					el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
+					cast(void) el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
 						version(linux) {
 							import core.sys.linux.sys.signalfd;
 							import core.sys.posix.unistd : read;
@@ -4591,7 +4591,7 @@ struct EventLoopImpl {
 					}));
 
 					if(display.fd != -1)
-					el.addCallbackOnFdReadable(display.fd, new CallbackHelper(() {
+					cast(void) el.addCallbackOnFdReadable(display.fd, new CallbackHelper(() {
 						this.mtLock();
 						scope(exit) this.mtUnlock();
 						while(!done && XPending(display)) {
@@ -4600,7 +4600,7 @@ struct EventLoopImpl {
 					}));
 
 					if(pulseFd != -1)
-					el.addCallbackOnFdReadable(pulseFd, new CallbackHelper(() {
+					cast(void) el.addCallbackOnFdReadable(pulseFd, new CallbackHelper(() {
 						long expirationCount;
 						// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
 
@@ -4616,7 +4616,7 @@ struct EventLoopImpl {
 					}));
 
 					if(customEventFDRead != -1)
-					el.addCallbackOnFdReadable(customEventFDRead, new CallbackHelper(() {
+					cast(void) el.addCallbackOnFdReadable(customEventFDRead, new CallbackHelper(() {
 						// we have some custom events; process 'em
 						import core.sys.posix.unistd : read;
 						ulong n;
@@ -6752,6 +6752,7 @@ version(X11) {
 			void delegate(in char[]) handler;
 
 			void handleData(Atom target, in ubyte[] data) {
+				// import std.stdio; writeln(target, " ", data);
 				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
 					handler(cast(const char[]) data);
 				else if(target == None && data is null)
@@ -15832,6 +15833,9 @@ version(X11) {
 					auto id = (cast(ubyte*) value)[0 .. length];
 
 					handler.handleIncrData(targetToKeep, id);
+					if(length == 0) {
+						win.getSelectionHandlers.remove(e.xproperty.atom);
+					}
 
 					XFree(value);
 				}
@@ -15844,6 +15848,7 @@ version(X11) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
 					handler.handleData(None, null);
+					win.getSelectionHandlers.remove(e.xproperty.atom);
 				} else {
 					Atom target;
 					int format;
@@ -15876,7 +15881,7 @@ version(X11) {
 							/+
 							writeln("got ", answer);
 							foreach(a; answer)
-								printf("%s\n", XGetAtomName(display, a));
+								writeln(XGetAtomName(display, a).stringz);
 							writeln("best ", best);
 							+/
 
@@ -15896,8 +15901,11 @@ version(X11) {
 								e.xselection.requestor,
 								e.xselection.property);
 						} else {
-							// unsupported type... maybe, forward
-							handler.handleData(target, cast(ubyte[]) value[0 .. length]);
+							// unsupported type... maybe, forward, then we done with it
+							if(target != None) {
+								handler.handleData(target, cast(ubyte[]) value[0 .. length]);
+								win.getSelectionHandlers.remove(e.xproperty.atom);
+							}
 						}
 					}
 					XFree(value);
@@ -19551,54 +19559,14 @@ void glBufferDataSlice(GLenum target, const(void[]) data, GLenum usage) {
 	glBufferData(target, data.length, data.ptr, usage);
 }
 
-/+
 /++
-	A matrix for simple uses that easily integrates with [OpenGlShader].
-
-	Might not be useful to you since it only as some simple functions and
-	probably isn't that fast.
-
-	Note it uses an inline static array for its storage, so copying it
-	may be expensive.
+	History:
+		Added September 1, 2024
 +/
-struct BasicMatrix(int columns, int rows, T = float) {
-	import core.stdc.math;
-
-	T[columns * rows] data = 0.0;
-
-	/++
-		Basic operations that operate *in place*.
-	+/
-	void translate() {
-
-	}
-
-	/// ditto
-	void scale() {
-
-	}
-
-	/// ditto
-	void rotate() {
-
-	}
-
-	/++
-
-	+/
-	static if(columns == rows)
-	static BasicMatrix identity() {
-		BasicMatrix m;
-		foreach(i; 0 .. columns)
-			data[0 + i + i * columns] = 1.0;
-		return m;
-	}
-
-	static BasicMatrix ortho() {
-		return BasicMatrix.init;
-	}
+version(without_opengl) {} else
+void glBufferSubDataSlice(GLenum target, size_t offset, const(void[]) data, GLenum usage) {
+	glBufferSubData(target, offset, data.length, data.ptr);
 }
-+/
 
 /++
 	Convenience class for using opengl shaders.
@@ -19825,13 +19793,21 @@ final class OGL {
 		string helper() {
 			string s;
 			if(dim2) {
-				s ~= "type["~(dim + '0')~"]["~(dim2 + '0')~"] matrix;";
+				static if(__VERSION__ < 2102)
+					s ~= "type["~(dim + '0')~"]["~(dim2 + '0')~"] matrix = void;"; // stupid compiler bug
+				else
+					s ~= "type["~(dim + '0')~"]["~(dim2 + '0')~"] matrix = 0;";
 			} else {
 				if(dim > 0) s ~= "type x = 0;";
 				if(dim > 1) s ~= "type y = 0;";
 				if(dim > 2) s ~= "type z = 0;";
 				if(dim > 3) s ~= "type w = 0;";
 			}
+
+			s ~= "this(typeof(this.tupleof) args) { this.tupleof = args; }";
+			if(dim2)
+				s ~= "this(type["~(dim*dim2).stringof~"] t) { (cast(typeof(t)) this.matrix)[] = t[]; }";
+
 			return s;
 		}
 
@@ -19873,9 +19849,12 @@ final class OGL {
 			}
 			private void glUniform(int assignTo) {
 				static if(name[4] == 'x') {
-					// FIXME
-					pragma(msg, "This matrix uniform helper has never been tested!!!!");
-					mixin("glUniformMatrix" ~ name[3 .. $] ~ "v")(assignTo, dimX * dimY, false, this.matrix.ptr);
+					static if(name[3] == name[5]) {
+						// import std.stdio; writeln(name, " ", this.matrix, dimX, " ", dimY);
+						mixin("glUniformMatrix" ~ name[5 .. $] ~ "v")(assignTo, 1, true, &this.matrix[0][0]);
+					} else {
+						mixin("glUniformMatrix" ~ name[3 .. $] ~ "v")(assignTo, 1, false, this.matrix.ptr);
+					}
 				} else
 					mixin("glUniform" ~ name[3 .. $])(assignTo, this.tupleof);
 			}
@@ -19886,6 +19865,286 @@ final class OGL {
 		return typeof(this).opDispatch!("vec" ~ toInternal!string(cast(int) T.length)~ typesToSpecifier!T)(members);
 	}
 }
+
+void checkGlError() {
+	auto error = glGetError();
+	int[] errors;
+	string[] errorStrings;
+	while(error != GL_NO_ERROR) {
+		errors ~= error;
+		switch(error) {
+			case 0x0500: errorStrings ~= "GL_INVALID_ENUM"; break;
+			case 0x0501: errorStrings ~= "GL_INVALID_VALUE"; break;
+			case 0x0502: errorStrings ~= "GL_INVALID_OPERATION"; break;
+			case 0x0503: errorStrings ~= "GL_STACK_OVERFLOW"; break;
+			case 0x0504: errorStrings ~= "GL_STACK_UNDERFLOW"; break;
+			case 0x0505: errorStrings ~= "GL_OUT_OF_MEMORY"; break;
+			default: errorStrings ~= "idk";
+		}
+		error = glGetError();
+	}
+	if(errors.length)
+		throw ArsdException!"glGetError"(errors, errorStrings);
+}
+
+/++
+	A matrix for simple uses that easily integrates with [OpenGlShader].
+
+	Might not be useful to you since it only as some simple functions and
+	probably isn't that fast.
+
+	Note it uses an inline static array for its storage, so copying it
+	may be expensive.
++/
+struct BasicMatrix(int columns, int rows, T = float) {
+	static import core.stdc.math;
+	static if(is(T == float)) {
+		alias cos = core.stdc.math.cosf;
+		alias sin = core.stdc.math.sinf;
+	} else {
+		alias cos = core.stdc.math.cos;
+		alias sin = core.stdc.math.sin;
+	}
+
+	T[columns * rows] data = 0.0;
+
+	/++
+
+	+/
+	this(T[columns * rows] data) {
+		this.data = data;
+	}
+
+	/++
+		Basic operations that operate *in place*.
+	+/
+	static if(columns == 4 && rows == 4)
+	void translate(T x, T y, T z) {
+		BasicMatrix m = [
+			1, 0, 0, x,
+			0, 1, 0, y,
+			0, 0, 1, z,
+			0, 0, 0, 1
+		];
+
+		this *= m;
+	}
+
+	/// ditto
+	static if(columns == 4 && rows == 4)
+	void scale(T x, T y, T z) {
+		BasicMatrix m = [
+			x, 0, 0, 0,
+			0, y, 0, 0,
+			0, 0, z, 0,
+			0, 0, 0, 1
+		];
+
+		this *= m;
+	}
+
+	/// ditto
+	static if(columns == 4 && rows == 4)
+	void rotateX(T theta) {
+		BasicMatrix m = [
+			1,          0,           0, 0,
+			0, cos(theta), -sin(theta), 0,
+			0, sin(theta),  cos(theta), 0,
+			0,          0,           0, 1
+		];
+
+		this *= m;
+	}
+
+	/// ditto
+	static if(columns == 4 && rows == 4)
+	void rotateY(T theta) {
+		BasicMatrix m = [
+			 cos(theta), 0,  sin(theta), 0,
+			          0, 1,           0, 0,
+			-sin(theta), 0,  cos(theta), 0,
+			          0, 0,           0, 1
+		];
+
+		this *= m;
+	}
+
+	/// ditto
+	static if(columns == 4 && rows == 4)
+	void rotateZ(T theta) {
+		BasicMatrix m = [
+			cos(theta), -sin(theta), 0, 0,
+			sin(theta),  cos(theta), 0, 0,
+			         0,           0, 1, 0,
+				 0,           0, 0, 1
+		];
+
+		this *= m;
+	}
+
+	/++
+
+	+/
+	static if(columns == rows)
+	static BasicMatrix identity() {
+		BasicMatrix m;
+		foreach(i; 0 .. columns)
+			m.data[0 + i + i * columns] = 1.0;
+		return m;
+	}
+
+	static if(columns == rows)
+	void loadIdentity() {
+		this = identity();
+	}
+
+	static if(columns == 4 && rows == 4)
+	static BasicMatrix ortho(T l, T r, T b, T t, T n, T f) {
+		return BasicMatrix([
+			2/(r-l),       0,        0, -(r+l)/(r-l),
+			      0, 2/(t-b),        0, -(t+b)/(t-b),
+			      0,       0, -2/(f-n), -(f+n)/(f-n),
+			      0,       0,        0,            1
+		]);
+	}
+
+	static if(columns == 4 && rows == 4)
+	void loadOrtho(T l, T r, T b, T t, T n, T f) {
+		this = ortho(l, r, b, t, n, f);
+	}
+
+	void opOpAssign(string op : "+")(const BasicMatrix rhs) {
+		this.data[] += rhs.data;
+	}
+	void opOpAssign(string op : "-")(const BasicMatrix rhs) {
+		this.data[] -= rhs.data;
+	}
+	void opOpAssign(string op : "*")(const T rhs) {
+		this.data[] *= rhs;
+	}
+	void opOpAssign(string op : "/")(const T rhs) {
+		this.data[] /= rhs;
+	}
+	void opOpAssign(string op : "*", BM : BasicMatrix!(rhsColumns, rhsRows, rhsT), int rhsColumns, int rhsRows, rhsT)(const BM rhs) {
+		static assert(columns == rhsRows);
+		auto multiplySize = columns;
+
+		auto tmp = this.data; // copy cuz it is a value type
+
+		int idx = 0;
+		foreach(r; 0 .. rows)
+		foreach(c; 0 .. columns) {
+			T sum = 0.0;
+
+			foreach(i; 0 .. multiplySize)
+				sum += this.data[r * columns + i] * rhs.data[i * rhsColumns + c];
+
+			tmp[idx++] = sum;
+		}
+
+		this.data = tmp;
+	}
+}
+
+unittest {
+	auto m = BasicMatrix!(2, 2)([
+		1, 2,
+		3, 4
+	]);
+
+	auto m2 = BasicMatrix!(2, 2)([
+		5, 6,
+		7, 8
+	]);
+
+	import std.conv;
+	m *= m2;
+	assert(m.data == [
+		19, 22,
+		43, 50
+	], to!string(m.data));
+}
+
+
+
+class GlObjectBase {
+	protected uint _vao;
+	protected uint _elementsCount;
+
+	protected uint element_buffer;
+
+	void gen() {
+		glGenVertexArrays(1, &_vao);
+	}
+
+	void bind() {
+		glBindVertexArray(_vao);
+	}
+
+	void dispose() {
+		glDeleteVertexArrays(1, &_vao);
+	}
+
+	void draw() {
+		bind();
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
+		glDrawElements(GL_TRIANGLES, _elementsCount, GL_UNSIGNED_INT, null);
+	}
+}
+
+/++
+
++/
+class GlObject(T) : GlObjectBase {
+	protected uint VBO;
+
+	this(T[] arr, uint[] indices) {
+		gen();
+		bind();
+
+		glGenBuffers(1, &VBO);
+		glGenBuffers(1, &element_buffer);
+
+		glBindBuffer(GL_ARRAY_BUFFER, VBO);
+		glBufferDataSlice(GL_ARRAY_BUFFER, arr, GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
+		glBufferDataSlice(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
+		_elementsCount = cast(int) indices.length;
+
+		foreach(int idx, memberName; __traits(allMembers, T)) {
+			static if(memberName != "__ctor") {
+			static if(is(typeof(__traits(getMember, T, memberName)) == float[N], size_t N)) {
+				glVertexAttribPointer(idx, N, GL_FLOAT, GL_FALSE, T.sizeof, cast(void*) __traits(getMember, T, memberName).offsetof);
+				glEnableVertexAttribArray(idx);
+			} else static assert(0); }
+		}
+	}
+
+	static string generateShaderDefinitions() {
+		string code;
+
+		foreach(idx, memberName; __traits(allMembers, T)) {
+			// never use stringof ladies and gents it has a LU thing at the end of it
+			static if(memberName != "__ctor")
+			code ~= "layout (location = " ~ idx.stringof[0..$-2] ~ ") in " ~ typeToGl!(typeof(__traits(getMember, T, memberName))) ~ " " ~ memberName ~ ";\n";
+		}
+
+		return code;
+	}
+}
+
+private string typeToGl(T)() {
+	static if(is(T == float[4]))
+		return "vec4";
+	else static if(is(T == float[3]))
+		return "vec3";
+	else static if(is(T == float[2]))
+		return "vec2";
+	else static assert(0, T.stringof);
+}
+
+
 }
 
 version(linux) {
