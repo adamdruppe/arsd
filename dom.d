@@ -1095,6 +1095,17 @@ class Document : FileResource, DomParent {
 												return n;
 											}
 
+										/+
+											// COMMENTED OUT BLOCK
+											// dom.d used to replace improper close tags with their
+											// text so they'd be visible in the output. the html
+											// spec says to just ignore them, and browsers do indeed
+											// seem to jsut ignore them, even checking back on IE6.
+											// so i guess i was wrong to do this (tho tbh i find it kinda
+											// useful to call out an obvious mistake in the source...
+											// but for calling out obvious mistakes, just use strict
+											// mode.)
+
 										// if not, this is a text node; we can't fix it up...
 
 										// If it's already in the tree somewhere, assume it is closed by algorithm
@@ -1115,6 +1126,8 @@ class Document : FileResource, DomParent {
 
 										if(!found) // if not found in the tree though, it's probably just text
 										processNodeWhileParsing(e, TextNode.fromUndecodedString(this, "</"~n.payload~">"));
+
+										+/
 									}
 								} else {
 									if(n.element) {
@@ -1778,9 +1791,10 @@ unittest {
 
 bool canNestElementsInHtml(string parentTagName, string childTagName) {
 	switch(parentTagName) {
-		case "p":
+		case "p", "h1", "h2", "h3", "h4", "h5", "h6":
+			// only should include "phrasing content"
 			switch(childTagName) {
-				case "p", "dl", "dt", "dd":
+				case "p", "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6":
 					return false;
 				default: return true;
 			}
@@ -7819,7 +7833,7 @@ class CssStyle {
 				setValue(name ~"-left", parts[3], specificity, false);
 			break;
 			default:
-				assert(0, value);
+				// assert(0, value);
 		}
 	}
 
