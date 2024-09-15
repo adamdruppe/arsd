@@ -6288,7 +6288,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms649016%28v=vs.85%29.as
 	the receiver may never be called if the clipboard is empty or unavailable
 	gets plain text from the clipboard.
 +/
-void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) {
+void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) receiver) @system {
 	version(Windows) {
 		HWND hwndOwner = clipboardOwner ? clipboardOwner.impl.hwnd : null;
 		if(OpenClipboard(hwndOwner) == 0)
@@ -7109,7 +7109,7 @@ version(Windows) {
 	// global hotkey helper function
 
 	/// Platform-specific for Windows. Registers a global hotkey. Returns a registration ID. See [GlobalHotkeyManager] for Linux. Maybe some day I will merge these.
-	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) {
+	int registerHotKey(SimpleWindow window, UINT modifiers, UINT vk, void delegate() handler) @system {
 		__gshared int hotkeyId = 0;
 		int id = ++hotkeyId;
 		if(!RegisterHotKey(window.impl.hwnd, id, modifiers, vk))
@@ -10257,7 +10257,7 @@ abstract class Gradient : Sprite {
 	}
 
 	version(Windows)
-	final void forEachPixel(scope Color delegate(int x, int y) dg) {
+	final void forEachPixel(scope Color delegate(int x, int y) dg) @system {
 		auto ptr = rawData;
 		foreach(j; 0 .. _height)
 		foreach(i; 0 .. _width) {
@@ -12904,7 +12904,7 @@ version(Windows) {
 
 	final:
 
-		Color getPixel(int x, int y) {
+		Color getPixel(int x, int y) @system {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
 			// remember, bmps are upside down
 			auto offset = itemsPerLine * (height - y - 1) + x * 3;
@@ -12921,7 +12921,7 @@ version(Windows) {
 			return c;
 		}
 
-		void setPixel(int x, int y, Color c) {
+		void setPixel(int x, int y, Color c) @system {
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
 			// remember, bmps are upside down
 			auto offset = itemsPerLine * (height - y - 1) + x * 3;
@@ -12936,7 +12936,7 @@ version(Windows) {
 				rawData[offset + 3] = c.a;
 		}
 
-		void convertToRgbaBytes(ubyte[] where) {
+		void convertToRgbaBytes(ubyte[] where) @system {
 			assert(where.length == this.width * this.height * 4);
 
 			auto itemsPerLine = ((cast(int) width * 3 + 3) / 4) * 4;
@@ -12963,7 +12963,7 @@ version(Windows) {
 			}
 		}
 
-		void setFromRgbaBytes(in ubyte[] what) {
+		void setFromRgbaBytes(in ubyte[] what) @system {
 			assert(what.length == this.width * this.height * 4);
 
 			auto itemsPerLine = enableAlpha ? (width * 4) : (((cast(int) width * 3 + 3) / 4) * 4);
@@ -21914,7 +21914,7 @@ class FilesDropHandler : GenericDropHandlerBase {
 		else throw new NotYetImplementedException();
 	}
 
-	private void translator(scope ubyte[] data) {
+	private void translator(scope ubyte[] data) @system {
 		version(X11) {
 			char[] listString = cast(char[]) data;
 			char[][16] buffer;
