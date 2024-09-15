@@ -8716,12 +8716,19 @@ class OperatingSystemFont : MeasurableFont {
 			add(":size=");
 			add(toInternal!string(size));
 		}
-		if(weight != FontWeight.dontcare) {
+		if(weight != FontWeight.dontcare && weight != 400) {
+			if(weight < 400)
+				add(":style=Light");
+			else
+				add(":style=Bold");
 			add(":weight=");
 			add(weightToString(weight));
 		}
-		if(italic)
+		if(italic) {
+			if(weight == FontWeight.dontcare)
+				add(":style=Italic");
 			add(":slant=100");
+		}
 
 		nameBuffer[nbp] = 0;
 
