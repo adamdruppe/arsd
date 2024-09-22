@@ -18582,7 +18582,7 @@ version(OSXCocoa) {
 
 		final:
 
-		void convertToRgbaBytes(ubyte[] where) {
+		void convertToRgbaBytes(ubyte[] where) @system {
 			assert(where.length == this.width * this.height * 4);
 
 			// if rawData had a length....
@@ -18604,7 +18604,7 @@ version(OSXCocoa) {
 			}
 		}
 
-		void setFromRgbaBytes(in ubyte[] where) {
+		void setFromRgbaBytes(in ubyte[] where) @system {
 			// FIXME: this is probably wrong
 			assert(where.length == this.width * this.height * 4);
 
@@ -18642,7 +18642,7 @@ version(OSXCocoa) {
 			CGContextRelease(context);
 		}
 
-		void setPixel(int x, int y, Color c) {
+		void setPixel(int x, int y, Color c) @system {
 			auto offset = (y * width + x) * 4;
 			if (c.a == 255) {
 				rawData[offset + 0] = c.r;
