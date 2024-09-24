@@ -19,7 +19,15 @@ module arsd.pixmappaint;
 
 import arsd.color;
 import arsd.core;
-import std.math : round;
+
+private float hackyRound(float f) {
+	import std.math : round;
+	return round(f);
+}
+
+float round(float f) pure @nogc nothrow @trusted {
+	return (cast(float function(float) pure @nogc nothrow) &hackyRound)(f);
+}
 
 /*
 	## TODO:
