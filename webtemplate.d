@@ -128,12 +128,12 @@ public import arsd.jsvar : var;
 +/
 class WebTemplateRenderer {
 	private TemplateLoader loader;
-	private EmbeddedTagResult function(string content, string[string] attributes)[string] embeddedTagTranslators;
+	private EmbeddedTagResult function(string content, AttributesHolder attributes)[string] embeddedTagTranslators;
 
 	/++
 
 	+/
-	this(TemplateLoader loader = null, EmbeddedTagResult function(string content, string[string] attributes)[string] embeddedTagTranslators = null) {
+	this(TemplateLoader loader = null, EmbeddedTagResult function(string content, AttributesHolder attributes)[string] embeddedTagTranslators = null) {
 		if(loader is null)
 			loader = TemplateLoader.forDirectory("templates/");
 		this.loader = loader;
