@@ -24,6 +24,9 @@
 +/
 module arsd.textlayouter;
 
+// FIXME: unicode private use area could be delegated out but it might also be used by something else.
+// just really want an encoding scheme for replaced elements that punt it outside..
+
 import arsd.simpledisplay;
 
 /+
@@ -1175,6 +1178,7 @@ class TextLayouter {
 		int styleInformationIndex;
 	}
 
+	/+
 	void resetSelection(int selectionId) {
 
 	}
@@ -1188,6 +1192,7 @@ class TextLayouter {
 	void duplicateSelection(int receivingSelectionId, int sourceSelectionId) {
 
 	}
+	+/
 
 	private int findContainingSegment(int textOffset) {
 
@@ -1286,6 +1291,8 @@ class TextLayouter {
 		FIXME: have a getTextInSelection
 
 		FIXME: have some kind of index stuff so you can select some text found in here (think regex search)
+
+		This function might be cut in a future version in favor of [getDrawableText]
 	+/
 	void getText(scope void delegate(scope const(char)[] segment, TextStyle style) handler) {
 		handler(text[0 .. $-1], null); // cut off the null terminator
@@ -1301,6 +1308,8 @@ class TextLayouter {
 		});
 		return s;
 	}
+
+	alias getContentString = getTextString;
 
 	public static struct DrawingInformation {
 		Rectangle boundingBox;
@@ -1343,11 +1352,13 @@ class TextLayouter {
 		return bb;
 	}
 
+	/+
 	void getTextAtPosition(Point p) {
 		relayoutIfNecessary();
 		// return the text in that segment, the style info attached, and if that specific point is part of a selection (can be used to tell if it should be a drag operation)
 		// then might want dropTextAt(Point p)
 	}
+	+/
 
 	/++
 		Gets the text that you need to draw, guaranteeing each call to your delegate will:
@@ -1366,7 +1377,7 @@ class TextLayouter {
 
 		The segment may include all forms of whitespace, including newlines, tab characters, etc. Generally, a tab character will be in its own segment and \n will appear at the end of a segment. You will probably want to `stripRight` each segment depending on your drawing functions.
 	+/
-	void getDrawableText(scope bool delegate(scope const(char)[] segment, TextStyle style, DrawingInformation information, CaretInformation[] carets...) dg, Rectangle box = Rectangle.init) {
+	public void getDrawableText(scope bool delegate(scope const(char)[] segment, TextStyle style, DrawingInformation information, CaretInformation[] carets...) dg, Rectangle box = Rectangle.init) {
 		relayoutIfNecessary();
 		getInternalSegments(delegate bool(size_t segmentIndex, scope ref Segment segment) {
 			if(segment.textBeginOffset == -1)
@@ -1487,7 +1498,7 @@ class TextLayouter {
 
 	// returns any segments that may lie inside the bounding box. if the box's size is 0, it is unbounded and goes through all segments
 	// may return more than is necessary; it uses the box as a hint to speed the search, not as the strict bounds it returns.
-	void getInternalSegments(scope bool delegate(size_t idx, scope ref Segment segment) dg, Rectangle box = Rectangle.init) {
+	protected void getInternalSegments(scope bool delegate(size_t idx, scope ref Segment segment) dg, Rectangle box = Rectangle.init) {
 		relayoutIfNecessary();
 
 		if(box.right == box.left)
@@ -1573,6 +1584,7 @@ class TextLayouter {
 		return ts;
 	}
 
+	// most of these are unimplemented...
 	bool editable;
 	int wordWrapLength = 0;
 	int delegate(int x) tabStop = null;
@@ -1657,12 +1669,14 @@ class TextLayouter {
 		user the result of this action.
 	+/
 
-	// FIXME: the public one might be like segmentOfClick so you can get the style info out (which might hold hyperlink data)
-
 	/+
 		Returns the nearest offset in the text for the given point.
 
 		it should return if it was inside the segment bounding box tho
+
+		might make this private
+
+		FIXME: the public one might be like segmentOfClick so you can get the style info out (which might hold hyperlink data)
 	+/
 	int offsetOfClick(Point p) {
 		int idx = cast(int) text.length - 1;
@@ -1803,6 +1817,11 @@ class TextLayouter {
 		assert(0);
 	}
 
+	/++
+		Returns a bitmask of the selections active at any given offset.
+
+		May not be stable.
+	+/
 	ulong selectionsAt(int offset) {
 		ulong result;
 		ulong bit = 1;
@@ -1829,7 +1848,7 @@ class TextLayouter {
 	private int justificationWidth_;
 
 	/++
-
+		Not implemented.
 	+/
 	public void justificationWidth(int width) {
 		if(width != justificationWidth_) {
@@ -1838,6 +1857,9 @@ class TextLayouter {
 		}
 	}
 
+	/++
+		Can override this to define if a char is a word splitter for word wrapping.
+	+/
 	protected bool isWordwrapPoint(dchar c) {
 		if(c == ' ')
 			return true;
