@@ -7443,7 +7443,8 @@ int intFromHex(string hex) {
 							break;
 
 							default:
-								assert(0, token);
+								import arsd.core;
+								throw ArsdException!"CSS Selector Problem"(token, tokens, cast(int) state);
 						}
 					}
 				break;
@@ -7493,6 +7494,9 @@ int intFromHex(string hex) {
 						case "root":
 							current.rootElement = true;
 						break;
+						case "lang":
+							state = State.SkippingFunctionalSelector;
+						continue;
 						case "nth-child":
 							current.nthChild ~= ParsedNth(readFunctionalSelector());
 							state = State.SkippingFunctionalSelector;
@@ -7503,6 +7507,11 @@ int intFromHex(string hex) {
 						continue;
 						case "nth-last-of-type":
 							current.nthLastOfType ~= ParsedNth(readFunctionalSelector());
+							state = State.SkippingFunctionalSelector;
+						continue;
+						case "nth-last-child":
+							// FIXME
+							//current.nthLastOfType ~= ParsedNth(readFunctionalSelector());
 							state = State.SkippingFunctionalSelector;
 						continue;
 						case "is":
@@ -7706,6 +7715,7 @@ class CssStyle {
 			p.specificity = originatingSpecificity;
 
 			properties ~= p;
+
 		}
 
 		foreach(property; properties)
@@ -7716,8 +7726,19 @@ class CssStyle {
 	Specificity getSpecificityOfRule(string rule) {
 		Specificity s;
 		if(rule.length == 0) { // inline
-		//	s.important = 2;
+			s.important = 2;
 		} else {
+			// SO. WRONG.
+			foreach(ch; rule) {
+				if(ch == '.')
+					s.classes++;
+				if(ch == '#')
+					s.ids++;
+				if(ch == ' ')
+					s.tags++;
+				if(ch == ',')
+					break;
+			}
 			// FIXME
 		}
 
@@ -7782,6 +7803,7 @@ class CssStyle {
 				if(newSpecificity.score >= property.specificity.score) {
 					property.givenExplicitly = explicit;
 					expandShortForm(property, newSpecificity);
+					property.specificity = newSpecificity;
 					return (property.value = value);
 				} else {
 					if(name == "display")
