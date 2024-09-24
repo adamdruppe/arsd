@@ -466,7 +466,7 @@ final class PixmapRecorder : OutputRange!(const(Pixmap)) {
 			This function automatically calls [open|open()] if necessary.
 		)
 	 +/
-	void put(const Pixmap frame) {
+	void put(const Pixmap frame) @trusted {
 		if (!this.isOpen) {
 			this.open(frame.size);
 		} else {

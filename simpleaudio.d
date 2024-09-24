@@ -2055,7 +2055,7 @@ struct AudioInput {
 	}
 
 	/// First, set [receiveData], then call this.
-	void record() {
+	void record() @system /* FIXME https://issues.dlang.org/show_bug.cgi?id=24782 */ {
 		assert(receiveData !is null);
 		recording = true;
 
@@ -2206,7 +2206,7 @@ struct AudioOutput {
 	shared(bool) playing = false; // considered to be volatile
 
 	/// Starts playing, loops until stop is called
-	void play() {
+	void play() @system /* FIXME https://issues.dlang.org/show_bug.cgi?id=24782 */ {
 		if(handle is null)
 			open();
 

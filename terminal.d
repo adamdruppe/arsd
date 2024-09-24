@@ -2763,7 +2763,7 @@ struct RealTimeConsoleInput {
 
 			It was in Terminal briefly during an undocumented period, but it had to be moved here to have the context needed to send the real time paste event.
 	+/
-	void requestPasteFromClipboard() {
+	void requestPasteFromClipboard() @system {
 		version(Win32Console) {
 			HWND hwndOwner = null;
 			if(OpenClipboard(hwndOwner) == 0)
