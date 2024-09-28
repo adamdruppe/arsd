@@ -6689,9 +6689,31 @@ version(X11) {
 		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
 		else Atom a = GetAtom!atomName(display);
 
-		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
+		if(auto ptr = a in window.impl.setSelectionHandlers) {
+			// we already have it, don't even need to inform the X server
+			// sdpyPrintDebugString("short circuit in set");
+			*ptr = data;
+		} else {
+			// we don't have it, tell X we want it
+			XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
+			window.impl.setSelectionHandlers[a] = data;
+		}
+	}
 
-		window.impl.setSelectionHandlers[a] = data;
+	/++
+		History:
+			Added September 28, 2024
+	+/
+	bool hasX11Selection(string atomName)(SimpleWindow window) {
+		auto display = XDisplayConnection.get();
+		static if (atomName == "PRIMARY") Atom a = XA_PRIMARY;
+		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
+		else Atom a = GetAtom!atomName(display);
+
+		if(a in window.impl.setSelectionHandlers)
+			return true;
+		else
+			return false;
 	}
 
 	///
@@ -6774,6 +6796,17 @@ version(X11) {
 				return best;
 			}
 		}
+
+		if(auto ptr = atom in window.impl.setSelectionHandlers) {
+			if(auto txt = (cast(X11SetSelectionHandler_Text) *ptr)) {
+				// we already have it! short circuit everything
+
+				// sdpyPrintDebugString("short circuit in get");
+				handler(cast(char[]) txt.text_original);
+				return;
+			}
+		}
+
 
 		window.impl.getSelectionHandlers[atom] = new X11GetSelectionHandler_Text(handler);
 
@@ -15789,6 +15822,7 @@ version(X11) {
 
 		switch(e.type) {
 		  case EventType.SelectionClear:
+		  	// writeln("SelectionClear");
 		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping) {
 				// FIXME so it is supposed to finish any in progress transfers... but idk...
 				// writeln("SelectionClear");
@@ -15805,7 +15839,7 @@ version(X11) {
 			}
 		  break;
 		  case EventType.PropertyNotify:
-			// printf("PropertyNotify %s %d\n", XGetAtomName(e.xproperty.display, e.xproperty.atom), e.xproperty.state);
+			// import core.stdc.stdio; printf("PropertyNotify %s %d\n", XGetAtomName(e.xproperty.display, e.xproperty.atom), e.xproperty.state);
 
 			foreach(ssh; SimpleWindow.impl.setSelectionHandlers) {
 				if(ssh.matchesIncr(e.xproperty.window, e.xproperty.atom) && e.xproperty.state == PropertyNotification.PropertyDelete)
@@ -15849,8 +15883,9 @@ version(X11) {
 			}
 		  break;
 		  case EventType.SelectionNotify:
-		  	if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
-		  	if(auto handler = e.xproperty.atom in win.getSelectionHandlers) {
+		  	// import std.stdio; writefln("SelectionNotify %06x %06x", e.xselection.requestor, e.xproperty.atom);
+			if(auto win = e.xselection.requestor in SimpleWindow.nativeMapping)
+			if(auto handler = e.xproperty.atom in win.getSelectionHandlers) {
 				if(e.xselection.property == None) { // || e.xselection.property == GetAtom!("NULL", true)(e.xselection.display)) {
 					XUnlockDisplay(display);
 					scope(exit) XLockDisplay(display);
@@ -15924,7 +15959,7 @@ version(X11) {
 					*/
 				}
 			}
-		  break;
+			break;
 		  case EventType.ConfigureNotify:
 			auto event = e.xconfigure;
 		 	if(auto win = event.window in SimpleWindow.nativeMapping) {
@@ -18413,8 +18448,7 @@ struct Visual
 		}
 
 		override void scrollWheel(NSEvent event) @selector("scrollWheel:") {
-			import std.stdio;
-			writeln(event.deltaY);
+			// import std.stdio; writeln(event.deltaY);
 		}
 
 		override void keyDown(NSEvent event) @selector("keyDown:") {
@@ -20064,12 +20098,12 @@ unittest {
 		7, 8
 	]);
 
-	import std.conv;
+	//import std.conv;
 	m *= m2;
 	assert(m.data == [
 		19, 22,
 		43, 50
-	], to!string(m.data));
+	]);//, to!string(m.data));
 }
 
 
@@ -23023,7 +23057,9 @@ __gshared bool librariesSuccessfullyLoaded = true;
 __gshared bool openGlLibrariesSuccessfullyLoaded = true;
 
 private mixin template DynamicLoadSupplementalOpenGL(Iface) {
-	mixin(staticForeachReplacement!Iface);
+	// mixin(staticForeachReplacement!Iface);
+        static foreach(name; __traits(derivedMembers, Iface))
+                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
 	void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
@@ -23038,6 +23074,7 @@ private mixin template DynamicLoadSupplementalOpenGL(Iface) {
         }
 }
 
+/+
 private const(char)[] staticForeachReplacement(Iface)() pure {
 /*
 	// just this for gdc 9....
@@ -23067,9 +23104,12 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 
 	return code[0 .. pos];
 }
++/
 
 private mixin template DynamicLoad(Iface, string library, int majorVersion, alias success) {
-	mixin(staticForeachReplacement!Iface);
+	//mixin(staticForeachReplacement!Iface);
+        static foreach(name; __traits(derivedMembers, Iface))
+                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
 	private __gshared void* libHandle;
 	private __gshared bool attempted;

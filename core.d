@@ -1480,7 +1480,7 @@ inout(char)[] stripRightInternal(return inout(char)[] s) {
 }
 
 /++
-	Shortcut for converting some types to string without invoking Phobos (but it will as a last resort).
+	Shortcut for converting some types to string without invoking Phobos (but it may as a last resort).
 
 	History:
 		Moved from color.d to core.d in March 2023 (dub v11.0).
@@ -1500,9 +1500,18 @@ string toStringInternal(T)(T t) {
 			default:
 				return "<unknown>";
 		}
+	} else static if(is(T : const E[], E)) {
+		string ret = "[";
+		foreach(idx, e; t) {
+			if(idx)
+				ret ~= ", ";
+			ret ~= toStringInternal(e);
+		}
+		ret ~= "]";
+		return ret;
 	} else {
-		import std.conv;
-		return to!string(t);
+		static assert(0, T.stringof ~ " makes compile too slow");
+		// import std.conv; return to!string(t);
 	}
 }
 

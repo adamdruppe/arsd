@@ -3189,8 +3189,8 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 	if(spaceRemaining < 0 && shrinkyChildSum) {
 		// shrink to get into the space if it is possible
 		auto toRemove = -spaceRemaining;
-		auto removalPerItem  = toRemove * shrinkinessSum / shrinkyChildSum;
-		auto remainder = toRemove * shrinkinessSum % shrinkyChildSum;
+		auto removalPerItem = toRemove / shrinkinessSum;
+		auto remainder = toRemove % shrinkinessSum;
 
 		// FIXME: wtf why am i shrinking things with no shrinkiness?
 
@@ -3201,17 +3201,20 @@ void recomputeChildLayout(string relevantMeasure)(Widget parent) {
 			if(child.hidden)
 				continue;
 			static if(calcingV) {
-				auto maximum = childStyle.maxHeight();
+				auto minimum = childStyle.minHeight();
+				auto stretch = childStyle.heightShrinkiness();
 			} else {
-				auto maximum = childStyle.maxWidth();
+				auto minimum = childStyle.minWidth();
+				auto stretch = childStyle.widthShrinkiness();
 			}
 
-			if(mixin("child._" ~ relevantMeasure) >= maximum)
+			if(mixin("child._" ~ relevantMeasure) <= minimum)
 				continue;
+			// import arsd.core; writeln(typeid(child).toString, " ", child._width, " > ", minimum, " :: ", removalPerItem, "*", stretch);
 
-			mixin("child._" ~ relevantMeasure) -= removalPerItem + remainder; // this is removing more than needed to trigger the next thing. ugh.
+			mixin("child._" ~ relevantMeasure) -= removalPerItem * stretch + remainder / shrinkyChildSum; // this is removing more than needed to trigger the next thing. ugh.
 
-			spaceRemaining += removalPerItem + remainder;
+			spaceRemaining += removalPerItem * stretch + remainder / shrinkyChildSum;
 		}
 	}
 
@@ -12101,10 +12104,14 @@ class TextDisplayHelper : Widget {
 
 	private string preservedPrimaryText;
 	protected void selectionChanged() {
+		// sdpyPrintDebugString("selectionChanged"); try throw new Exception("e"); catch(Exception e) sdpyPrintDebugString(e.toString());
 		static if(UsingSimpledisplayX11)
 		with(l.selection()) {
 			if(!isEmpty()) {
+				//sdpyPrintDebugString("!isEmpty");
+
 				getPrimarySelection(parentWindow.win, (in char[] txt) {
+					// sdpyPrintDebugString("getPrimarySelection: " ~ getContentString() ~ " (old " ~ txt ~ ")");
 					// import std.stdio; writeln("txt: ", txt, " sel: ", getContentString);
 					if(txt.length) {
 						preservedPrimaryText = txt.idup;
@@ -12117,6 +12124,9 @@ class TextDisplayHelper : Widget {
 		}
 	}
 
+	final TextLayouter layouter() {
+		return l;
+	}
 
 	bool readonly;
 	bool caretNavigation; // scroll lock can flip this
@@ -12216,7 +12226,10 @@ class TextDisplayHelper : Widget {
 		if(readonly) return;
 		getClipboardText(parentWindow.win, (txt) {
 			doStateCheckpoint();
-			l.selection.replaceContent(txt);
+			if(singleLine)
+				l.selection.replaceContent(txt.stripInternal());
+			else
+				l.selection.replaceContent(txt);
 			adjustScrollbarSizes();
 			scrollForCaret();
 			this.redraw();
@@ -12816,8 +12829,13 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	@property void content(string s) {
 		if(useCustomWidget) {
 			version(use_new_text_system) {
-				selectAll();
-				textLayout.selection.replaceContent(s);
+				with(textLayout.selection) {
+					moveToStartOfDocument();
+					setAnchor();
+					moveToEndOfDocument();
+					setFocus();
+					replaceContent(s);
+				}
 
 				tdh.adjustScrollbarSizes();
 				// these don't seem to help
@@ -13185,7 +13203,8 @@ class LineEdit : EditableTextWidget {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
 
-	override int flexBasisWidth() { return 250; }
+	 override int flexBasisWidth() { return 250; }
+	override int widthShrinkiness() { return 10; }
 
 	///
 	this(Widget parent) {
