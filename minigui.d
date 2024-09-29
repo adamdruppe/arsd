@@ -1638,31 +1638,31 @@ class Widget : ReflectableProperties {
 
 	private bool showing_ = true;
 	///
-	bool showing() { return showing_; }
+	bool showing() const { return showing_; }
 	///
-	bool hidden() { return !showing_; }
+	bool hidden() const { return !showing_; }
 	/++
 		Shows or hides the window. Meant to be assigned as a property. If `recalculate` is true (the default), it recalculates the layout of the parent widget to use the space this widget being hidden frees up or make space for this widget to appear again.
+
+		Note that a widget only ever shows if all its parents are showing too.
 	+/
 	void showing(bool s, bool recalculate = true) {
-		auto so = showing_;
-		showing_ = s;
-		if(s != so) {
-			version(win32_widgets)
-			if(hwnd)
-				ShowWindow(hwnd, s ? SW_SHOW : SW_HIDE);
+		if(s != showing_) {
+			showing_ = s;
+			// writeln(typeid(this).toString, " ", this.parent ? typeid(this.parent).toString : "null", " ", s);
+
+			showNativeWindowChildren(s);
 
 			if(parent && recalculate) {
 				parent.queueRecomputeChildLayout();
 				parent.redraw();
 			}
 
-			foreach(child; children)
-				child.showing(s, false);
-
+			if(s) {
+				queueRecomputeChildLayout();
+				redraw();
+			}
 		}
-		queueRecomputeChildLayout();
-		redraw();
 	}
 	/// Convenience method for `showing = true`
 	@scriptable
@@ -1673,6 +1673,30 @@ class Widget : ReflectableProperties {
 	@scriptable
 	void hide() {
 		showing = false;
+	}
+
+	/++
+		If you are a native window, show/hide it based on shouldShow and return `true`.
+
+		Otherwise, do nothing and return false.
+	+/
+	protected bool showOrHideIfNativeWindow(bool shouldShow) {
+		version(win32_widgets) {
+			if(hwnd) {
+				ShowWindow(hwnd, shouldShow ? SW_SHOW : SW_HIDE);
+				return true;
+			} else {
+				return false;
+			}
+		} else {
+			return false;
+		}
+	}
+
+	private void showNativeWindowChildren(bool s) {
+		if(!showOrHideIfNativeWindow(s && showing))
+			foreach(child; children)
+				child.showNativeWindowChildren(s);
 	}
 
 	///
@@ -1752,8 +1776,12 @@ class Widget : ReflectableProperties {
 
 		w.addedTo(this);
 
-		if(this.hidden)
-			w.showing = false;
+		bool parentIsNative;
+		version(win32_widgets) {
+			parentIsNative = hwnd !is null;
+		}
+		if(!parentIsNative && !showing)
+			w.showOrHideIfNativeWindow(false);
 
 		if(parentWindow !is null) {
 			w.attachedToWindow(parentWindow);
@@ -4557,11 +4585,12 @@ class NestedChildWindowWidget : Widget {
 
 	}
 
-	override void showing(bool s, bool recalc) {
+	override bool showOrHideIfNativeWindow(bool shouldShow) {
 		auto cur = hidden;
-		win.hidden = !s;
-		if(cur != s && s)
+		win.hidden = !shouldShow;
+		if(cur != shouldShow && shouldShow)
 			redraw();
+		return true;
 	}
 
 	/// OpenGL widgets cannot have child widgets. Do not call this.
@@ -7216,7 +7245,6 @@ class PageWidget : Widget {
 				child.hide();
 			}
 	}
-
 }
 
 /++
@@ -12589,8 +12617,8 @@ class TextDisplayHelper : Widget {
 			doStateCheckpoint();
 
 			char[4] buffer;
-			import std.utf; // FIXME: i should remove this. compile time not significant but the logs get spammed with phobos' import web
-			auto stride = encode(buffer, ce.character);
+			import arsd.core;
+			auto stride = encodeUtf8(buffer, ce.character);
 			l.selection.replaceContent(buffer[0 .. stride]);
 			l.selection.setUserXCoordinate();
 			adjustScrollbarSizes();

@@ -1557,6 +1557,56 @@ unittest {
 	assert(flagsToString!MyFlags(2) == "b");
 }
 
+private enum dchar replacementDchar = '\uFFFD';
+
+package size_t encodeUtf8(out char[4] buf, dchar c) @safe pure {
+    if (c <= 0x7F)
+    {
+        assert(isValidDchar(c));
+        buf[0] = cast(char) c;
+        return 1;
+    }
+    if (c <= 0x7FF)
+    {
+        assert(isValidDchar(c));
+        buf[0] = cast(char)(0xC0 | (c >> 6));
+        buf[1] = cast(char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c <= 0xFFFF)
+    {
+        if (0xD800 <= c && c <= 0xDFFF)
+            c = replacementDchar;
+
+        assert(isValidDchar(c));
+    L3:
+        buf[0] = cast(char)(0xE0 | (c >> 12));
+        buf[1] = cast(char)(0x80 | ((c >> 6) & 0x3F));
+        buf[2] = cast(char)(0x80 | (c & 0x3F));
+        return 3;
+    }
+    if (c <= 0x10FFFF)
+    {
+        assert(isValidDchar(c));
+        buf[0] = cast(char)(0xF0 | (c >> 18));
+        buf[1] = cast(char)(0x80 | ((c >> 12) & 0x3F));
+        buf[2] = cast(char)(0x80 | ((c >> 6) & 0x3F));
+        buf[3] = cast(char)(0x80 | (c & 0x3F));
+        return 4;
+    }
+
+    assert(!isValidDchar(c));
+    c = replacementDchar;
+    goto L3;
+}
+
+
+
+private bool isValidDchar(dchar c) pure nothrow @safe @nogc
+{
+    return c < 0xD800 || (c > 0xDFFF && c <= 0x10FFFF);
+}
+
 // technically s is octets but meh
 package string encodeUriComponent(string s) {
 	char[3] encodeChar(char c) {
