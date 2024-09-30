@@ -2340,9 +2340,16 @@ class TextLayouter {
 			}
 		}
 
-		finishLine(text.length, font);
+		auto finished = finishLine(text.length, font);
+		/+
+		if(!finished)
+			currentCorner.y += lineHeight;
+		import arsd.core; writeln(finished);
+		+/
 
 		_height = currentCorner.y;
+
+		// import arsd.core;writeln(_height);
 
 		assert(segments.length);
 

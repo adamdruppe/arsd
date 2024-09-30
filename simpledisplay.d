@@ -1583,9 +1583,10 @@ enum WindowTypes : int {
 	splashScreen, /// a loading splash screen for your application
 	tooltip, /// A tiny window showing temporary help text or something.
 	comboBoxDropdown,
-	dialog,
 	toolbar
 	*/
+	/// a dialog box of some sort
+	dialog,
 	/// a child nested inside the parent. You must pass a parent window to the ctor
 	nestedChild,
 
@@ -2096,9 +2097,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		}
 
 		version(X11)
-		if(useFallbackDpi)
+		if(useFallbackDpi || actualDpi_ == 0) // FIXME: the actualDpi_ will be populated eventually when we get the first synthetic configure event from the window manager, but that might be a little while so actualDpi_ can be 0 until then...
 			actualDpi_ = cast(int) (getDpi()[0] * customScalingFactorForMonitor(0));
-
 		return actualDpi_;
 	}
 
@@ -2485,7 +2485,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			case normal, undecorated, eventOnly:
 			case nestedChild, minimallyWrapped:
 				return (customizationFlags & WindowFlags.transient) ? true : false;
-			case dropdownMenu, popupMenu, notification:
+			case dropdownMenu, popupMenu, notification, dialog:
 				return true;
 		}
 	}
@@ -12270,6 +12270,9 @@ version(Windows) {
 					style = WS_POPUP;
 					flags |= WS_EX_NOACTIVATE;
 				break;
+				case WindowTypes.dialog:
+					style = WS_OVERLAPPEDWINDOW;
+				break;
 				case WindowTypes.nestedChild:
 					style = WS_CHILD;
 				break;
@@ -15451,6 +15454,10 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				break;
 				case WindowTypes.minimallyWrapped:
 					assert(0, "don't create a minimallyWrapped thing explicitly!");
+
+				case WindowTypes.dialog:
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display));
+				break;
 				/+
 				case WindowTypes.menu:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
@@ -15473,9 +15480,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				break;
 				case WindowTypes.splash:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_SPLASH"(display);
-				break;
-				case WindowTypes.dialog:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display);
 				break;
 				case WindowTypes.tooltip:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display);
@@ -15530,6 +15534,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 
 			if(isTransient && parent) { // customizationFlags & WindowFlags.transient) {
 				if(parent is null) assert(0);
+				// sdpyPrintDebugString("transient");
 				XChangeProperty(
 					display,
 					impl.window,

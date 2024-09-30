@@ -59,7 +59,7 @@ class ColorPickerDialog : Dialog {
 	void delegate(Color) onOK;
 
 	this(Color current, void delegate(Color) onOK, Window owner) {
-		super(360, 460, "Color picker");
+		super(owner, 360, 460, "Color picker");
 
 		this.onOK = onOK;
 

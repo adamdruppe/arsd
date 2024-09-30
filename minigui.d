@@ -4069,7 +4069,7 @@ class DataControllerWidget(T) : WidgetContainer {
 
 			static if(is(typeof(__traits(getMember, this.datum, member)) == function)) {
 				w.addEventListener("triggered", delegate() {
-					makeAutomaticHandler!(__traits(getMember, this.datum, member))(&__traits(getMember, this.datum, member))();
+					makeAutomaticHandler!(__traits(getMember, this.datum, member))(this.parentWindow, &__traits(getMember, this.datum, member))();
 					notifyDataUpdated();
 				});
 			} else static if(is(typeof(w.isChecked) == bool)) {
@@ -8047,13 +8047,28 @@ class Window : Widget {
 		assert(mouseCapturedBy is null || byWhom is mouseCapturedBy);
 		mouseCaptureCount++;
 		mouseCapturedBy = byWhom;
-		win.grabInput();
+		win.grabInput(false, true, false);
+		//void grabInput(bool keyboard = true, bool mouse = true, bool confine = false) {
 	}
 	void releaseMouseCapture() {
 		mouseCaptureCount--;
 		mouseCapturedBy = null;
 		win.releaseInputGrab();
 	}
+
+
+	/++
+
+	+/
+	MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+		return .messageBox(this, title, message, style, icon);
+	}
+
+	/// ditto
+	int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+		return messageBox(null, message, style, icon);
+	}
+
 
 	/++
 		Sets the window icon which is often seen in title bars and taskbars.
@@ -8427,15 +8442,16 @@ class Window : Widget {
 
 			The width and height arguments were added to the overload that takes `string` first on June 21, 2021.
 	+/
-	this(int width = 500, int height = 500, string title = null) {
+	this(int width = 500, int height = 500, string title = null, WindowTypes windowType = WindowTypes.normal, WindowFlags windowFlags = WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus, SimpleWindow parent = null) {
 		if(title is null) {
 			import core.runtime;
 			if(Runtime.args.length)
 				title = Runtime.args[0];
 		}
-		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, WindowTypes.normal, WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus);
+		win = new SimpleWindow(width, height, title, OpenGlOptions.no, Resizability.allowResizing, windowType, windowFlags, parent);
 
-		static if(UsingSimpledisplayX11) {
+		static if(UsingSimpledisplayX11)
+		if(windowFlags & WindowFlags.managesChildWindowFocus) {
 		///+
 		// for input proxy
 		auto display = XDisplayConnection.get;
@@ -8879,14 +8895,28 @@ debug private class DevToolWindow : Window {
 	A dialog is a transient window that intends to get information from
 	the user before being dismissed.
 +/
-abstract class Dialog : Window {
+class Dialog : Window {
 	///
-	this(int width, int height, string title = null) {
-		super(width, height, title);
+	this(Window parent, int width, int height, string title = null) {
+		super(width, height, title, WindowTypes.dialog, WindowFlags.dontAutoShow | WindowFlags.transient, parent is null ? null : parent.win);
+
+		// this(int width = 500, int height = 500, string title = null, WindowTypes windowType = WindowTypes.normal, WindowFlags windowFlags = WindowFlags.dontAutoShow | WindowFlags.managesChildWindowFocus, SimpleWindow parent = null) {
 	}
 
 	///
-	abstract void OK();
+	this(Window parent, string title, int width, int height) {
+		this(parent, width, height, title);
+	}
+
+	deprecated("Pass an explicit parent window, even if it is `null`")
+	this(int width, int height, string title = null) {
+		this(null, width, height, title);
+	}
+
+	///
+	void OK() {
+
+	}
 
 	///
 	void Cancel() {
@@ -9767,7 +9797,7 @@ private void autoExceptionHandler(Exception e) {
 	messageBox(e.msg);
 }
 
-private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
+private void delegate() makeAutomaticHandler(alias fn, T)(Window window, T t) {
 	static if(is(T : void delegate())) {
 		return () {
 			try
@@ -9790,9 +9820,9 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 					(type == FileDialogType.Automatic && (__traits(identifier, fn).startsWith("Save") || __traits(identifier, fn).startsWith("Export")))
 					|| type == FileDialogType.Save)
 				{
-					getSaveFileName(&onOK, member, filters, null);
+					getSaveFileName(window, &onOK, member, filters, null);
 				} else
-					getOpenFileName(&onOK, member, filters, null);
+					getOpenFileName(window, &onOK, member, filters, null);
 			};
 		} else {
 			struct S {
@@ -9805,7 +9835,7 @@ private void delegate() makeAutomaticHandler(alias fn, T)(T t) {
 				});
 			}
 			return () {
-				dialog((S s) {
+				dialog(window, (S s) {
 					try {
 						static if(is(typeof(t) Ret == return)) {
 							static if(is(Ret == void)) {
@@ -9962,7 +9992,7 @@ class MainWindow : Window {
 					if(label.length == 0)
 						label = memberName.toMenuLabel;
 
-					auto handler = makeAutomaticHandler!(__traits(getMember, T, memberName))(&__traits(getMember, t, memberName));
+					auto handler = makeAutomaticHandler!(__traits(getMember, T, memberName))(this.parentWindow, &__traits(getMember, t, memberName));
 
 					auto action = new Action(label, correctIcon, handler);
 
@@ -13436,16 +13466,25 @@ class RichTextDisplay : Widget {
 +/
 class TextDisplay : EditableTextWidget {
 	this(string text, Widget parent) {
-		super(parent);
+		super(true, parent);
 		this.content = text;
 	}
 
 	override int maxHeight() { return int.max; }
-	override int minHeight() { return 50; }
+	override int minHeight() { return Window.defaultLineHeight; }
 	override int heightStretchiness() { return 7; }
+	override int heightShrinkiness() { return 2; }
 
-	override int flexBasisWidth() { return 250; }
-	override int flexBasisHeight() { return 50; }
+	override int flexBasisWidth() {
+		return scaleWithDpi(250);
+	}
+	override int flexBasisHeight() {
+		if(textLayout is null || this.tdh is null)
+			return Window.defaultLineHeight;
+
+		auto textHeight = borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, textLayout.height))).height;
+		return this.tdh.borderBoxForContentBox(Rectangle(Point(0, 0), Size(0, textHeight))).height;
+	}
 
 	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
 		return new MyTextDisplayHelper(textLayout, smw);
@@ -13737,13 +13776,44 @@ private class GenericListViewWidgetInner : Widget {
 
 
 
-///
-class MessageBox : Window {
+/++
+	History:
+		It was a child of Window before, but as of September 29, 2024, it is now a child of `Dialog`.
++/
+class MessageBox : Dialog {
 	private string message;
 	MessageBoxButton buttonPressed = MessageBoxButton.None;
-	///
+	/++
+
+		History:
+		The overload that takes `Window originator` was added on September 29, 2024.
+	+/
 	this(string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
-		super(300, 100);
+		this(null, message, buttons, buttonIds);
+	}
+	/// ditto
+	this(Window originator, string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
+		message = message.stripRightInternal;
+		int mainWidth;
+
+		// estimate longest line
+		int count;
+		foreach(ch; message) {
+			if(ch == '\n') {
+				if(count > mainWidth)
+					mainWidth = count;
+				count = 0;
+			} else {
+				count++;
+			}
+		}
+		mainWidth *= 8;
+		if(mainWidth < 300)
+			mainWidth = 300;
+		if(mainWidth > 600)
+			mainWidth = 600;
+
+		super(originator, mainWidth, 100);
 
 		assert(buttons.length);
 		assert(buttons.length ==  buttonIds.length);
@@ -13770,10 +13840,19 @@ class MessageBox : Window {
 		if(buttons.length == 1)
 			auto spacer2 = new HorizontalSpacer(hl); // to center it
 
-		win.resize(scaleWithDpi(300), this.minHeight());
+		auto size = label.flexBasisHeight() + hl.minHeight() + this.paddingTop + this.paddingBottom;
+		auto max = scaleWithDpi(600); // random max height
+		if(size > max)
+			size = max;
+
+		win.resize(scaleWithDpi(mainWidth), size);
 
 		win.show();
 		redraw();
+	}
+
+	override void OK() {
+		this.win.close();
 	}
 
 	mixin Padding!q{16};
@@ -13815,6 +13894,18 @@ enum MessageBoxButton {
 	Returns: the button pressed.
 +/
 MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	return messageBox(null, title, message, style, icon);
+}
+
+/// ditto
+int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	return messageBox(null, null, message, style, icon);
+}
+
+/++
+
++/
+MessageBoxButton messageBox(Window originator, string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 	version(win32_widgets) {
 		WCharzBuffer t = WCharzBuffer(title);
 		WCharzBuffer m = WCharzBuffer(message);
@@ -13835,7 +13926,7 @@ MessageBoxButton messageBox(string title, string message, MessageBoxStyle style 
 			case Warning: type |= MB_ICONWARNING; break;
 			case Error: type |= MB_ICONERROR; break;
 		}
-		switch(MessageBoxW(null, m.ptr, t.ptr, type)) {
+		switch(MessageBoxW(originator is null ? null : originator.win.hwnd, m.ptr, t.ptr, type)) {
 			case IDOK: return MessageBoxButton.OK;
 			case IDCANCEL: return MessageBoxButton.Cancel;
 			case IDTRYAGAIN, IDRETRY: return MessageBoxButton.Retry;
@@ -13874,18 +13965,18 @@ MessageBoxButton messageBox(string title, string message, MessageBoxStyle style 
 				buttonIds = [MessageBoxButton.Retry, MessageBoxButton.Cancel, MessageBoxButton.Continue];
 			break;
 		}
-		auto mb = new MessageBox(message, buttons, buttonIds);
+		auto mb = new MessageBox(originator, message, buttons, buttonIds);
 		EventLoop el = EventLoop.get;
 		el.run(() { return !mb.win.closed; });
 		return mb.buttonPressed;
 	}
+
 }
 
 /// ditto
-int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
-	return messageBox(null, message, style, icon);
+int messageBox(Window originator, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	return messageBox(originator, message, style, icon);
 }
-
 
 
 ///
@@ -15281,10 +15372,39 @@ struct FileName(alias storage = previousFileReferenced, string[] filters = null,
 		a directory picker in addition to the command line completion view.
 
 		The `initialDirectory` argument was added November 9, 2022 (dub v10.10)
+
+		The `owner` argument was added September 29, 2024. The overloads without this argument are likely to be deprecated in the next major version.
 	Future_directions:
 		I want to add some kind of custom preview and maybe thumbnail thing in the future,
 		at least on Linux, maybe on Windows too.
 +/
+void getOpenFileName(
+	Window owner,
+	void delegate(string) onOK,
+	string prefilledName = null,
+	string[] filters = null,
+	void delegate() onCancel = null,
+	string initialDirectory = null,
+)
+{
+	return getFileName(owner, true, onOK, prefilledName, filters, onCancel, initialDirectory);
+}
+
+/// ditto
+void getSaveFileName(
+	Window owner,
+	void delegate(string) onOK,
+	string prefilledName = null,
+	string[] filters = null,
+	void delegate() onCancel = null,
+	string initialDirectory = null,
+)
+{
+	return getFileName(owner, false, onOK, prefilledName, filters, onCancel, initialDirectory);
+}
+
+// deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
+/// ditto
 void getOpenFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
@@ -15293,7 +15413,7 @@ void getOpenFileName(
 	string initialDirectory = null,
 )
 {
-	return getFileName(true, onOK, prefilledName, filters, onCancel, initialDirectory);
+	return getFileName(null, true, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
 /// ditto
@@ -15305,10 +15425,11 @@ void getSaveFileName(
 	string initialDirectory = null,
 )
 {
-	return getFileName(false, onOK, prefilledName, filters, onCancel, initialDirectory);
+	return getFileName(null, false, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
 void getFileName(
+	Window owner,
 	bool openOrSave,
 	void delegate(string) onOK,
 	string prefilledName = null,
@@ -15339,6 +15460,7 @@ void getFileName(
 		makeWindowsString(prefilledName, file[]);
 		OPENFILENAME ofn;
 		ofn.lStructSize = ofn.sizeof;
+		ofn.hwndOwner = owner is null ? null : owner.win.hwnd;
 		if(filters.length) {
 			string filter;
 			foreach(i, f; filters) {
@@ -15370,7 +15492,7 @@ void getFileName(
 	} else version(custom_widgets) {
 		if(filters.length == 0)
 			filters = ["All Files\0*.*"];
-		auto picker = new FilePicker(prefilledName, filters, initialDirectory);
+		auto picker = new FilePicker(prefilledName, filters, initialDirectory, owner);
 		picker.onOK = onOK;
 		picker.onCancel = onCancel;
 		picker.show();
@@ -15426,6 +15548,8 @@ class FilePicker : Dialog {
 		});
 
 		extern(C) static int comparator(scope const void* a, scope const void* b) {
+			// FIXME: make it a natural sort for numbers
+			// maybe put dot files at the end too.
 			auto sa = *cast(string*) a;
 			auto sb = *cast(string*) b;
 
@@ -15461,7 +15585,7 @@ class FilePicker : Dialog {
 
 	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
 	this(string prefilledName, string[] filters, string initialDirectory, Window owner = null) {
-		super(300, 200, "Choose File..."); // owner);
+		super(owner, 500, 400, "Choose File..."); // owner);
 
 		foreach(filter; filters) {
 			while(filter.length && filter[0] != 0) {
@@ -15718,7 +15842,7 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 	Creates a dialog based on a data structure.
 
 	---
-	dialog((YourStructure value) {
+	dialog(window, (YourStructure value) {
 		// the user filled in the struct and clicked OK,
 		// you can check the members now
 	});
@@ -15730,14 +15854,29 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 
 	History:
 		The overload that lets you specify `initialData` was added on December 30, 2021 (dub v10.5)
+
+		The overloads with `parent` were added September 29, 2024. The ones without it are likely to
+		be deprecated soon.
 +/
 /// Group: generating_from_code
 void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
-	dialog(T.init, onOK, onCancel, title);
+	dialog(null, T.init, onOK, onCancel, title);
 }
 /// ditto
 void dialog(T)(T initialData, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
-	auto dg = new AutomaticDialog!T(initialData, onOK, onCancel, title);
+	dialog(null, T.init, onOK, onCancel, title);
+}
+/// ditto
+void dialog(T)(Window parent, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
+	dialog(parent, T.init, onOK, onCancel, title);
+}
+/// ditto
+void dialog(T)(T initialData, Window parent, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
+	dialog(parent, initialData, onOK, onCancel, title);
+}
+/// ditto
+void dialog(T)(Window parent, T initialData, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
+	auto dg = new AutomaticDialog!T(parent, initialData, onOK, onCancel, title);
 	dg.show();
 }
 
@@ -15800,7 +15939,7 @@ class AutomaticDialog(T) : Dialog {
 	override int paddingRight() { return defaultLineHeight; }
 	override int paddingLeft() { return defaultLineHeight; }
 
-	this(T initialData, void delegate(T) onOK, void delegate() onCancel, string title) {
+	this(Window parent, T initialData, void delegate(T) onOK, void delegate() onCancel, string title) {
 		assert(onOK !is null);
 
 		t = initialData;
@@ -15811,7 +15950,7 @@ class AutomaticDialog(T) : Dialog {
 		}
 		this.onOK = onOK;
 		this.onCancel = onCancel;
-		super(400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + scaleWithDpi(4 + 2)) + defaultLineHeight + scaleWithDpi(56), title);
+		super(parent, 400, cast(int)(__traits(allMembers, T).length * 2) * (defaultLineHeight + scaleWithDpi(4 + 2)) + defaultLineHeight + scaleWithDpi(56), title);
 
 		static if(is(T == class))
 			this.addDataControllerWidget(t);
