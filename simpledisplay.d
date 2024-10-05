@@ -15042,7 +15042,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		int cursorSequenceNumber = 0;
 		int warpEventCount = 0; // number of mouse movement events to eat
 
-		__gshared X11SetSelectionHandler[Atom] setSelectionHandlers;
+		__gshared X11SetSelectionHandler[Atom] setSelectionHandlers; // FIXME: make sure this is not accessed from other threads. it might be ok to make it TLS
 		X11GetSelectionHandler[Atom] getSelectionHandlers;
 
 		version(without_opengl) {} else
@@ -15831,8 +15831,8 @@ version(X11) {
 		  	if(auto win = e.xselectionclear.window in SimpleWindow.nativeMapping) {
 				// FIXME so it is supposed to finish any in progress transfers... but idk...
 				// writeln("SelectionClear");
-				SimpleWindow.impl.setSelectionHandlers.remove(e.xselectionclear.selection);
 			}
+			SimpleWindow.impl.setSelectionHandlers.remove(e.xselectionclear.selection);
 		  break;
 		  case EventType.SelectionRequest:
 		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
