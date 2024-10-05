@@ -14,6 +14,22 @@
 		This module is $(B work in progress).
 		API is subject to changes until further notice.
 	)
+
+	### The coordinate system
+
+	The top left corner of a pixmap is its $(B origin) `(0,0)`.
+
+	The $(horizontal axis) is called `x`.
+	Its corresponding length/dimension is known as `width`.
+
+	The letter `y` is used to describe the $(B vertical axis).
+	Its corresponding length/dimension is known as `height`.
+
+	```
+	0 → x
+	↓
+	x
+	```
  +/
 module arsd.pixmappaint;
 
