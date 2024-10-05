@@ -416,7 +416,17 @@ struct SubPixmap {
 		}
 	}
 
+	/++
+		Blends the pixels of this subimage into a target image.
+
+		The target MUST have the same size.
+
+		See_also:
+			Usually you’ll want to use [drawPixmap] instead.
+	 +/
 	public void xferTo(SubPixmap target, Blend blend = blendNormal) const {
+		debug assert(target.size == this.size);
+
 		auto src = SubPixmapScanner(this);
 		auto dst = SubPixmapScannerRW(target);
 
@@ -630,6 +640,8 @@ struct SubPixmap {
 }
 
 /++
+	$(I Advanced functionality.)
+
 	Wrapper for scanning a [Pixmap] line by line.
  +/
 struct PixmapScanner {
@@ -663,6 +675,8 @@ struct PixmapScanner {
 }
 
 /++
+	$(I Advanced functionality.)
+
 	Wrapper for scanning a [Pixmap] line by line.
  +/
 struct SubPixmapScanner {
@@ -703,6 +717,8 @@ struct SubPixmapScanner {
 }
 
 /++
+	$(I Advanced functionality.)
+
 	Wrapper for scanning a [Pixmap] line by line.
 
 	See_also:
