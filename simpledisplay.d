@@ -3272,11 +3272,18 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		/++
 			simpledisplay always uses double buffering, usually automatically. This
-			manually swaps the OpenGL buffers.
+			manually swaps the OpenGL buffers. You should only use this if you are NOT
+			using the [redrawOpenGlScene] delegate.
 
 
-			You should not need to call this yourself because simpledisplay will do it
-			for you after calling your `redrawOpenGlScene`.
+			You must not this yourself if you use [redrawOpenGlScene] because simpledisplay will do it
+			for you after calling your `redrawOpenGlScene`. Please note that once you swap
+			buffers, the contents become undefined - the implementation, in the OpenGL driver
+			or the desktop compositor, may not actually just swap two buffers. The back buffer's
+			contents are $(B undefined) after calling this function.
+
+			See: https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-swapbuffers
+			and https://linux.die.net/man/3/glxswapbuffers
 
 			Remember that this may throw an exception, which you can catch in a multithreaded
 			application to keep your thread from dying from an unhandled exception.
