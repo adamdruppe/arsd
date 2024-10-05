@@ -348,11 +348,13 @@ struct SubPixmap {
 		/++
 			$(I Advanced functionality.)
 
-			Offset of the bottom right corner of the subimage
-			from the top left corner the source image.
+			Offset of the pixel following the bottom right corner of the subimage.
+
+			(`Point(O, 0)` is the top left corner of the source image.)
 		 +/
 		Point sourceOffsetEnd() const {
-			return (offset + castTo!Point(size));
+			auto vec = Point(size.x, (size.y - 1));
+			return (offset + vec);
 		}
 
 		/++
@@ -2016,11 +2018,11 @@ void drawPixmap(Pixmap target, const SubPixmap image, Point pos, Blend blend = b
 	}
 
 	Point drawingEnd = drawingTarget + drawingSize.castTo!Point();
-	if (drawingEnd.x >= source.width) {
-		drawingSize.width -= (drawingEnd.x - source.width);
+	if (drawingEnd.x >= target.width) {
+		drawingSize.width -= (drawingEnd.x - target.width);
 	}
-	if (drawingEnd.y >= source.height) {
-		drawingSize.height -= (drawingEnd.y - source.height);
+	if (drawingEnd.y >= target.height) {
+		drawingSize.height -= (drawingEnd.y - target.height);
 	}
 
 	auto dst = SubPixmap(target, drawingTarget, drawingSize);
