@@ -369,7 +369,7 @@ struct SubPixmap {
 			(`Point(O, 0)` is the top left corner of the source image.)
 		 +/
 		Point sourceOffsetEnd() const {
-			auto vec = Point(size.x, (size.y - 1));
+			auto vec = Point(size.width, (size.height - 1));
 			return (offset + vec);
 		}
 
