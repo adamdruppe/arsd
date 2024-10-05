@@ -386,11 +386,11 @@ struct SubPixmap {
 				  the source.
 			)
 
-			Both defects could indicate a non-sound subimage.
+			Both defects could indicate an invalid subimage.
 			Use this function to verify the SubPixmap.
 		)
 	 +/
-	bool isSound() const {
+	bool isValid() const {
 		return (
 			(sourceMarginLeft >= 0)
 				&& (sourceMarginTop >= 0)
@@ -1974,7 +1974,7 @@ void drawPixmap(Pixmap target, const Pixmap image, Point pos, Blend blend = blen
 void drawPixmap(Pixmap target, const SubPixmap image, Point pos, Blend blend = blendNormal) {
 	alias source = image;
 
-	debug assert(source.isSound);
+	debug assert(source.isValid);
 
 	immutable tRect = OriginRectangle(
 		Size(target.width, target.height),
