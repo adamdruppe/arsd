@@ -626,14 +626,6 @@ struct SubPixmap {
 		 +/
 		int sourceOffsetOf(Point pos) {
 			pos = (pos + offset);
-			debug {
-				import std.stdio : writeln;
-
-				try {
-					writeln(pos);
-				} catch (Exception) {
-				}
-			}
 			return linearOffset(pos, source.width);
 		}
 	}
