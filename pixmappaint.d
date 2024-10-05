@@ -106,7 +106,7 @@ struct Pixmap {
 	}
 
 	///
-	this(Pixel[] data, int width) @nogc
+	this(inout(Pixel)[] data, int width) inout @nogc
 	in (data.length % width == 0) {
 		this.data = data;
 		this.width = width;
@@ -198,20 +198,547 @@ struct Pixmap {
 	}
 
 	/++
+		Calculates the index (linear offset) of the requested position
+		within the pixmap data.
+	+/
+	int scanTo(Point pos) inout {
+		return linearOffset(width, pos);
+	}
+
+	/++
+		Accesses the pixel at the requested position within the pixmap data.
+	 +/
+	ref inout(Pixel) scan(Point pos) inout {
+		return data[scanTo(pos)];
+	}
+
+	/++
 		Retrieves a linear slice of the pixmap.
 
 		Returns:
 			`n` pixels starting at the top-left position `pos`.
 	 +/
-	inout(Pixel)[] sliceAt(Point pos, int n) inout {
+	inout(Pixel)[] scan(Point pos, int n) inout {
 		immutable size_t offset = linearOffset(width, pos);
 		immutable size_t end = (offset + n);
 		return data[offset .. end];
 	}
 
+	/// ditto
+	inout(Pixel)[] sliceAt(Point pos, int n) inout {
+		return scan(pos, n);
+	}
+
+	/++
+		Retrieves a rectangular subimage of the pixmap.
+	 +/
+	inout(SubPixmap) scan2D(Point pos, Size size) inout {
+		return inout(SubPixmap)(this, size, pos);
+	}
+
+	/++
+		Retrieves the first line of the Pixmap.
+
+		See_also:
+			Check out [PixmapScanner] for more useful scanning functionality.
+	 +/
+	inout(Pixel)[] scanLine() inout {
+		return data[0 .. width];
+	}
+
 	/// Clears the buffer’s contents (by setting each pixel to the same color)
 	void clear(Pixel value) {
 		data[] = value;
+	}
+}
+
+/++
+	A subpixmap represents a subimage of a [Pixmap].
+
+	This wrapper provides convenient access to a rectangular slice of a Pixmap.
+
+	```
+	╔═════════════╗
+	║ Pixmap      ║
+	║             ║
+	║      ┌───┐  ║
+	║      │Sub│  ║
+	║      └───┘  ║
+	╚═════════════╝
+	```
+ +/
+struct SubPixmap {
+
+	/++
+		Source image referenced by the subimage
+	 +/
+	Pixmap source;
+
+	/++
+		Size of the subimage
+	 +/
+	Size size;
+
+	/++
+		2D offset of the subimage
+	 +/
+	Point offset;
+
+	public @safe pure nothrow @nogc {
+		///
+		this(inout Pixmap source, Size size = Size(0, 0), Point offset = Point(0, 0)) inout {
+			this.source = source;
+			this.size = size;
+			this.offset = offset;
+		}
+
+		///
+		this(inout Pixmap source, Point offset, Size size = Size(0, 0)) inout {
+			this(source, size, offset);
+		}
+	}
+
+@safe pure nothrow @nogc:
+
+	public {
+		/++
+			Width of the subimage.
+		 +/
+		int width() const {
+			return size.width;
+		}
+
+		/// ditto
+		void width(int value) {
+			size.width = value;
+		}
+
+		/++
+			Height of the subimage.
+		 +/
+		int height() const {
+			return size.height;
+		}
+
+		/// height
+		void height(int value) {
+			size.height = value;
+		}
+	}
+
+	public {
+		/++
+			Linear offset of the subimage within the source image.
+
+			Calculates the index of the “first pixel of the subimage”
+			in the “pixel data of the source image”.
+		 +/
+		int sourceOffsetLinear() const {
+			return linearOffset(offset, source.width);
+		}
+
+		/// ditto
+		void sourceOffsetLinear(int value) {
+			this.offset = Point.fromLinearOffset(value, source.width);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Offset of the bottom right corner of the subimage
+			from the top left corner the source image.
+		 +/
+		Point sourceOffsetEnd() const {
+			return (offset + castTo!Point(size));
+		}
+
+		/++
+			Linear offset of the subimage within the source image.
+
+			Calculates the index of the “first pixel of the subimage”
+			in the “pixel data of the source image”.
+		 +/
+		int sourceOffsetLinearEnd() const {
+			return linearOffset(sourceOffsetEnd, source.width);
+		}
+	}
+
+	/++
+		Determines whether the area of the subimage
+		lies within the source image
+		and does not overflow its lines.
+
+		$(TIP
+			If the offset and/or size of a subimage are off, two issues can occur:
+
+			$(LIST
+				* The resulting subimage will look displaced.
+				  (As if the lines were shifted.)
+				  This indicates that one scanline of the subimage spans over
+				  two ore more lines of the source image.
+				  (Happens when `(subimage.offset.x + subimage.size.width) > source.size.width`.)
+				* When accessing the pixel data, bounds checks will fail.
+				  This suggests that the area of the subimage extends beyond
+				  the bottom end (and optionally also beyond the right end) of
+				  the source.
+			)
+
+			Both defects could indicate a non-sound subimage.
+			Use this function to verify the SubPixmap.
+		)
+	 +/
+	bool isSound() const {
+		return (
+			(sourceMarginLeft >= 0)
+				&& (sourceMarginTop >= 0)
+				&& (sourceMarginBottom >= 0)
+				&& (sourceMarginRight >= 0)
+		);
+	}
+
+	public inout {
+		/++
+			Retrieves the pixel at the requested position of the subimage.
+		 +/
+		ref inout(Pixel) scan(Point pos) {
+			return source.scan(offset + pos);
+		}
+
+		/++
+			Retrieves the first line of the subimage.
+		 +/
+		inout(Pixel)[] scanLine() {
+			const lo = linearOffset(offset, size.width);
+			return source.data[lo .. size.width];
+		}
+	}
+
+	public void xferTo(SubPixmap target, Blend blend = blendNormal) const {
+		auto src = SubPixmapScanner(this);
+		auto dst = SubPixmapScannerRW(target);
+
+		foreach (dstLine; dst) {
+			blendPixels(dstLine, src.front, blend);
+			src.popFront();
+		}
+	}
+
+	// opposite offset
+	public const {
+		/++
+			$(I Advanced functionality.)
+
+			Offset of the bottom right corner of the source image
+			to the bottom right corner of the subimage.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║   │   │   ║
+			║   └───┘   ║
+			║         ↘ ║
+			╚═══════════╝
+			```
+		 +/
+		Point oppositeOffset() {
+			return Point(oppositeOffsetX, oppositeOffsetY);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Offset of the right edge of the source image
+			to the right edge of the subimage.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║   │ S │ → ║
+			║   └───┘   ║
+			║           ║
+			╚═══════════╝
+			```
+		 +/
+		int oppositeOffsetX() {
+			return (offset.x + size.width);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Offset of the bottom edge of the source image
+			to the bottom edge of the subimage.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║   │ S │   ║
+			║   └───┘   ║
+			║     ↓     ║
+			╚═══════════╝
+			```
+		 +/
+		int oppositeOffsetY() {
+			return (offset.y + size.height);
+		}
+
+	}
+
+	// source-image margins
+	public const {
+		/++
+			$(I Advanced functionality.)
+
+			X-axis margin (left + right) of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║ ↔ │ S │ ↔ ║
+			║   └───┘   ║
+			║           ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginX() {
+			return (source.width - size.width);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Y-axis margin (top + bottom) of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║     ↕     ║
+			║   ┌───┐   ║
+			║   │ S │   ║
+			║   └───┘   ║
+			║     ↕     ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginY() {
+			return (source.height - size.height);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Top margin of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║     ↕     ║
+			║   ┌───┐   ║
+			║   │ S │   ║
+			║   └───┘   ║
+			║           ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginTop() {
+			return offset.y;
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Right margin of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║   │ S │ ↔ ║
+			║   └───┘   ║
+			║           ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginRight() {
+			return (sourceMarginX - sourceMarginLeft);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Bottom margin of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║   │ S │   ║
+			║   └───┘   ║
+			║     ↕     ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginBottom() {
+			return (sourceMarginY - sourceMarginTop);
+		}
+
+		/++
+			$(I Advanced functionality.)
+
+			Left margin of the subimage within the source image.
+
+			```
+			╔═══════════╗
+			║           ║
+			║   ┌───┐   ║
+			║ ↔ │ S │   ║
+			║   └───┘   ║
+			║           ║
+			╚═══════════╝
+			```
+		 +/
+		int sourceMarginLeft() {
+			return offset.x;
+		}
+	}
+
+	public const {
+		/++
+			$(I Advanced functionality.)
+
+			Calculates the linear offset of the provided point in the subimage
+			relative to the source image.
+		 +/
+		int sourceOffsetOf(Point pos) {
+			pos = (pos + offset);
+			debug {
+				import std.stdio : writeln;
+
+				try {
+					writeln(pos);
+				} catch (Exception) {
+				}
+			}
+			return linearOffset(pos, source.width);
+		}
+	}
+}
+
+/++
+	Wrapper for scanning a [Pixmap] line by line.
+ +/
+struct PixmapScanner {
+	private {
+		const(Pixel)[] _data;
+		int _width;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(const(Pixmap) pixmap) {
+		_data = pixmap.data;
+		_width = pixmap.width;
+	}
+
+	///
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	///
+	const(Pixel)[] front() const {
+		return _data[0 .. _width];
+	}
+
+	///
+	void popFront() {
+		_data = _data[_width .. $];
+	}
+}
+
+/++
+	Wrapper for scanning a [Pixmap] line by line.
+ +/
+struct SubPixmapScanner {
+	private {
+		const(Pixel)[] _data;
+		int _width;
+		int _feed;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(const(SubPixmap) subPixmap) {
+		_data = subPixmap.source.data[subPixmap.sourceOffsetLinear .. subPixmap.sourceOffsetLinearEnd];
+		_width = subPixmap.size.width;
+		_feed = subPixmap.source.width;
+	}
+
+	///
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	///
+	const(Pixel)[] front() const {
+		return _data[0 .. _width];
+	}
+
+	///
+	void popFront() {
+		if (_data.length < _feed) {
+			_data.length = 0;
+			return;
+		}
+
+		_data = _data[_feed .. $];
+	}
+}
+
+/++
+	Wrapper for scanning a [Pixmap] line by line.
+
+	See_also:
+		Unlike [SubPixmapScanner], this does not work with `const(Pixmap)`.
+ +/
+struct SubPixmapScannerRW {
+	private {
+		Pixel[] _data;
+		int _width;
+		int _feed;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(SubPixmap subPixmap) {
+		_data = subPixmap.source.data[subPixmap.sourceOffsetLinear .. subPixmap.sourceOffsetLinearEnd];
+		_width = subPixmap.size.width;
+		_feed = subPixmap.source.width;
+	}
+
+	///
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	///
+	Pixel[] front() {
+		return _data[0 .. _width];
+	}
+
+	///
+	void popFront() {
+		if (_data.length < _feed) {
+			_data.length = 0;
+			return;
+		}
+
+		_data = _data[_feed .. $];
 	}
 }
 
@@ -1397,7 +1924,7 @@ void drawLine(Pixmap target, Point a, Point b, Pixel color) {
 		image = source pixmap
 		pos = top-left destination position (on the target pixmap)
  +/
-void drawPixmap(Pixmap target, Pixmap image, Point pos, Blend blend = blendNormal) {
+void drawPixmap(Pixmap target, const Pixmap image, Point pos, Blend blend = blendNormal) {
 	alias source = image;
 
 	immutable tRect = OriginRectangle(
@@ -1431,6 +1958,68 @@ void drawPixmap(Pixmap target, Pixmap image, Point pos, Blend blend = blendNorma
 			blend,
 		);
 	}
+}
+
+/++
+	Draws an image (a subimage from a source pixmap) on a target pixmap
+
+	Params:
+		target = target pixmap to draw on
+		image = source subpixmap
+		pos = top-left destination position (on the target pixmap)
+ +/
+void drawPixmap(Pixmap target, const SubPixmap image, Point pos, Blend blend = blendNormal) {
+	alias source = image;
+
+	debug assert(source.isSound);
+
+	immutable tRect = OriginRectangle(
+		Size(target.width, target.height),
+	);
+
+	immutable sRect = Rectangle(pos, source.size);
+
+	// out of bounds?
+	if (!tRect.intersect(sRect)) {
+		return;
+	}
+
+	Point sourceOffset = source.offset;
+	Point drawingTarget;
+	Size drawingSize = source.size;
+
+	if (pos.x <= 0) {
+		sourceOffset.x -= pos.x;
+		drawingTarget.x = 0;
+		drawingSize.width += pos.x;
+	} else {
+		drawingTarget.x = pos.x;
+	}
+
+	if (pos.y <= 0) {
+		sourceOffset.y -= pos.y;
+		drawingTarget.y = 0;
+		drawingSize.height += pos.y;
+	} else {
+		drawingTarget.y = pos.y;
+	}
+
+	Point drawingEnd = drawingTarget + drawingSize.castTo!Point();
+	if (drawingEnd.x >= source.width) {
+		drawingSize.width -= (drawingEnd.x - source.width);
+	}
+	if (drawingEnd.y >= source.height) {
+		drawingSize.height -= (drawingEnd.y - source.height);
+	}
+
+	auto dst = SubPixmap(target, drawingTarget, drawingSize);
+	auto src = const(SubPixmap)(
+		source.source,
+		drawingSize,
+		sourceOffset,
+	);
+
+	src.xferTo(dst, blend);
 }
 
 /++
