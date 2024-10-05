@@ -515,8 +515,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	private {
 		PresenterObjectsContainer* _poc;
 
-		bool _clear = true;
-
 		GLfloat[16] _vertices;
 		OpenGlShader _shader;
 		GLuint _vao;
@@ -552,16 +550,13 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		}
 
 		void redrawOpenGlScene() {
-			if (_clear) {
-				glClearColor(
-					_poc.config.renderer.background.r,
-					_poc.config.renderer.background.g,
-					_poc.config.renderer.background.b,
-					_poc.config.renderer.background.a
-				);
-				glClear(GL_COLOR_BUFFER_BIT);
-				_clear = false;
-			}
+			glClearColor(
+				_poc.config.renderer.background.r,
+				_poc.config.renderer.background.g,
+				_poc.config.renderer.background.b,
+				_poc.config.renderer.background.a
+			);
+			glClear(GL_COLOR_BUFFER_BIT);
 
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, _texture);
@@ -669,7 +664,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		glViewportPMP(viewport);
 
 		this.setupTexture();
-		_clear = true;
 	}
 
 	void redrawSchedule() {
@@ -709,8 +703,6 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 	private {
 		PresenterObjectsContainer* _poc;
-		bool _clear = true;
-
 		GLuint _texture = 0;
 	}
 
@@ -788,16 +780,13 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 		}
 
 		void redrawOpenGlScene() {
-			if (_clear) {
-				glClearColor(
-					_poc.config.renderer.background.r,
-					_poc.config.renderer.background.g,
-					_poc.config.renderer.background.b,
-					_poc.config.renderer.background.a,
-				);
-				glClear(GL_COLOR_BUFFER_BIT);
-				_clear = false;
-			}
+			glClearColor(
+				_poc.config.renderer.background.r,
+				_poc.config.renderer.background.g,
+				_poc.config.renderer.background.b,
+				_poc.config.renderer.background.a,
+			);
+			glClear(GL_COLOR_BUFFER_BIT);
 
 			glBindTexture(GL_TEXTURE_2D, _texture);
 			glEnable(GL_TEXTURE_2D);
@@ -840,8 +829,6 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 		this.setupTexture();
 		this.setupMatrix();
-
-		_clear = true;
 	}
 
 	public void redrawSchedule() {
