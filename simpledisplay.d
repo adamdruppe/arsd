@@ -584,6 +584,44 @@ interface->SetProgressValue(hwnd, 40, 100);
 
 	On X11, if you set an environment variable, `ARSD_SCALING_FACTOR`, you can control the per-monitor DPI scaling returned to the application. The format is `ARSD_SCALING_FACTOR=2;1`, for example, to set 2x scaling on your first monitor and 1x scaling on your second monitor. Support for this was added on March 22, 2022, the dub 10.7 release.
 
+	$(H4 apitrace)
+
+	Out of the box, simpledisplay might not work as expected in combination with
+	[apitrace](https://apitrace.github.io).
+	However it can be instructed to specifically load the GL/GLX wrapper libraries provided by apitrace instead of
+	the system libraries. This should restore the lost functionality.
+
+	$(NUMBERED_LIST
+		* Compile with `-version=apitrace`.
+		* When launching such a simpledisplay app, it must be able to locate the apitrace wrapper libraries.
+		* Running the app will generate an apitrace trace file.
+		  It should print a log message similar to "apitrace: loaded into /directory" during startup.
+	)
+
+	There are multiple ways to enable a simpledisplay app to locate the wrapper libraries.
+
+	One way to achieved this is by pointing the `LD_LIBRARY_PATH` environment variable to the directory containing
+	those wrappers.
+
+	```sh
+	LD_LIBRARY_PATH=/path/to/apitrace/wrappers:$LD_LIBRARY_PATH ./myapp
+
+	# e.g.
+	LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/apitrace/wrappers:$LD_LIBRARY_PATH ./myapp
+	```
+
+	Alternatively, the simpledisplay app can also be launched via $(I apitrace).
+
+	```sh
+	apitrace trace -a gl ./myapp
+	```
+
+	Another way that seems to work is to preload `glxtrace.so` through `LD_PRELOAD`.
+
+	```sh
+	LD_PRELOAD=/path/to/apitrace/wrappers/glxtrace.so ./myapp
+	```
+
 	Windows_tips:
 
 	You can add icons or manifest files to your exe using a resource file.
@@ -770,6 +808,8 @@ interface->SetProgressValue(hwnd, 40, 100);
 		simpledisplay was stand alone until about 2015. It then added a dependency on [arsd.color] and changed its name to `arsd.simpledisplay`.
 
 		On March 4, 2023 (dub v11.0), it started importing [arsd.core] as well, making that a build-time requirement.
+
+		On October 5, 2024, apitrace support was added for Linux targets.
 +/
 module arsd.simpledisplay;
 
@@ -23140,7 +23180,20 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
 				else
 					libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
 			} else {
-				libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+				version(apitrace) {
+					if(library == "GL" || library == "GLX") {
+						libHandle = dlopen("glxtrace.so", RTLD_NOW);
+						if(libHandle is null) {
+							assert(false, "Failed to load `glxtrace.so`.");
+						}
+					}
+					else {
+						libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+					}
+				}
+				else {
+					libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+				}
 				if(libHandle is null) {
 					libHandle = dlopen(("lib" ~ library ~ ".so." ~ toInternal!string(majorVersion) ~ "\0").ptr, RTLD_NOW);
 				}
