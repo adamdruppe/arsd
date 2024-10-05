@@ -2652,23 +2652,23 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				MONITORINFO mi;
 				mi.cbSize = MONITORINFO.sizeof;
 				if (GetWindowPlacement(hwnd, &g_wpPrev) &&
-				    GetMonitorInfo(MonitorFromWindow(hwnd,
-								     MONITOR_DEFAULTTOPRIMARY), &mi)) {
+					GetMonitorInfo(MonitorFromWindow(hwnd,
+					               MONITOR_DEFAULTTOPRIMARY), &mi)) {
 					SetWindowLong(hwnd, GWL_STYLE,
-						      dwStyle & ~WS_OVERLAPPEDWINDOW);
+					              dwStyle & ~WS_OVERLAPPEDWINDOW);
 					SetWindowPos(hwnd, HWND_TOP,
-						     mi.rcMonitor.left, mi.rcMonitor.top,
-						     mi.rcMonitor.right - mi.rcMonitor.left,
-						     mi.rcMonitor.bottom - mi.rcMonitor.top,
-						     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+					             mi.rcMonitor.left, mi.rcMonitor.top,
+					             mi.rcMonitor.right - mi.rcMonitor.left,
+					             mi.rcMonitor.bottom - mi.rcMonitor.top,
+					             SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 				}
 			} else {
 				SetWindowLong(hwnd, GWL_STYLE,
-					      dwStyle | WS_OVERLAPPEDWINDOW);
+				              dwStyle | WS_OVERLAPPEDWINDOW);
 				SetWindowPlacement(hwnd, &g_wpPrev);
 				SetWindowPos(hwnd, null, 0, 0, 0, 0,
-					     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-					     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+				             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+				             SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 			}
 
 		} else version(X11) {
@@ -2986,8 +2986,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			view.setNeedsDisplay(true);
 
 			NSApp.run();
-            		return 0;
-        	} else {
+			return 0;
+		} else {
 			EventLoop el = EventLoop(pulseTimeout, handlePulse);
 
 			if((blockingMode & BlockingMode.onlyIfNotNested) && el.impl.refcount > 1)
@@ -3136,14 +3136,14 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		/// This will allow you to change OpenGL vsync state.
 		final @property void vsync (bool wait) {
-		  if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
-		  version(X11) {
-		    setAsCurrentOpenGlContext();
-		    glxSetVSync(display, impl.window, wait);
-		  } else version(Windows) {
-		    setAsCurrentOpenGlContext();
-                    wglSetVSync(wait);
-		  }
+			if (this._closed) return; // window may be closed, but timer is still firing; avoid GLXBadDrawable error
+			version(X11) {
+				setAsCurrentOpenGlContext();
+				glxSetVSync(display, impl.window, wait);
+			} else version(Windows) {
+				setAsCurrentOpenGlContext();
+				wglSetVSync(wait);
+			}
 		}
 
 		/// Set this to `false` if you don't need to do `glFinish()` after `swapOpenGlBuffers()`.
@@ -17902,7 +17902,7 @@ union XEvent{
 		static assert(XMappingEvent.sizeof == 56);
 		static assert(XEvent.sizeof == 192);
     	} else version (AArch64) {
-        	// omit check for aarch64
+		// omit check for aarch64
 	} else {
 		static assert(Display.sizeof == 176);
 		static assert(XPointer.sizeof == 4);
@@ -19150,7 +19150,7 @@ extern(System) nothrow @nogc {
 
 
  	private __gshared extern(System) BOOL function(int) wglSwapIntervalEXT;
-        void wglSetVSync(bool wait) {
+	void wglSetVSync(bool wait) {
 		if(wglSwapIntervalEXT is null) {
 			wglSwapIntervalEXT = cast(typeof(wglSwapIntervalEXT)) wglGetProcAddress("wglSwapIntervalEXT");
 			if(wglSwapIntervalEXT is null)
@@ -23063,20 +23063,20 @@ __gshared bool openGlLibrariesSuccessfullyLoaded = true;
 
 private mixin template DynamicLoadSupplementalOpenGL(Iface) {
 	// mixin(staticForeachReplacement!Iface);
-        static foreach(name; __traits(derivedMembers, Iface))
-                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+	static foreach(name; __traits(derivedMembers, Iface))
+		mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
 	void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
 	}
 
-        void loadDynamicLibraryForReal() {
-                foreach(name; __traits(derivedMembers, Iface)) {
-                        mixin("alias tmp = " ~ name ~ ";");
-                        tmp = cast(typeof(tmp)) glbindGetProcAddress(name);
-                        if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from supplemental OpenGL");
-                }
-        }
+	void loadDynamicLibraryForReal() {
+		foreach(name; __traits(derivedMembers, Iface)) {
+			mixin("alias tmp = " ~ name ~ ";");
+			tmp = cast(typeof(tmp)) glbindGetProcAddress(name);
+			if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from supplemental OpenGL");
+		}
+	}
 }
 
 /+
@@ -23085,8 +23085,8 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 	// just this for gdc 9....
 	// when i drop support for it and switch to gdc10, we can put this original back for a slight compile time ram decrease
 
-        static foreach(name; __traits(derivedMembers, Iface))
-                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+	static foreach(name; __traits(derivedMembers, Iface))
+		mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 */
 
 	char[] code = new char[](__traits(derivedMembers, Iface).length * 64);
@@ -23099,8 +23099,8 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 		pos += what.length;
 	}
 
-        foreach(name; __traits(derivedMembers, Iface)) {
-                append(`__gshared typeof(&__traits(getMember, Iface, "`);
+	foreach(name; __traits(derivedMembers, Iface)) {
+		append(`__gshared typeof(&__traits(getMember, Iface, "`);
 		append(name);
 		append(`")) `);
 		append(name);
@@ -23113,13 +23113,13 @@ private const(char)[] staticForeachReplacement(Iface)() pure {
 
 private mixin template DynamicLoad(Iface, string library, int majorVersion, alias success) {
 	//mixin(staticForeachReplacement!Iface);
-        static foreach(name; __traits(derivedMembers, Iface))
-                mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
+	static foreach(name; __traits(derivedMembers, Iface))
+		mixin("__gshared typeof(&__traits(getMember, Iface, name)) " ~ name ~ ";");
 
 	private __gshared void* libHandle;
 	private __gshared bool attempted;
 
-        void loadDynamicLibrary() @nogc {
+	void loadDynamicLibrary() @nogc {
 		(cast(void function() @nogc) &loadDynamicLibraryForReal)();
 	}
 
@@ -23130,19 +23130,20 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
 		return libHandle !is null;
 	}
 
-        void loadDynamicLibraryForReal() {
+	void loadDynamicLibraryForReal() {
 		attempted = true;
-                version(Posix) {
-                        import core.sys.posix.dlfcn;
+		version(Posix) {
+			import core.sys.posix.dlfcn;
 			version(OSX) {
 				version(X11)
-                        		libHandle = dlopen("/usr/X11/lib/lib" ~ library ~ ".dylib", RTLD_NOW);
+					libHandle = dlopen("/usr/X11/lib/lib" ~ library ~ ".dylib", RTLD_NOW);
 				else
-                        		libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
+					libHandle = dlopen(library ~ ".dylib", RTLD_NOW);
 			} else {
-                        	libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
-				if(libHandle is null)
-                        		libHandle = dlopen(("lib" ~ library ~ ".so." ~ toInternal!string(majorVersion) ~ "\0").ptr, RTLD_NOW);
+				libHandle = dlopen("lib" ~ library ~ ".so", RTLD_NOW);
+				if(libHandle is null) {
+					libHandle = dlopen(("lib" ~ library ~ ".so." ~ toInternal!string(majorVersion) ~ "\0").ptr, RTLD_NOW);
+				}
 			}
 
 			static void* loadsym(void* l, const char* name) {
@@ -23151,38 +23152,38 @@ private mixin template DynamicLoad(Iface, string library, int majorVersion, alia
 					return &abort;
 				return dlsym(l, name);
 			}
-                } else version(Windows) {
-                        import core.sys.windows.winbase;
-                        libHandle = LoadLibrary(library ~ ".dll");
+		} else version(Windows) {
+			import core.sys.windows.winbase;
+			libHandle = LoadLibrary(library ~ ".dll");
 			static void* loadsym(void* l, const char* name) {
 				import core.stdc.stdlib;
 				if(l is null)
 					return &abort;
 				return GetProcAddress(l, name);
 			}
-                }
-                if(libHandle is null) {
-			success = false;
-                        //throw new Exception("load failure of library " ~ library);
 		}
-                foreach(name; __traits(derivedMembers, Iface)) {
-                        mixin("alias tmp = " ~ name ~ ";");
-                        tmp = cast(typeof(tmp)) loadsym(libHandle, name);
-                        if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from " ~ library);
-                }
-        }
+		if(libHandle is null) {
+			success = false;
+			//throw new Exception("load failure of library " ~ library);
+		}
+		foreach(name; __traits(derivedMembers, Iface)) {
+			mixin("alias tmp = " ~ name ~ ";");
+			tmp = cast(typeof(tmp)) loadsym(libHandle, name);
+			if(tmp is null) throw new Exception("load failure of function " ~ name ~ " from " ~ library);
+		}
+	}
 
-        void unloadDynamicLibrary() {
-                version(Posix) {
-                        import core.sys.posix.dlfcn;
-                        dlclose(libHandle);
-                } else version(Windows) {
-                        import core.sys.windows.winbase;
-                        FreeLibrary(libHandle);
-                }
-                foreach(name; __traits(derivedMembers, Iface))
-                        mixin(name ~ " = null;");
-        }
+	void unloadDynamicLibrary() {
+		version(Posix) {
+			import core.sys.posix.dlfcn;
+			dlclose(libHandle);
+		} else version(Windows) {
+			import core.sys.windows.winbase;
+			FreeLibrary(libHandle);
+		}
+		foreach(name; __traits(derivedMembers, Iface))
+			mixin(name ~ " = null;");
+	}
 }
 
 // version(X11)
