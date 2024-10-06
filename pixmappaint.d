@@ -1648,6 +1648,32 @@ void cropInplace(ref Pixmap source, Size targetSize, Point offset = Point(0, 0))
 	source = src.extractToPixmap(source);
 }
 
+/++
+	Rotates an image by 90° clockwise.
+
+	$(PITFALL
+		This function does not work in place.
+		Do not attempt to pass Pixmaps sharing the same buffer for both source
+		and target. Such would lead to a bad result with heavy artifacts.
+	)
+ +/
+void rotateClockwise(const Pixmap source, Pixmap target) @nogc {
+	debug assert(source.data.length == target.data.length);
+
+	const area = source.data.length;
+	const rowLength = source.size.height;
+	ptrdiff_t cursor = -1;
+
+	foreach (px; source.data) {
+		cursor += rowLength;
+		if (cursor > area) {
+			cursor -= (area + 1);
+		}
+
+		target.data[cursor] = px;
+	}
+}
+
 @safe pure nothrow @nogc:
 
 // ==== Blending functions ====
