@@ -375,13 +375,16 @@ struct SubPixmap {
 			Copies the pixel data – cropped to the subimage region –
 			into the target Pixmap.
 
-			Returns:
-				A size-adjusted shallow copy of the input Pixmap overwritten
-				with the image data of the SubPixmap.
+			$(PITFALL
+				Do not attempt to extract a subimage back into the source pixmap.
+				This will fail in cases where source and target regions overlap
+				and potentially crash the program.
+			)
 
 			$(PITFALL
 				While the returned Pixmap utilizes the buffer provided by the input,
 				the returned Pixmap might not exactly match the input.
+				The dimensions (width and height) and the length might have changed.
 
 				Always use the returned Pixmap structure.
 
@@ -393,6 +396,10 @@ struct SubPixmap {
 				pixmap = subPixmap.extractToPixmap(pixmap);
 				---
 			)
+
+			Returns:
+				A size-adjusted shallow copy of the input Pixmap overwritten
+				with the image data of the SubPixmap.
 		 +/
 		Pixmap extractToPixmap(Pixmap target) @nogc const {
 			// Length adjustment
@@ -415,6 +422,19 @@ struct SubPixmap {
 
 			foreach (dstLine; dst) {
 				dstLine[] = src.front[];
+				src.popFront();
+			}
+		}
+
+		private void extractToPixmapCopyPixelByPixelImpl(Pixmap target) @nogc const {
+			auto src = SubPixmapScanner(this);
+			auto dst = PixmapScannerRW(target);
+
+			foreach (dstLine; dst) {
+				const srcLine = src.front;
+				foreach (idx, ref px; dstLine) {
+					px = srcLine[idx];
+				}
 				src.popFront();
 			}
 		}
@@ -1640,12 +1660,18 @@ Pixmap cropNew(const Pixmap source, Size targetSize, Point offset = Point(0, 0))
 /++
 	Crops an image and stores the result in the source buffer.
 
-	The source pixmap structure is passed by ref and gets with a size-adjusted
-	structure using a slice of the same underlying memory.
+	The source pixmap structure is passed by value.
+	A size-adjusted structure using a slice of the same underlying memory is
+	returned.
  +/
-void cropInplace(ref Pixmap source, Size targetSize, Point offset = Point(0, 0)) @nogc {
+Pixmap cropInPlace(Pixmap source, Size targetSize, Point offset = Point(0, 0)) @nogc {
+	Pixmap target = source;
+	target.width = targetSize.width;
+	target.data = target.data[0 .. targetSize.area];
+
 	auto src = const(SubPixmap)(source, targetSize, offset);
-	source = src.extractToPixmap(source);
+	src.extractToPixmapCopyPixelByPixelImpl(target);
+	return target;
 }
 
 /++
@@ -1672,6 +1698,16 @@ void rotateClockwise(const Pixmap source, Pixmap target) @nogc {
 
 		target.data[cursor] = px;
 	}
+}
+
+/++
+	Rotates an image by 90° clockwise.
+	Stores the result in a newly allocated Pixmap.
+ +/
+Pixmap rotateClockwiseNew(const Pixmap source) {
+	auto target = Pixmap(Size(source.height, source.width));
+	source.rotateClockwise(target);
+	return target;
 }
 
 @safe pure nothrow @nogc:
