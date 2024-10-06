@@ -1577,20 +1577,32 @@ void invert(Pixmap pixmap) @nogc {
 	}
 }
 
-///
+/++
+	Crops an image and stores the result in the provided target Pixmap.
+
+	The size of the area to crop the image to
+	is derived from the size of the target.
+ +/
 void crop(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nogc {
 	auto src = const(SubPixmap)(source, target.size, offset);
 	src.extractToPixmapCopyImpl(target);
 }
 
-///
+/++
+	Crops an image and stores the result in a newly allocated Pixmap.
+ +/
 Pixmap cropNew(const Pixmap source, Size targetSize, Point offset = Point(0, 0)) {
 	auto target = Pixmap(targetSize);
 	crop(source, target, offset);
 	return target;
 }
 
-///
+/++
+	Crops an image and stores the result in the source buffer.
+
+	The source pixmap structure is passed by ref and gets with a size-adjusted
+	structure using a slice of the same underlying memory.
+ +/
 void cropInplace(ref Pixmap source, Size targetSize, Point offset = Point(0, 0)) @nogc {
 	auto src = const(SubPixmap)(source, targetSize, offset);
 	source = src.extractToPixmap(source);
