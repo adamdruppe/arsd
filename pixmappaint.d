@@ -402,7 +402,7 @@ struct SubPixmap {
 			return size.height;
 		}
 
-		/// height
+		/// ditto
 		void height(int value) {
 			size.height = value;
 		}
@@ -476,6 +476,15 @@ struct SubPixmap {
 
 			Both defects could indicate an invalid subimage.
 			Use this function to verify the SubPixmap.
+		)
+
+		$(WARNING
+			Do not use invalid SubPixmaps.
+			The library assumes that the SubPixmaps it receives are always valid.
+
+			Non-valid SubPixmaps are not meant to be used for creative effects
+			or similar either. Such uses might lead to unexpected quirks or
+			crashes eventually.
 		)
 	 +/
 	bool isValid() const {
@@ -860,7 +869,7 @@ struct SubPixmapScanner {
 	Wrapper for scanning a [Pixmap] line by line.
 
 	See_also:
-		Unlike [SubPixmapScanner], this does not work with `const(Pixmap)`.
+		Unlike [SubPixmapScanner], this does not work with `const(SubPixmap)`.
  +/
 struct SubPixmapScannerRW {
 	private {
