@@ -53,7 +53,6 @@ private float round(float f) pure @nogc nothrow @trusted {
 
 	- Refactoring the template-mess of blendPixel() & co.
 	- Scaling
-	- Cropping
 	- Rotating
 	- Skewing
 	- HSL
@@ -317,6 +316,70 @@ struct SubPixmap {
 		}
 	}
 
+@safe pure nothrow:
+
+	public {
+		/++
+			Allocates a new Pixmap cropped to the pixel data of the subimage.
+
+			See_also:
+				Use [extractToPixmap] for a non-allocating variant with an .
+		 +/
+		Pixmap extractToNewPixmap() const {
+			auto pm = Pixmap(size);
+			this.extractToPixmap(pm);
+			return pm;
+		}
+
+		/++
+			Copies the pixel data – cropped to the subimage region –
+			into the target Pixmap.
+
+			Returns:
+				A size-adjusted shallow copy of the input Pixmap overwritten
+				with the image data of the SubPixmap.
+
+			$(PITFALL
+				While the returned Pixmap utilizes the buffer provided by the input,
+				the returned Pixmap might not exactly match the input.
+
+				Always use the returned Pixmap structure.
+
+				---
+				// Same buffer, but new structure:
+				auto pixmap2 = subPixmap.extractToPixmap(pixmap);
+
+				// Alternatively, replace the old structure:
+				pixmap = subPixmap.extractToPixmap(pixmap);
+				---
+			)
+		 +/
+		Pixmap extractToPixmap(Pixmap target) @nogc const {
+			// Length adjustment
+			const l = this.length;
+			if (target.data.length < l) {
+				assert(false, "The target Pixmap is too small.");
+			} else if (target.data.length > l) {
+				target.data = target.data[0 .. l];
+			}
+
+			target.width = this.width;
+
+			extractToPixmapCopyImpl(target);
+			return target;
+		}
+
+		private void extractToPixmapCopyImpl(Pixmap target) @nogc const {
+			auto src = SubPixmapScanner(this);
+			auto dst = PixmapScannerRW(target);
+
+			foreach (dstLine; dst) {
+				dstLine[] = src.front[];
+				src.popFront();
+			}
+		}
+	}
+
 @safe pure nothrow @nogc:
 
 	public {
@@ -342,6 +405,13 @@ struct SubPixmap {
 		/// height
 		void height(int value) {
 			size.height = value;
+		}
+
+		/++
+			Number of pixels in the subimage.
+		 +/
+		int length() const {
+			return size.area;
 		}
 	}
 
@@ -435,14 +505,34 @@ struct SubPixmap {
 	}
 
 	/++
+		Copies the pixels of this subimage to a target image.
+
+		The target MUST have the same size.
+
+		See_also:
+			Usually you’ll want to use [extractToPixmap] or [drawPixmap] instead.
+	 +/
+	public void xferTo(SubPixmap target) const {
+		debug assert(target.size == this.size);
+
+		auto src = SubPixmapScanner(this);
+		auto dst = SubPixmapScannerRW(target);
+
+		foreach (dstLine; dst) {
+			dstLine[] = src.front[];
+			src.popFront();
+		}
+	}
+
+	/++
 		Blends the pixels of this subimage into a target image.
 
 		The target MUST have the same size.
 
 		See_also:
-			Usually you’ll want to use [drawPixmap] instead.
+			Usually you’ll want to use [extractToPixmap] or [drawPixmap] instead.
 	 +/
-	public void xferTo(SubPixmap target, Blend blend = blendNormal) const {
+	public void xferTo(SubPixmap target, Blend blend) const {
 		debug assert(target.size == this.size);
 
 		auto src = SubPixmapScanner(this);
@@ -688,6 +778,44 @@ struct PixmapScanner {
 	$(I Advanced functionality.)
 
 	Wrapper for scanning a [Pixmap] line by line.
+
+	See_also:
+		Unlike [PixmapScanner], this does not work with `const(Pixmap)`.
+ +/
+struct PixmapScannerRW {
+	private {
+		Pixel[] _data;
+		int _width;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(Pixmap pixmap) {
+		_data = pixmap.data;
+		_width = pixmap.width;
+	}
+
+	///
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	///
+	Pixel[] front() {
+		return _data[0 .. _width];
+	}
+
+	///
+	void popFront() {
+		_data = _data[_width .. $];
+	}
+}
+
+/++
+	$(I Advanced functionality.)
+
+	Wrapper for scanning a [Pixmap] line by line.
  +/
 struct SubPixmapScanner {
 	private {
@@ -847,10 +975,10 @@ private struct OriginRectangle {
 	}
 }
 
-@safe pure nothrow @nogc:
+@safe pure nothrow:
 
 // misc
-private {
+private @nogc {
 	Point pos(Rectangle r) => r.upperLeft;
 
 	T max(T)(T a, T b) => (a >= b) ? a : b;
@@ -932,7 +1060,7 @@ unittest {
 	Returns:
 		sqrt(value / 255f) * 255
  +/
-ubyte intNormalizedSqrt(const ubyte value) {
+ubyte intNormalizedSqrt(const ubyte value) @nogc {
 	switch (value) {
 	default:
 		// unreachable
@@ -1337,7 +1465,7 @@ unittest {
 /++
 	Limits a value to a maximum of 0xFF (= 255).
  +/
-ubyte clamp255(Tint)(const Tint value) {
+ubyte clamp255(Tint)(const Tint value) @nogc {
 	pragma(inline, true);
 	return (value < 0xFF) ? value.castTo!ubyte : 0xFF;
 }
@@ -1358,7 +1486,7 @@ ubyte clamp255(Tint)(const Tint value) {
 	Returns:
 		`round(value * nPercentage / 255.0)`
  +/
-ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
+ubyte n255thsOf(const ubyte nPercentage, const ubyte value) @nogc {
 	immutable factor = (nPercentage | (nPercentage << 8));
 	return (((value * factor) + 0x8080) >> 16);
 }
@@ -1382,6 +1510,8 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	}
 }
 
+// ==== Image manipulation functions ====
+
 /++
 	Sets the opacity of a [Pixmap].
 
@@ -1391,7 +1521,7 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) {
 	See_Also:
 		Use [opacityF] with opacity values in percent (%).
  +/
-void opacity(Pixmap pixmap, const ubyte opacity) {
+void opacity(Pixmap pixmap, const ubyte opacity) @nogc {
 	foreach (ref px; pixmap.data) {
 		px.a = opacity.n255thsOf(px.a);
 	}
@@ -1406,7 +1536,7 @@ void opacity(Pixmap pixmap, const ubyte opacity) {
 	See_Also:
 		Use [opacity] with 8-bit integer opacity values (in 255ths).
  +/
-void opacityF(Pixmap pixmap, const float opacity)
+void opacityF(Pixmap pixmap, const float opacity) @nogc
 in (opacity >= 0)
 in (opacity <= 1.0) {
 	immutable opacity255 = round(opacity * 255).castTo!ubyte;
@@ -1416,7 +1546,7 @@ in (opacity <= 1.0) {
 /++
 	Inverts a color (to its negative color).
  +/
-Pixel invert(const Pixel color) {
+Pixel invert(const Pixel color) @nogc {
 	return Pixel(
 		0xFF - color.r,
 		0xFF - color.g,
@@ -1432,11 +1562,32 @@ Pixel invert(const Pixel color) {
 		Develops a positive image when applied to a negative one.
 	)
  +/
-void invert(Pixmap pixmap) {
+void invert(Pixmap pixmap) @nogc {
 	foreach (ref px; pixmap.data) {
 		px = invert(px);
 	}
 }
+
+///
+void crop(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nogc {
+	auto src = const(SubPixmap)(source, target.size, offset);
+	src.extractToPixmapCopyImpl(target);
+}
+
+///
+Pixmap cropNew(const Pixmap source, Size targetSize, Point offset = Point(0, 0)) {
+	auto target = Pixmap(targetSize);
+	crop(source, target, offset);
+	return target;
+}
+
+///
+void cropInplace(ref Pixmap source, Size targetSize, Point offset = Point(0, 0)) @nogc {
+	auto src = const(SubPixmap)(source, targetSize, offset);
+	source = src.extractToPixmap(source);
+}
+
+@safe pure nothrow @nogc:
 
 // ==== Blending functions ====
 
