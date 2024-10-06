@@ -140,6 +140,46 @@ struct Pixmap {
 		return c;
 	}
 
+	/++
+		Copies the pixel data to the target Pixmap.
+
+		Returns:
+			A size-adjusted shallow copy of the input Pixmap overwritten
+			with the image data of the SubPixmap.
+
+		$(PITFALL
+			While the returned Pixmap utilizes the buffer provided by the input,
+			the returned Pixmap might not exactly match the input.
+
+			Always use the returned Pixmap structure.
+
+			---
+			// Same buffer, but new structure:
+			auto pixmap2 = source.copyTo(pixmap);
+
+			// Alternatively, replace the old structure:
+			pixmap = source.copyTo(pixmap);
+			---
+		)
+	 +/
+	Pixmap copyTo(Pixmap target) const {
+		// Length adjustment
+		const l = this.length;
+		if (target.data.length < l) {
+			assert(false, "The target Pixmap is too small.");
+		} else if (target.data.length > l) {
+			target.data = target.data[0 .. l];
+		}
+
+		copyToImpl(target);
+
+		return target;
+	}
+
+	private void copyToImpl(Pixmap target) const {
+		target.data[] = this.data[];
+	}
+
 	// undocumented: really shouldn’t be used.
 	// carries the risks of `length` and `width` getting out of sync accidentally.
 	deprecated("Use `size` instead.")
