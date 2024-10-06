@@ -15,6 +15,12 @@
 		API is subject to changes until further notice.
 	)
 
+	### Colors
+
+	Colors are stored in an RGBA format with 8 bit per channel.
+	See [arsd.color.Color|Pixel] for details.
+
+
 	### The coordinate system
 
 	The top left corner of a pixmap is its $(B origin) `(0,0)`.
@@ -30,6 +36,53 @@
 	↓
 	x
 	```
+
+
+	### Pixmaps
+
+	A [Pixmap] consist of two fields:
+	$(LIST
+		* a slice (of an array of [Pixel|Pixels])
+		* a width
+	)
+
+	This design comes with many advantages.
+	First and foremost it brings simplicity.
+
+	Pixel data buffers can be reused across pixmaps,
+	even when those have different sizes.
+	Simply slice the buffer to fit just enough pixels for the new pixmap.
+
+	Memory management can also happen outside of the pixmap.
+	It is possible to use a buffer allocated elsewhere. (Such a one shouldn’t
+	be mixed with the built-in memory management facilities of the pixmap type.
+	Otherwise one will end up with GC-allocated copies.)
+
+	The most important downside is that it makes pixmaps basically a reference
+	type.
+
+	Copying a pixmap creates a shallow copy still poiting to the same pixel
+	data that is also used by the source pixmap.
+	This implies that manipulating the source pixels also manipulates the
+	pixels of the copy – and vice versa.
+
+	The issues implied by this become an apparent when one of the references
+	modifies the pixel data in a way that also affects the dimensions of the
+	image; such as cropping.
+
+	Pixmaps describe how pixel data stored in a 1-dimensional memory space is
+	meant to be interpreted as a 2-dimensional image.
+
+	A notable implication of this 1D ↔ 2D mapping is, that slicing the 1D data
+	leads to non-sensical results in the 2D space when the 1D-slice is
+	reinterpreted as 2D-image.
+
+	Especially slicing across scanlines (→ horizontal rows of an image) is
+	prone to such errors.
+
+	(Slicing of the 1D array data can actually be utilized to cut off the
+	bottom part of an image. Any other naiv cropping operations will run into
+	the aforementioned issues.)
  +/
 module arsd.pixmappaint;
 
