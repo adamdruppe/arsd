@@ -343,12 +343,15 @@ struct Pixmap {
 	/++
 		Retrieves a rectangular subimage of the pixmap.
 	 +/
-	inout(SubPixmap) scanSubPixmap(Point pos, Size size) inout {
+	inout(SubPixmap) scanArea(Point pos, Size size) inout {
 		return inout(SubPixmap)(this, size, pos);
 	}
 
 	/// TODO: remove
-	deprecated alias scan2D = scanSubPixmap;
+	deprecated alias scanSubPixmap = scanArea;
+
+	/// TODO: remove
+	deprecated alias scan2D = scanArea;
 
 	/++
 		Retrieves the first line of the Pixmap.
