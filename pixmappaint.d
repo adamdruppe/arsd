@@ -1933,12 +1933,7 @@ void flipVertically(const Pixmap source, Pixmap target) @nogc {
 	auto dst = PixmapScannerRW(target);
 
 	foreach (srcLine; src) {
-		auto dstLine = dst.back;
-		foreach (idxSrc, px; srcLine) {
-			const idxDst = (dstLine.length - (idxSrc + 1));
-			dstLine[idxDst] = px;
-		}
-
+		dst.back[] = srcLine[];
 		dst.popBack();
 	}
 }
@@ -1951,7 +1946,7 @@ Pixmap flipVerticallyNew(const Pixmap source) {
 }
 
 /// ditto
-void flipVerticallyInPlace(Pixmap source) {
+void flipVerticallyInPlace(Pixmap source) @nogc {
 	auto scanner = PixmapScannerRW(source);
 
 	while (!scanner.empty) {
