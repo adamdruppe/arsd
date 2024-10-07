@@ -920,6 +920,11 @@ struct PixmapScanner {
 	}
 
 	///
+	typeof(this) save() {
+		return this;
+	}
+
+	///
 	bool empty() const {
 		return (_data.length == 0);
 	}
@@ -932,6 +937,16 @@ struct PixmapScanner {
 	///
 	void popFront() {
 		_data = _data[_width .. $];
+	}
+
+	///
+	const(Pixel)[] back() const {
+		return _data[($ - _width) .. $];
+	}
+
+	///
+	void popBack() {
+		_data = _data[0 .. ($ - _width)];
 	}
 }
 
@@ -958,6 +973,11 @@ struct PixmapScannerRW {
 	}
 
 	///
+	typeof(this) save() {
+		return this;
+	}
+
+	///
 	bool empty() const {
 		return (_data.length == 0);
 	}
@@ -970,6 +990,16 @@ struct PixmapScannerRW {
 	///
 	void popFront() {
 		_data = _data[_width .. $];
+	}
+
+	///
+	Pixel[] back() {
+		return _data[($ - _width) .. $];
+	}
+
+	///
+	void popBack() {
+		_data = _data[0 .. ($ - _width)];
 	}
 }
 
@@ -995,6 +1025,11 @@ struct SubPixmapScanner {
 	}
 
 	///
+	typeof(this) save() {
+		return this;
+	}
+
+	///
 	bool empty() const {
 		return (_data.length == 0);
 	}
@@ -1012,6 +1047,16 @@ struct SubPixmapScanner {
 		}
 
 		_data = _data[_feed .. $];
+	}
+
+	///
+	const(Pixel)[] back() const {
+		return _data[($ - _width) .. $];
+	}
+
+	///
+	void popBack() {
+		_data = _data[0 .. ($ - _width)];
 	}
 }
 
@@ -1040,6 +1085,11 @@ struct SubPixmapScannerRW {
 	}
 
 	///
+	typeof(this) save() {
+		return this;
+	}
+
+	///
 	bool empty() const {
 		return (_data.length == 0);
 	}
@@ -1057,6 +1107,16 @@ struct SubPixmapScannerRW {
 		}
 
 		_data = _data[_feed .. $];
+	}
+
+	///
+	Pixel[] back() {
+		return _data[($ - _width) .. $];
+	}
+
+	///
+	void popBack() {
+		_data = _data[0 .. ($ - _width)];
 	}
 }
 
