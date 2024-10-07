@@ -343,9 +343,12 @@ struct Pixmap {
 	/++
 		Retrieves a rectangular subimage of the pixmap.
 	 +/
-	inout(SubPixmap) scan2D(Point pos, Size size) inout {
+	inout(SubPixmap) scanSubPixmap(Point pos, Size size) inout {
 		return inout(SubPixmap)(this, size, pos);
 	}
+
+	/// TODO: remove
+	deprecated alias scan2D = scanSubPixmap;
 
 	/++
 		Retrieves the first line of the Pixmap.
@@ -355,6 +358,42 @@ struct Pixmap {
 	 +/
 	inout(Pixel)[] scanLine() inout {
 		return data[0 .. width];
+	}
+
+	public {
+		/++
+			Provides access to a single pixel at the requested 2D-position.
+
+			See_also:
+				Accessing pixels through the [data] array will be more useful,
+				usually.
+		 +/
+		ref inout(Pixel) accessPixel(Point pos) inout @system {
+			const idx = linearOffset(pos, this.width);
+			return this.data[idx];
+		}
+
+		/// ditto
+		Pixel getPixel(Point pos) const {
+			const idx = linearOffset(pos, this.width);
+			return this.data[idx];
+		}
+
+		/// ditto
+		Pixel getPixel(int x, int y) const {
+			return this.getPixel(Point(x, y));
+		}
+
+		/// ditto
+		void setPixel(Point pos, Pixel value) {
+			const idx = linearOffset(pos, this.width);
+			this.data[idx] = value;
+		}
+
+		/// ditto
+		void setPixel(int x, int y, Pixel value) {
+			return this.setPixel(Point(x, y), value);
+		}
 	}
 
 	/// Clears the buffer’s contents (by setting each pixel to the same color)
@@ -1733,7 +1772,10 @@ Pixmap cropInPlace(Pixmap source, Size targetSize, Point offset = Point(0, 0)) @
 	$(PITFALL
 		This function does not work in place.
 		Do not attempt to pass Pixmaps sharing the same buffer for both source
-		and target. Such would lead to a bad result with heavy artifacts.
+		and target. Such would lead to bad results with heavy artifacts.
+
+		Do not use the artifacts produced by this as a creative effect.
+		Those are an implementation detail.
 	)
  +/
 void rotateClockwise(const Pixmap source, Pixmap target) @nogc {
