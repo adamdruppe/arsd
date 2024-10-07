@@ -1763,6 +1763,57 @@ Pixmap rotateClockwiseNew(const Pixmap source) {
 	return target;
 }
 
+/++
+	Flips an image horizontally.
+
+	```
+	╔═══╗   ╔═══╗
+	║!. ║ → ║ .!║
+	╚═══╝   ╚═══╝
+	```
+ +/
+void flipHorizontally(const Pixmap source, Pixmap target) @nogc {
+	debug assert(source.size == target.size);
+
+	auto src = PixmapScanner(source);
+	auto dst = PixmapScannerRW(target);
+
+	foreach (srcLine; src) {
+		auto dstLine = dst.front;
+		foreach (idxSrc, px; srcLine) {
+			const idxDst = (dstLine.length - (idxSrc + 1));
+			dstLine[idxDst] = px;
+		}
+
+		dst.popFront();
+	}
+}
+
+/// ditto
+Pixmap flipHorizontallyNew(const Pixmap source) {
+	auto target = Pixmap(source.size);
+	source.flipHorizontally(target);
+	return target;
+}
+
+/// ditto
+void flipHorizontallyInPlace(Pixmap source) @nogc {
+	auto scanner = PixmapScannerRW(source);
+
+	foreach (line; scanner) {
+		const idxMiddle = (1 + (line.length >> 1));
+		auto halfA = line[0 .. idxMiddle];
+
+		foreach (idxA, ref px; halfA) {
+			const idxB = (line.length - (idxA + 1));
+			Pixel tmp = line[idxB];
+			// swap
+			line[idxB] = px;
+			px = tmp;
+		}
+	}
+}
+
 @safe pure nothrow @nogc:
 
 // ==== Blending functions ====
