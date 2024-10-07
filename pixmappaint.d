@@ -1056,7 +1056,12 @@ struct SubPixmapScanner {
 
 	///
 	void popBack() {
-		_data = _data[0 .. ($ - _width)];
+		if (_data.length < _feed) {
+			_data.length = 0;
+			return;
+		}
+
+		_data = _data[0 .. ($ - _feed)];
 	}
 }
 
@@ -1116,7 +1121,12 @@ struct SubPixmapScannerRW {
 
 	///
 	void popBack() {
-		_data = _data[0 .. ($ - _width)];
+		if (_data.length < _feed) {
+			_data.length = 0;
+			return;
+		}
+
+		_data = _data[0 .. ($ - _feed)];
 	}
 }
 
