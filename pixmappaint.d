@@ -434,6 +434,10 @@ struct SubPixmap {
 				and potentially crash the program.
 			)
 
+			Returns:
+				A size-adjusted shallow copy of the input Pixmap overwritten
+				with the image data of the SubPixmap.
+
 			$(PITFALL
 				While the returned Pixmap utilizes the buffer provided by the input,
 				the returned Pixmap might not exactly match the input.
@@ -449,10 +453,6 @@ struct SubPixmap {
 				pixmap = subPixmap.extractToPixmap(pixmap);
 				---
 			)
-
-			Returns:
-				A size-adjusted shallow copy of the input Pixmap overwritten
-				with the image data of the SubPixmap.
 		 +/
 		Pixmap extractToPixmap(Pixmap target) @nogc const {
 			// Length adjustment
