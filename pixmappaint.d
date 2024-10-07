@@ -1870,7 +1870,7 @@ Pixmap rotateClockwiseNew(const Pixmap source) {
 
 	```
 	╔═══╗   ╔═══╗
-	║!. ║ → ║ .!║
+	║#-.║ → ║.-#║
 	╚═══╝   ╚═══╝
 	```
  +/
@@ -1908,11 +1908,69 @@ void flipHorizontallyInPlace(Pixmap source) @nogc {
 
 		foreach (idxA, ref px; halfA) {
 			const idxB = (line.length - (idxA + 1));
-			Pixel tmp = line[idxB];
+			const tmp = line[idxB];
 			// swap
 			line[idxB] = px;
 			px = tmp;
 		}
+	}
+}
+
+/++
+	Flips an image vertically.
+
+	```
+	╔═══╗   ╔═══╗
+	║## ║   ║  -║
+	║  -║ → ║## ║
+	╚═══╝   ╚═══╝
+	```
+ +/
+void flipVertically(const Pixmap source, Pixmap target) @nogc {
+	debug assert(source.size == target.size);
+
+	auto src = PixmapScanner(source);
+	auto dst = PixmapScannerRW(target);
+
+	foreach (srcLine; src) {
+		auto dstLine = dst.back;
+		foreach (idxSrc, px; srcLine) {
+			const idxDst = (dstLine.length - (idxSrc + 1));
+			dstLine[idxDst] = px;
+		}
+
+		dst.popBack();
+	}
+}
+
+/// ditto
+Pixmap flipVerticallyNew(const Pixmap source) {
+	auto target = Pixmap(source.size);
+	source.flipVertically(target);
+	return target;
+}
+
+/// ditto
+void flipVerticallyInPlace(Pixmap source) {
+	auto scanner = PixmapScannerRW(source);
+
+	while (!scanner.empty) {
+		auto a = scanner.front;
+		auto b = scanner.back;
+
+		// middle line? (odd number of lines)
+		if (a.ptr is b.ptr) {
+			break;
+		}
+
+		foreach (idx, ref pxA; a) {
+			const tmp = pxA;
+			pxA = b[idx];
+			b[idx] = tmp;
+		}
+
+		scanner.popFront();
+		scanner.popBack();
 	}
 }
 
