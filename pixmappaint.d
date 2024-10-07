@@ -1866,6 +1866,58 @@ Pixmap rotateClockwiseNew(const Pixmap source) {
 }
 
 /++
+	Rotates an image by 180°.
+ +/
+void rotate180deg(const Pixmap source, Pixmap target) @nogc {
+	debug assert(source.size == target.size);
+
+	// Technically, this is implemented as flip vertical + flip horizontal.
+	auto src = PixmapScanner(source);
+	auto dst = PixmapScannerRW(target);
+
+	foreach (srcLine; src) {
+		auto dstLine = dst.back;
+		foreach (idxSrc, px; srcLine) {
+			const idxDst = (dstLine.length - (idxSrc + 1));
+			dstLine[idxDst] = px;
+		}
+		dst.popBack();
+	}
+}
+
+/// ditto
+Pixmap rotate180degNew(const Pixmap source) {
+	auto target = Pixmap(source.size);
+	source.rotate180deg(target);
+	return target;
+}
+
+/// ditto
+void rotate180degInPlace(Pixmap source) @nogc {
+	auto scanner = PixmapScannerRW(source);
+
+	while (!scanner.empty) {
+		auto a = scanner.front;
+		auto b = scanner.back;
+
+		// middle line? (odd number of lines)
+		if (a.ptr is b.ptr) {
+			break;
+		}
+
+		foreach (idxSrc, ref pxA; a) {
+			const idxDst = (b.length - (idxSrc + 1));
+			const tmp = pxA;
+			pxA = b[idxDst];
+			b[idxDst] = tmp;
+		}
+
+		scanner.popFront();
+		scanner.popBack();
+	}
+}
+
+/++
 	Flips an image horizontally.
 
 	```
