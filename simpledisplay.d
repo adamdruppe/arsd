@@ -6728,6 +6728,8 @@ version(X11) {
 		setX11Selection!atomName(window, new X11SetSelectionHandler_Text(text), after);
 	}
 
+	private __gshared bool mightShortCircuitClipboard;
+
 	void setX11Selection(string atomName)(SimpleWindow window, X11SetSelectionHandler data, void delegate() after = null) {
 		assert(window !is null);
 
@@ -6736,17 +6738,21 @@ version(X11) {
 		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
 		else Atom a = GetAtom!atomName(display);
 
+		if(mightShortCircuitClipboard)
 		if(auto ptr = a in window.impl.setSelectionHandlers) {
 			// we already have it, don't even need to inform the X server
 			// sdpyPrintDebugString("short circuit in set");
 			*ptr = data;
-		} else {
-			// we don't have it, tell X we want it
-			XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
-			window.impl.setSelectionHandlers[a] = data;
+			return;
 		}
+
+		// we don't have it, tell X we want it
+		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
+		window.impl.setSelectionHandlers[a] = data;
+		mightShortCircuitClipboard = true;
 	}
 
+	/+
 	/++
 		History:
 			Added September 28, 2024
@@ -6762,6 +6768,7 @@ version(X11) {
 		else
 			return false;
 	}
+	+/
 
 	///
 	void getPrimarySelection(SimpleWindow window, void delegate(in char[]) handler) {
@@ -6804,46 +6811,50 @@ version(X11) {
 		}
 	}
 
+	static class X11GetSelectionHandler_Text : X11GetSelectionHandler {
+		this(void delegate(in char[]) handler) {
+			this.handler = handler;
+		}
+
+		mixin X11GetSelectionHandler_Basics;
+
+		void delegate(in char[]) handler;
+
+		void handleData(Atom target, in ubyte[] data) {
+			// import std.stdio; writeln(target, " ", data);
+			if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
+				handler(cast(const char[]) data);
+			else if(target == None && data is null)
+				handler(null); // no suitable selection exists
+		}
+
+		Atom findBestFormat(Atom[] answer) {
+			Atom best = None;
+			foreach(option; answer) {
+				if(option == GetAtom!"UTF8_STRING"(XDisplayConnection.get)) {
+					best = option;
+					break;
+				} else if(option == XA_STRING) {
+					best = option;
+				} else if(option == GetAtom!"text/plain"(XDisplayConnection.get)) {
+					best = option;
+				}
+			}
+			return best;
+		}
+	}
+
 	///
 	void getX11Selection(string atomName)(SimpleWindow window, void delegate(in char[]) handler, Time timestamp = 0 /* CurrentTime */) {
 		assert(window !is null);
 
 		auto display = XDisplayConnection.get();
-		auto atom = GetAtom!atomName(display);
 
-		static class X11GetSelectionHandler_Text : X11GetSelectionHandler {
-			this(void delegate(in char[]) handler) {
-				this.handler = handler;
-			}
+		static if (atomName == "PRIMARY") Atom atom = XA_PRIMARY;
+		else static if (atomName == "SECONDARY") Atom atom = XA_SECONDARY;
+		else Atom atom = GetAtom!atomName(display);
 
-			mixin X11GetSelectionHandler_Basics;
-
-			void delegate(in char[]) handler;
-
-			void handleData(Atom target, in ubyte[] data) {
-				// import std.stdio; writeln(target, " ", data);
-				if(target == GetAtom!"UTF8_STRING"(XDisplayConnection.get) || target == XA_STRING || target == GetAtom!"text/plain"(XDisplayConnection.get))
-					handler(cast(const char[]) data);
-				else if(target == None && data is null)
-					handler(null); // no suitable selection exists
-			}
-
-			Atom findBestFormat(Atom[] answer) {
-				Atom best = None;
-				foreach(option; answer) {
-					if(option == GetAtom!"UTF8_STRING"(XDisplayConnection.get)) {
-						best = option;
-						break;
-					} else if(option == XA_STRING) {
-						best = option;
-					} else if(option == GetAtom!"text/plain"(XDisplayConnection.get)) {
-						best = option;
-					}
-				}
-				return best;
-			}
-		}
-
+		if(mightShortCircuitClipboard)
 		if(auto ptr = atom in window.impl.setSelectionHandlers) {
 			if(auto txt = (cast(X11SetSelectionHandler_Text) *ptr)) {
 				// we already have it! short circuit everything
@@ -6854,7 +6865,6 @@ version(X11) {
 			}
 		}
 
-
 		window.impl.getSelectionHandlers[atom] = new X11GetSelectionHandler_Text(handler);
 
 		auto target = GetAtom!"TARGETS"(display);
@@ -6864,6 +6874,7 @@ version(X11) {
 	}
 
 	/// Gets the image on the clipboard, if there is one. Added July 2020.
+	/// only supports bmps. using this function will import arsd.bmp.
 	void getX11Selection(string atomName)(SimpleWindow window, void delegate(MemoryImage) handler) {
 		assert(window !is null);
 
@@ -15880,6 +15891,7 @@ version(X11) {
 				// writeln("SelectionClear");
 			}
 			SimpleWindow.impl.setSelectionHandlers.remove(e.xselectionclear.selection);
+			mightShortCircuitClipboard = false;
 		  break;
 		  case EventType.SelectionRequest:
 		  	if(auto win = e.xselectionrequest.owner in SimpleWindow.nativeMapping)
@@ -16072,6 +16084,7 @@ version(X11) {
 		  break;
 		  case EventType.FocusIn:
 		  case EventType.FocusOut:
+			mightShortCircuitClipboard = false; // if the focus has changed, good chance the clipboard cache is invalidated too, kinda hacky but always better to skip when unnecessary than use when we shouldn't have
 
 		  	if(auto win = e.xfocus.window in SimpleWindow.nativeMapping) {
 				/+
@@ -18433,6 +18446,7 @@ struct Visual
 			CGImageRelease(cgImage);
 		}
 
+		extern(D)
 		private void mouseHelper(NSEvent event, MouseEventType type, MouseButton button) {
 			MouseEvent me;
 			me.type = type;
@@ -18518,6 +18532,7 @@ struct Visual
 			keyHelper(event, false);
 		}
 
+		extern(D)
 		private void keyHelper(NSEvent event, bool pressed) {
 			if(simpleWindow.handleKeyEvent) {
 				KeyEvent ev;
