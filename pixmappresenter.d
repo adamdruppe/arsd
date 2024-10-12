@@ -902,7 +902,7 @@ final class PixmapPresenter {
 			_renderer = renderer;
 
 			// create software framebuffer
-			auto framebuffer = Pixmap(config.renderer.resolution);
+			auto framebuffer = Pixmap.makeNew(config.renderer.resolution);
 
 			// OpenGL?
 			auto openGlOptions = OpenGlOptions.no;

@@ -152,6 +152,61 @@ static assert(Pixel.sizeof == uint.sizeof);
 }
 
 /++
+	Meta data for the construction a Pixmap
+ +/
+struct PixmapBlueprint {
+	/++
+		Total number of pixels stored in a Pixmap.
+	 +/
+	size_t length;
+
+	/++
+		Width of a Pixmap.
+	 +/
+	int width;
+
+@safe pure nothrow @nogc:
+
+	///
+	public static PixmapBlueprint fromSize(const Size size) {
+		return PixmapBlueprint(
+			size.area,
+			size.width,
+		);
+	}
+
+	///
+	public static PixmapBlueprint fromPixmap(const Pixmap pixmap) {
+		return PixmapBlueprint(
+			pixmap.length,
+			pixmap.width,
+		);
+	}
+
+	/++
+		Determines whether the blueprint is plausible.
+	 +/
+	bool isValid() const {
+		return ((length % width) == 0);
+	}
+
+	/++
+		Height of a Pixmap.
+
+		See_also:
+			This is the counterpart to the dimension known as [width].
+	 +/
+	int height() const {
+		return castTo!int(length / width);
+	}
+
+	///
+	Size size() const {
+		return Size(width, height);
+	}
+}
+
+/++
 	Pixel data container
  +/
 struct Pixmap {
@@ -165,11 +220,13 @@ struct Pixmap {
 @safe pure nothrow:
 
 	///
+	deprecated("Do `Pixmap.makeNew(size)` instead.")
 	this(Size size) {
 		this.size = size;
 	}
 
 	///
+	deprecated("Do `Pixmap.makeNew(Size(width, height))` instead.")
 	this(int width, int height)
 	in (width > 0)
 	in (height > 0) {
@@ -181,6 +238,17 @@ struct Pixmap {
 	in (data.length % width == 0) {
 		this.data = data;
 		this.width = width;
+	}
+
+	///
+	static Pixmap makeNew(PixmapBlueprint blueprint) {
+		auto data = new Pixel[](blueprint.length);
+		return Pixmap(data, blueprint.width);
+	}
+
+	///
+	static Pixmap makeNew(Size size) {
+		return Pixmap.makeNew(PixmapBlueprint.fromSize(size));
 	}
 
 	/++
@@ -215,7 +283,7 @@ struct Pixmap {
 			---
 		)
 	 +/
-	Pixmap copyTo(Pixmap target) const {
+	Pixmap copyTo(Pixmap target) @nogc const {
 		// Length adjustment
 		const l = this.length;
 		if (target.data.length < l) {
@@ -229,7 +297,7 @@ struct Pixmap {
 		return target;
 	}
 
-	private void copyToImpl(Pixmap target) const {
+	private void copyToImpl(Pixmap target) @nogc const {
 		target.data[] = this.data[];
 	}
 
@@ -306,6 +374,23 @@ struct Pixmap {
 	 +/
 	int pitch() inout {
 		return (width * int(Pixel.sizeof));
+	}
+
+	/++
+		Adjusts the Pixmap according to the provided blueprint.
+
+		The blueprint must not be larger than the data buffer of the pixmap.
+
+		This function does not reallocate the pixel data buffer.
+
+		If the blueprint is larger than the data buffer of the pixmap,
+		this will result in a bounds-check error if applicable.
+	 +/
+	void adjustTo(PixmapBlueprint blueprint) {
+		debug assert(this.data.length >= blueprint.length);
+		debug assert(blueprint.isValid);
+		this.data = this.data[0 .. blueprint.length];
+		this.width = blueprint.width;
 	}
 
 	/++
@@ -461,7 +546,7 @@ struct SubPixmap {
 				Use [extractToPixmap] for a non-allocating variant with an .
 		 +/
 		Pixmap extractToNewPixmap() const {
-			auto pm = Pixmap(size);
+			auto pm = Pixmap.makeNew(size);
 			this.extractToPixmap(pm);
 			return pm;
 		}
