@@ -433,13 +433,13 @@ struct Pixmap {
 @safe pure nothrow:
 
 	///
-	deprecated("Do `Pixmap.makeNew(size)` instead.")
+	deprecated("Use `Pixmap.makeNew(size)` instead.")
 	this(Size size) {
 		this.size = size;
 	}
 
 	///
-	deprecated("Do `Pixmap.makeNew(Size(width, height))` instead.")
+	deprecated("Use `Pixmap.makeNew(Size(width, height))` instead.")
 	this(int width, int height)
 	in (width > 0)
 	in (height > 0) {
@@ -2167,6 +2167,13 @@ private void transposeTo(const Pixmap source, Pixmap target) @nogc {
 
 /++
 	Transposes an image.
+
+	```
+	╔══╗   ╔══╗
+	║# ║   ║#+║
+	║+x║ → ║ x║
+	╚══╝   ╚══╝
+	```
  +/
 Pixmap transpose(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.transposeCalcDims());
@@ -2203,6 +2210,13 @@ private void rotateClockwiseTo(const Pixmap source, Pixmap target) @nogc {
 
 /++
 	Rotates an image by 90° clockwise.
+
+	```
+	╔══╗   ╔══╗
+	║# ║   ║+#║
+	║+x║ → ║x ║
+	╚══╝   ╚══╝
+	```
  +/
 Pixmap rotateClockwise(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotateClockwiseCalcDims());
@@ -2230,6 +2244,13 @@ private void rotateCounterClockwiseTo(const Pixmap source, Pixmap target) @nogc 
 
 /++
 	Rotates an image by 90° counter-clockwise.
+
+	```
+	╔══╗   ╔══╗
+	║# ║   ║ x║
+	║+x║ → ║#+║
+	╚══╝   ╚══╝
+	```
  +/
 Pixmap rotateCounterClockwise(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotateCounterClockwiseCalcDims());
@@ -2266,6 +2287,13 @@ private void rotate180degTo(const Pixmap source, Pixmap target) @nogc {
 
 /++
 	Rotates an image by 180°.
+
+	```
+	╔═══╗   ╔═══╗
+	║#- ║   ║%~~║
+	║~~%║ → ║ -#║
+	╚═══╝   ╚═══╝
+	```
  +/
 Pixmap rotate180deg(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotate180degCalcDims());
