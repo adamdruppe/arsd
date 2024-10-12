@@ -37,6 +37,11 @@
 	y
 	```
 
+	Furthermore, $(B length) refers to the areal size of a pixmap.
+	It represents the total number of pixels in a pixmap.
+	It follows from the foregoing that the term $(I long) usually refers to
+	the length (not the width).
+
 
 	### Pixmaps
 
@@ -83,6 +88,173 @@
 	(Slicing of the 1D array data can actually be utilized to cut off the
 	bottom part of an image. Any other naiv cropping operations will run into
 	the aforementioned issues.)
+
+
+	### Image manipulation
+
+	The term “image manipulation function” here refers to functions that
+	manipulate (e.g. transform) an image as a whole.
+
+	Image manipulation functions in this library are provided in up to three
+	flavors:
+
+	$(LIST
+		* a “source to target” function
+		* a “source to newly allocated target” wrapper
+		* $(I optionally) an “in-place” adaption
+	)
+
+	Additionally, a “compute dimensions of target” function is provided.
+
+	#### Source to Target
+
+	The regular “source to target” function takes (at least) two parameters:
+	A source [Pixmap] and a target [Pixmap].
+
+	(Additional operation-specific arguments may be required as well.)
+
+	The target pixmap usually needs to be able to fit at least the same number
+	of pixels as the source holds.
+	Use the corresponding “compute size of target function” to calculate the
+	required size when needed.
+	(A notable exception would be cropping, where to target pixmap must be only
+	at least long enough to hold the area of the size to crop to.)
+
+	The data stored in the buffer of the target pixmap is overwritten by the
+	operation.
+
+	A modified Pixmap structure with adjusted dimensions is returned.
+
+	These functions are named plain and simple after the respective operation
+	they perform; e.g. [flipHorizontally] or [crop].
+
+	---
+	// Allocate a new target Pixmap.
+	Pixmap target = Pixmap.makeNew(
+		flipHorizontallyCalcDims(sourceImage)
+	);
+
+	// Flip the image horizontally and store the updated structure.
+	// (Note: As a horizontal flip does not affect the dimensions of a Pixmap,
+	//        storing the updated structure would not be necessary
+	//        in this specific scenario.)
+	target = sourceImage.flipHorizontally(target);
+	---
+
+	---
+	const cropOffset = Point(0, 0);
+	const cropSize = Size(100, 100);
+
+	// Allocate a new target Pixmap.
+	Pixmap target = Pixmap.makeNew(
+		cropCalcDims(sourceImage, cropSize, cropOffset)
+	);
+
+	// Crop the Pixmap.
+	target = sourceImage.crop(target, cropSize, cropOffset);
+	---
+
+	$(PITFALL
+		“Source to target” functions do not work in place.
+		Do not attempt to pass Pixmaps sharing the same buffer for both source
+		and target. Such would lead to bad results with heavy artifacts.
+
+		Use the “in-place” variant of the operation instead.
+
+		Moreover:
+		Do not use the artifacts produced by this as a creative effect.
+		Those are an implementation detail (and may change at any point).
+	)
+
+	#### Source to New Target
+
+	The “source to newly allocated target” wrapper allocates a new buffer to
+	hold the manipulated target.
+
+	These wrappers are provided for user convenience.
+
+	They are identified by the suffix `-New` that is appended to the name of
+	the corresponding “source to target” function;
+	e.g. [flipHorizontallyNew] or [cropNew].
+
+	---
+	// Create a new flipped Pixmap.
+	Pixmap target = sourceImage.flipHorizontallyNew();
+	---
+
+	---
+	const cropOffset = Point(0, 0);
+	const cropSize = Size(100, 100);
+
+	// Create a new cropped Pixmap.
+	Pixmap target = sourceImage.cropNew(cropSize, cropOffset);
+	---
+
+	#### In-Place
+
+	For selected image manipulation functions a special adaption is provided
+	that stores the result in the source pixel data buffer.
+
+	Depending on the operation, implementing in-place transformations can be
+	either straightforward or a major undertaking (and topic of research).
+	This library focuses and the former and leaves out cases where the latter
+	applies.
+	In particular, algorithms that require allocating further buffers to store
+	temporary results or auxiliary data will probably not get implemented.
+
+	Furthermore, operations where to result is longer than the source cannot
+	be performed in-place.
+
+	Certain in-place manipulation functions return a shallow-copy of the
+	source structure with dimensions adjusted accordingly.
+	This is behavior is not streamlined consistently as the lack of an
+	in-place option for certain operations makes them a special case anyway.
+
+	These function are suffixed with `-InPlace`;
+	e.g. [flipHorizontallyInPlace] or [cropInPlace].
+
+	$(TIP
+		Manipulating the source image directly can lead to unexpected results
+		when the source image is used in multiple places.
+	)
+
+	$(NOTE
+		Users are usually better off to utilize the regular “source to target”
+		functions with a reused pixel data buffer.
+
+		These functions do not serve as a performance optimization.
+		Some of them might perform significantly worse than their regular
+		variant. Always benchmark and profile.
+	)
+
+	---
+	image.flipHorizontallyInPlace();
+	---
+
+	---
+	const cropOffset = Point(0, 0);
+	const cropSize = Size(100, 100);
+
+	image = image.cropInPlace(cropSize, cropOffset);
+	---
+
+
+	#### Compute size of target
+
+	Functions to “compute (the) dimensions of (a) target” are primarily meant
+	to be utilized to calculate the size for allocating new pixmaps to be used
+	as a target for manipulation functions.
+
+	They are provided for all manipulation functions even in cases where they
+	are provide little to no benefit. This is for consistency and to ease
+	development.
+
+	Such functions are identified by a `-CalcDims` suffix;
+	e.g. [flipHorizontallyCalcDims] or [cropCalcDims].
+
+	They receive the same parameters as their corresponding “source to new
+	target” function. For consistency reasons this also applies in cases where
+	certain parameters are irrelevant for the computation of the target size.
  +/
 module arsd.pixmappaint;
 
@@ -1892,53 +2064,88 @@ void invert(Pixmap pixmap) @nogc {
 
 	The size of the area to crop the image to
 	is derived from the size of the target.
+
+	---
+	// This function can be used to omit a redundant size parameter
+	// in cases like this:
+	target = crop(source, target, target.size, offset);
+
+	// → Instead do:
+	cropTo(source, target, offset);
+	---
  +/
-void crop(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nogc {
+void cropTo(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nogc {
 	auto src = const(SubPixmap)(source, target.size, offset);
 	src.extractToPixmapCopyImpl(target);
 }
 
 /++
-	Crops an image and stores the result in a newly allocated Pixmap.
+	Crops an image to the provided size with the requested offset.
+
+	The target Pixmap must be big enough in length to hold the cropped image.
  +/
-Pixmap cropNew(const Pixmap source, Size targetSize, Point offset = Point(0, 0)) {
-	auto target = Pixmap(targetSize);
-	crop(source, target, offset);
+Pixmap crop(const Pixmap source, Pixmap target, Size cropToSize, Point offset = Point(0, 0)) @nogc {
+	target.adjustTo(source.cropCalcDims(cropToSize, offset));
+	cropTo(source, target, offset);
 	return target;
 }
 
-/++
-	Crops an image and stores the result in the source buffer.
+/// ditto
+Pixmap cropNew(const Pixmap source, Size cropToSize, Point offset = Point(0, 0)) {
+	auto target = Pixmap.makeNew(cropToSize);
+	cropTo(source, target, offset);
+	return target;
+}
 
-	The source pixmap structure is passed by value.
-	A size-adjusted structure using a slice of the same underlying memory is
-	returned.
- +/
-Pixmap cropInPlace(Pixmap source, Size targetSize, Point offset = Point(0, 0)) @nogc {
+/// ditto
+Pixmap cropInPlace(Pixmap source, Size cropToSize, Point offset = Point(0, 0)) @nogc {
 	Pixmap target = source;
-	target.width = targetSize.width;
-	target.data = target.data[0 .. targetSize.area];
+	target.width = cropToSize.width;
+	target.data = target.data[0 .. cropToSize.area];
 
-	auto src = const(SubPixmap)(source, targetSize, offset);
+	auto src = const(SubPixmap)(source, cropToSize, offset);
 	src.extractToPixmapCopyPixelByPixelImpl(target);
 	return target;
 }
 
+/// ditto
+PixmapBlueprint cropCalcDims(const Pixmap source, Size cropToSize, Point offset = Point(0, 0)) @nogc {
+	return PixmapBlueprint.fromSize(cropToSize);
+}
+
+private void transposeTo(const Pixmap source, Pixmap target) @nogc {
+	foreach (y; 0 .. target.width) {
+		foreach (x; 0 .. source.width) {
+			const idxSrc = linearOffset(Point(x, y), source.width);
+			const idxDst = linearOffset(Point(y, x), target.width);
+
+			target.data[idxDst] = source.data[idxSrc];
+		}
+	}
+}
+
 /++
-	Rotates an image by 90° clockwise.
-
-	$(PITFALL
-		This function does not work in place.
-		Do not attempt to pass Pixmaps sharing the same buffer for both source
-		and target. Such would lead to bad results with heavy artifacts.
-
-		Do not use the artifacts produced by this as a creative effect.
-		Those are an implementation detail.
-	)
+	Transposes an image.
  +/
-void rotateClockwise(const Pixmap source, Pixmap target) @nogc {
-	debug assert(source.data.length == target.data.length);
+Pixmap transpose(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.transposeCalcDims());
+	source.transposeTo(target);
+	return target;
+}
 
+/// ditto
+Pixmap transposeNew(const Pixmap source) {
+	auto target = Pixmap.makeNew(source.transposeCalcDims());
+	source.transposeTo(target);
+	return target;
+}
+
+/// ditto
+PixmapBlueprint transposeCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint(source.length, source.height);
+}
+
+private void rotateClockwiseTo(const Pixmap source, Pixmap target) @nogc {
 	const area = source.data.length;
 	const rowLength = source.size.height;
 	ptrdiff_t cursor = -1;
@@ -1955,20 +2162,53 @@ void rotateClockwise(const Pixmap source, Pixmap target) @nogc {
 
 /++
 	Rotates an image by 90° clockwise.
-	Stores the result in a newly allocated Pixmap.
  +/
-Pixmap rotateClockwiseNew(const Pixmap source) {
-	auto target = Pixmap(Size(source.height, source.width));
-	source.rotateClockwise(target);
+Pixmap rotateClockwise(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.rotateClockwiseCalcDims());
+	source.rotateClockwiseTo(target);
 	return target;
 }
 
-/++
-	Rotates an image by 180°.
- +/
-void rotate180deg(const Pixmap source, Pixmap target) @nogc {
-	debug assert(source.size == target.size);
+/// ditto
+Pixmap rotateClockwiseNew(const Pixmap source) {
+	auto target = Pixmap.makeNew(source.rotateClockwiseCalcDims());
+	source.rotateClockwiseTo(target);
+	return target;
+}
 
+/// ditto
+PixmapBlueprint rotateClockwiseCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint(source.length, source.height);
+}
+
+private void rotateCounterClockwiseTo(const Pixmap source, Pixmap target) @nogc {
+	// TODO: can this be optimized?
+	target = transpose(source, target);
+	target.flipVerticallyInPlace();
+}
+
+/++
+	Rotates an image by 90° counter-clockwise.
+ +/
+Pixmap rotateCounterClockwise(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.rotateCounterClockwiseCalcDims());
+	source.rotateCounterClockwiseTo(target);
+	return target;
+}
+
+/// ditto
+Pixmap rotateCounterClockwiseNew(const Pixmap source) {
+	auto target = Pixmap.makeNew(source.rotateCounterClockwiseCalcDims());
+	source.rotateCounterClockwiseTo(target);
+	return target;
+}
+
+/// ditto
+PixmapBlueprint rotateCounterClockwiseCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint(source.length, source.height);
+}
+
+private void rotate180degTo(const Pixmap source, Pixmap target) @nogc {
 	// Technically, this is implemented as flip vertical + flip horizontal.
 	auto src = PixmapScanner(source);
 	auto dst = PixmapScannerRW(target);
@@ -1983,10 +2223,19 @@ void rotate180deg(const Pixmap source, Pixmap target) @nogc {
 	}
 }
 
+/++
+	Rotates an image by 180°.
+ +/
+Pixmap rotate180deg(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.rotate180degCalcDims());
+	source.rotate180degTo(target);
+	return target;
+}
+
 /// ditto
 Pixmap rotate180degNew(const Pixmap source) {
-	auto target = Pixmap(source.size);
-	source.rotate180deg(target);
+	auto target = Pixmap.makeNew(source.size);
+	source.rotate180degTo(target);
 	return target;
 }
 
@@ -1994,6 +2243,9 @@ Pixmap rotate180degNew(const Pixmap source) {
 void rotate180degInPlace(Pixmap source) @nogc {
 	auto scanner = PixmapScannerRW(source);
 
+	// Technically, this is implemented as a flip vertical + flip horizontal
+	// combo, i.e. the image is flipped vertically line by line, but the lines
+	// are overwritten in a horizontally flipped way.
 	while (!scanner.empty) {
 		auto a = scanner.front;
 		auto b = scanner.back;
@@ -2015,18 +2267,12 @@ void rotate180degInPlace(Pixmap source) @nogc {
 	}
 }
 
-/++
-	Flips an image horizontally.
+///
+PixmapBlueprint rotate180degCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
+}
 
-	```
-	╔═══╗   ╔═══╗
-	║#-.║ → ║.-#║
-	╚═══╝   ╚═══╝
-	```
- +/
-void flipHorizontally(const Pixmap source, Pixmap target) @nogc {
-	debug assert(source.size == target.size);
-
+private void flipHorizontallyTo(const Pixmap source, Pixmap target) @nogc {
 	auto src = PixmapScanner(source);
 	auto dst = PixmapScannerRW(target);
 
@@ -2041,10 +2287,25 @@ void flipHorizontally(const Pixmap source, Pixmap target) @nogc {
 	}
 }
 
+/++
+	Flips an image horizontally.
+
+	```
+	╔═══╗   ╔═══╗
+	║#-.║ → ║.-#║
+	╚═══╝   ╚═══╝
+	```
+ +/
+Pixmap flipHorizontally(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.flipHorizontallyCalcDims());
+	source.flipHorizontallyTo(target);
+	return target;
+}
+
 /// ditto
 Pixmap flipHorizontallyNew(const Pixmap source) {
-	auto target = Pixmap(source.size);
-	source.flipHorizontally(target);
+	auto target = Pixmap.makeNew(source.size);
+	source.flipHorizontallyTo(target);
 	return target;
 }
 
@@ -2066,6 +2327,21 @@ void flipHorizontallyInPlace(Pixmap source) @nogc {
 	}
 }
 
+/// ditto
+PixmapBlueprint flipHorizontallyCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
+}
+
+private void flipVerticallyTo(const Pixmap source, Pixmap target) @nogc {
+	auto src = PixmapScanner(source);
+	auto dst = PixmapScannerRW(target);
+
+	foreach (srcLine; src) {
+		dst.back[] = srcLine[];
+		dst.popBack();
+	}
+}
+
 /++
 	Flips an image vertically.
 
@@ -2076,22 +2352,17 @@ void flipHorizontallyInPlace(Pixmap source) @nogc {
 	╚═══╝   ╚═══╝
 	```
  +/
-void flipVertically(const Pixmap source, Pixmap target) @nogc {
-	debug assert(source.size == target.size);
+Pixmap flipVertically(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.flipVerticallyCalcDims());
 
-	auto src = PixmapScanner(source);
-	auto dst = PixmapScannerRW(target);
-
-	foreach (srcLine; src) {
-		dst.back[] = srcLine[];
-		dst.popBack();
-	}
+	flipVerticallyTo(source, target);
+	return target;
 }
 
 /// ditto
 Pixmap flipVerticallyNew(const Pixmap source) {
-	auto target = Pixmap(source.size);
-	source.flipVertically(target);
+	auto target = Pixmap.makeNew(source.flipVerticallyCalcDims());
+	source.flipVerticallyTo(target);
 	return target;
 }
 
@@ -2117,6 +2388,11 @@ void flipVerticallyInPlace(Pixmap source) @nogc {
 		scanner.popFront();
 		scanner.popBack();
 	}
+}
+
+/// ditto
+PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
 }
 
 @safe pure nothrow @nogc:
