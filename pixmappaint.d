@@ -15,6 +15,47 @@
 		API is subject to changes until further notice.
 	)
 
+	Pixmap refers to raster graphics, a subset of “bitmap” graphics.
+	A pixmap is an array of pixels and the corresponding meta data to describe
+	how an image if formed from those pixels.
+	In the case of this library, a “width” field is used to map a specified
+	number of pixels to a row of an image.
+
+	```
+	pixels := [ 0, 1, 2, 3 ]
+	width  := 2
+
+	pixmap(pixels, width)
+		=> [
+			[ 0, 1 ]
+			[ 2, 3 ]
+		]
+	```
+
+	```
+	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ]
+	width  := 3
+
+	pixmap(pixels, width)
+		=> [
+			[ 0,  1,  2 ]
+			[ 3,  4,  5 ]
+			[ 6,  7,  8 ]
+			[ 9, 10, 11 ]
+		]
+	```
+
+	```
+	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7 ]
+	width  := 4
+
+	pixmap(pixels, width)
+		=> [
+			[ 0, 1, 2, 3 ]
+			[ 4, 5, 6, 7 ]
+		]
+	```
+
 	### Colors
 
 	Colors are stored in an RGBA format with 8 bit per channel.
@@ -63,8 +104,8 @@
 	be mixed with the built-in memory management facilities of the pixmap type.
 	Otherwise one will end up with GC-allocated copies.)
 
-	The most important downside is that it makes pixmaps basically a reference
-	type.
+	The most important downside is that it makes pixmaps basically a partial
+	reference type.
 
 	Copying a pixmap creates a shallow copy still poiting to the same pixel
 	data that is also used by the source pixmap.
