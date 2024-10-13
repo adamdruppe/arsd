@@ -1906,6 +1906,23 @@ struct Point {
 	Size opCast(T : Size)() inout @nogc {
 		return Size(x, y);
 	}
+
+	/++
+		Calculates the point of linear offset in a rectangle.
+
+		`Offset = 0` is assumed to be equivalent to `Point(0,0)`.
+
+		See_also:
+			[linearOffset] is the inverse function.
+
+		History:
+			Added October 05, 2024.
+	 +/
+	static Point fromLinearOffset(int linearOffset, int width) @nogc {
+		const y = (linearOffset / width);
+		const x = (linearOffset % width);
+		return Point(x, y);
+	}
 }
 
 ///
@@ -1958,6 +1975,9 @@ struct Size {
 
 	Returns:
 		`y * width + x`
+
+	See_also:
+		[Point.fromLinearOffset] is the inverse function.
 
 	History:
 		Added December 19, 2023 (dub v11.4)
