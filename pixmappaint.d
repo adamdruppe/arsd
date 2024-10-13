@@ -2094,7 +2094,7 @@ Pixel decreaseOpacityF(const Pixel source, float opacityPercentage) @nogc {
 
 // Don’t get fooled by the name of this function.
 // It’s called like that for consistency reasons.
-private void decreaseOpacityTo(const Pixmap source, Pixmap target, ubyte opacityPercentage) @trusted @nogc {
+private void decreaseOpacityInto(const Pixmap source, Pixmap target, ubyte opacityPercentage) @trusted @nogc {
 	debug assert(source.data.length == target.data.length);
 	foreach (idx, ref px; target.data) {
 		px = decreaseOpacity(source.data.ptr[idx], opacityPercentage);
@@ -2112,14 +2112,14 @@ private void decreaseOpacityTo(const Pixmap source, Pixmap target, ubyte opacity
  +/
 Pixmap decreaseOpacity(const Pixmap source, Pixmap target, ubyte opacityPercentage) @nogc {
 	target.adjustTo(source.decreaseOpacityCalcDims(opacityPercentage));
-	source.decreaseOpacityTo(target, opacityPercentage);
+	source.decreaseOpacityInto(target, opacityPercentage);
 	return target;
 }
 
 /// ditto
 Pixmap decreaseOpacityNew(const Pixmap source, ubyte opacityPercentage) {
 	auto target = Pixmap.makeNew(source.decreaseOpacityCalcDims(opacityPercentage));
-	source.decreaseOpacityTo(target, opacityPercentage);
+	source.decreaseOpacityInto(target, opacityPercentage);
 	return target;
 }
 
@@ -2175,7 +2175,7 @@ Pixel invert(const Pixel color) @nogc {
 	);
 }
 
-private void invertTo(const Pixmap source, Pixmap target) @trusted @nogc {
+private void invertInto(const Pixmap source, Pixmap target) @trusted @nogc {
 	debug assert(source.length == target.length);
 	foreach (idx, ref px; target.data) {
 		px = invert(source.data.ptr[idx]);
@@ -2191,14 +2191,14 @@ private void invertTo(const Pixmap source, Pixmap target) @trusted @nogc {
  +/
 Pixmap invert(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.invertCalcDims());
-	source.invertTo(target);
+	source.invertInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap invertNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.invertCalcDims());
-	source.invertTo(target);
+	source.invertInto(target);
 	return target;
 }
 
@@ -2234,6 +2234,9 @@ void cropTo(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nog
 	src.extractToPixmapCopyImpl(target);
 }
 
+// consistency
+private alias cropInto = cropTo;
+
 /++
 	Crops an image to the provided size with the requested offset.
 
@@ -2241,14 +2244,14 @@ void cropTo(const Pixmap source, Pixmap target, Point offset = Point(0, 0)) @nog
  +/
 Pixmap crop(const Pixmap source, Pixmap target, Size cropToSize, Point offset = Point(0, 0)) @nogc {
 	target.adjustTo(source.cropCalcDims(cropToSize, offset));
-	cropTo(source, target, offset);
+	cropInto(source, target, offset);
 	return target;
 }
 
 /// ditto
 Pixmap cropNew(const Pixmap source, Size cropToSize, Point offset = Point(0, 0)) {
 	auto target = Pixmap.makeNew(cropToSize);
-	cropTo(source, target, offset);
+	cropInto(source, target, offset);
 	return target;
 }
 
@@ -2268,7 +2271,7 @@ PixmapBlueprint cropCalcDims(const Pixmap source, Size cropToSize, Point offset 
 	return PixmapBlueprint.fromSize(cropToSize);
 }
 
-private void transposeTo(const Pixmap source, Pixmap target) @nogc {
+private void transposeInto(const Pixmap source, Pixmap target) @nogc {
 	foreach (y; 0 .. target.width) {
 		foreach (x; 0 .. source.width) {
 			const idxSrc = linearOffset(Point(x, y), source.width);
@@ -2291,14 +2294,14 @@ private void transposeTo(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap transpose(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.transposeCalcDims());
-	source.transposeTo(target);
+	source.transposeInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap transposeNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.transposeCalcDims());
-	source.transposeTo(target);
+	source.transposeInto(target);
 	return target;
 }
 
@@ -2307,7 +2310,7 @@ PixmapBlueprint transposeCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint(source.length, source.height);
 }
 
-private void rotateClockwiseTo(const Pixmap source, Pixmap target) @nogc {
+private void rotateClockwiseInto(const Pixmap source, Pixmap target) @nogc {
 	const area = source.data.length;
 	const rowLength = source.size.height;
 	ptrdiff_t cursor = -1;
@@ -2334,14 +2337,14 @@ private void rotateClockwiseTo(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap rotateClockwise(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotateClockwiseCalcDims());
-	source.rotateClockwiseTo(target);
+	source.rotateClockwiseInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap rotateClockwiseNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.rotateClockwiseCalcDims());
-	source.rotateClockwiseTo(target);
+	source.rotateClockwiseInto(target);
 	return target;
 }
 
@@ -2350,7 +2353,7 @@ PixmapBlueprint rotateClockwiseCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint(source.length, source.height);
 }
 
-private void rotateCounterClockwiseTo(const Pixmap source, Pixmap target) @nogc {
+private void rotateCounterClockwiseInto(const Pixmap source, Pixmap target) @nogc {
 	// TODO: can this be optimized?
 	target = transpose(source, target);
 	target.flipVerticallyInPlace();
@@ -2368,14 +2371,14 @@ private void rotateCounterClockwiseTo(const Pixmap source, Pixmap target) @nogc 
  +/
 Pixmap rotateCounterClockwise(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotateCounterClockwiseCalcDims());
-	source.rotateCounterClockwiseTo(target);
+	source.rotateCounterClockwiseInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap rotateCounterClockwiseNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.rotateCounterClockwiseCalcDims());
-	source.rotateCounterClockwiseTo(target);
+	source.rotateCounterClockwiseInto(target);
 	return target;
 }
 
@@ -2384,7 +2387,7 @@ PixmapBlueprint rotateCounterClockwiseCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint(source.length, source.height);
 }
 
-private void rotate180degTo(const Pixmap source, Pixmap target) @nogc {
+private void rotate180degInto(const Pixmap source, Pixmap target) @nogc {
 	// Technically, this is implemented as flip vertical + flip horizontal.
 	auto src = PixmapScanner(source);
 	auto dst = PixmapScannerRW(target);
@@ -2411,14 +2414,14 @@ private void rotate180degTo(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap rotate180deg(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.rotate180degCalcDims());
-	source.rotate180degTo(target);
+	source.rotate180degInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap rotate180degNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.size);
-	source.rotate180degTo(target);
+	source.rotate180degInto(target);
 	return target;
 }
 
@@ -2455,7 +2458,7 @@ PixmapBlueprint rotate180degCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
-private void flipHorizontallyTo(const Pixmap source, Pixmap target) @nogc {
+private void flipHorizontallyInto(const Pixmap source, Pixmap target) @nogc {
 	auto src = PixmapScanner(source);
 	auto dst = PixmapScannerRW(target);
 
@@ -2481,14 +2484,14 @@ private void flipHorizontallyTo(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap flipHorizontally(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.flipHorizontallyCalcDims());
-	source.flipHorizontallyTo(target);
+	source.flipHorizontallyInto(target);
 	return target;
 }
 
 /// ditto
 Pixmap flipHorizontallyNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.size);
-	source.flipHorizontallyTo(target);
+	source.flipHorizontallyInto(target);
 	return target;
 }
 
@@ -2515,7 +2518,7 @@ PixmapBlueprint flipHorizontallyCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
-private void flipVerticallyTo(const Pixmap source, Pixmap target) @nogc {
+private void flipVerticallyInto(const Pixmap source, Pixmap target) @nogc {
 	auto src = PixmapScanner(source);
 	auto dst = PixmapScannerRW(target);
 
@@ -2537,15 +2540,14 @@ private void flipVerticallyTo(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap flipVertically(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.flipVerticallyCalcDims());
-
-	flipVerticallyTo(source, target);
+	flipVerticallyInto(source, target);
 	return target;
 }
 
 /// ditto
 Pixmap flipVerticallyNew(const Pixmap source) {
 	auto target = Pixmap.makeNew(source.flipVerticallyCalcDims());
-	source.flipVerticallyTo(target);
+	source.flipVerticallyInto(target);
 	return target;
 }
 
