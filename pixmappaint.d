@@ -2194,7 +2194,7 @@ private void invertInto(const Pixmap source, Pixmap target) @trusted @nogc {
 }
 
 /++
-	Inverts all colors to produce a $(B negative image).
+	Inverts all colors to produce a $(I negative image).
 
 	$(TIP
 		Develops a positive image when applied to a negative one.
@@ -2781,7 +2781,7 @@ public void alphaBlendRGB(ref Pixel pxTarget, const Pixel pxSource) @safe {
 
 /++
 	Blends pixel `source` into pixel `target`
-	using the requested $(B blending mode).
+	using the requested [BlendMode|blending mode].
  +/
 template blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba) {
 
@@ -2972,7 +2972,7 @@ template blendPixel(BlendMode mode, BlendAccuracy accuracy = BlendAccuracy.rgba)
 
 /++
 	Blends the pixel data of `source` into `target`
-	using the requested $(B blending mode).
+	using the requested [BlendMode|blending mode].
 
 	`source` and `target` MUST have the same length.
  +/
