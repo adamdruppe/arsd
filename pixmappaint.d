@@ -310,6 +310,7 @@ private float roundImpl(float f) {
 
 // `pure` rounding function.
 // std.math.round() isn’t pure on all targets.
+// → <https://issues.dlang.org/show_bug.cgi?id=11320>
 private float round(float f) pure @nogc nothrow @trusted {
 	return (castTo!(float function(float) pure @nogc nothrow)(&roundImpl))(f);
 }
@@ -2042,37 +2043,124 @@ ubyte n255thsOf(const ubyte nPercentage, const ubyte value) @nogc {
 	}
 }
 
+///
+ubyte percentageDecimalToUInt8(const float decimal) @nogc
+in (decimal >= 0)
+in (decimal <= 1) {
+	return round(decimal * 255).castTo!ubyte;
+}
+
+///
+float percentageUInt8ToDecimal(const ubyte n255ths) @nogc {
+	return (float(n255ths) / 255.0f);
+}
+
 // ==== Image manipulation functions ====
 
 /++
-	Sets the opacity of a [Pixmap].
+	Lowers the opacity of a Pixel.
 
-	This lossy operation updates the alpha-channel value of each pixel.
-	→ `alpha *= opacity`
+	This function multiplies the opacity of the input
+	with the given percentage.
 
 	See_Also:
-		Use [opacityF] with opacity values in percent (%).
+		Use [decreaseOpacityF] with decimal opacity values in percent (%).
  +/
-void opacity(Pixmap pixmap, const ubyte opacity) @nogc {
-	foreach (ref px; pixmap.data) {
-		px.a = opacity.n255thsOf(px.a);
-	}
+Pixel decreaseOpacity(const Pixel source, ubyte opacityPercentage) @nogc {
+	return Pixel(
+		source.r,
+		source.g,
+		source.b,
+		opacityPercentage.n255thsOf(source.a),
+	);
 }
 
 /++
-	Sets the opacity of a [Pixmap].
+	Lowers the opacity of a Pixel.
 
-	This lossy operation updates the alpha-channel value of each pixel.
-	→ `alpha *= opacity`
+	This function multiplies the opacity of the input
+	with the given percentage.
+
+	Value Range:
+		0.0 =   0%
+		1.0 = 100%
 
 	See_Also:
 		Use [opacity] with 8-bit integer opacity values (in 255ths).
  +/
-void opacityF(Pixmap pixmap, const float opacity) @nogc
-in (opacity >= 0)
-in (opacity <= 1.0) {
-	immutable opacity255 = round(opacity * 255).castTo!ubyte;
-	pixmap.opacity = opacity255;
+Pixel decreaseOpacityF(const Pixel source, float opacityPercentage) @nogc {
+	return decreaseOpacity(source, percentageDecimalToUInt8(opacityPercentage));
+}
+
+// Don’t get fooled by the name of this function.
+// It’s called like that for consistency reasons.
+private void decreaseOpacityTo(const Pixmap source, Pixmap target, ubyte opacityPercentage) @trusted @nogc {
+	debug assert(source.data.length == target.data.length);
+	foreach (idx, ref px; target.data) {
+		px = decreaseOpacity(source.data.ptr[idx], opacityPercentage);
+	}
+}
+
+/++
+	Lowers the opacity of a [Pixmap].
+
+	This operation updates the alpha-channel value of each pixel.
+	→ `alpha *= opacity`
+
+	See_Also:
+		Use [decreaseOpacityF] with decimal opacity values in percent (%).
+ +/
+Pixmap decreaseOpacity(const Pixmap source, Pixmap target, ubyte opacityPercentage) @nogc {
+	target.adjustTo(source.decreaseOpacityCalcDims(opacityPercentage));
+	source.decreaseOpacityTo(target, opacityPercentage);
+	return target;
+}
+
+/// ditto
+Pixmap decreaseOpacityNew(const Pixmap source, ubyte opacityPercentage) {
+	auto target = Pixmap.makeNew(source.decreaseOpacityCalcDims(opacityPercentage));
+	source.decreaseOpacityTo(target, opacityPercentage);
+	return target;
+}
+
+/// ditto
+void decreaseOpacityInPlace(Pixmap source, ubyte opacityPercentage) @nogc {
+	foreach (ref px; source.data) {
+		px.a = opacityPercentage.n255thsOf(px.a);
+	}
+}
+
+/// ditto
+PixmapBlueprint decreaseOpacityCalcDims(const Pixmap source, ubyte opacity) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
+}
+
+/++
+	Adjusts the opacity of a [Pixmap].
+
+	This operation updates the alpha-channel value of each pixel.
+	→ `alpha *= opacity`
+
+	See_Also:
+		Use [decreaseOpacity] with 8-bit integer opacity values (in 255ths).
+ +/
+Pixmap decreaseOpacityF(const Pixmap source, Pixmap target, float opacityPercentage) @nogc {
+	return source.decreaseOpacity(target, percentageDecimalToUInt8(opacityPercentage));
+}
+
+/// ditto
+Pixmap decreaseOpacityFNew(const Pixmap source, float opacityPercentage) {
+	return source.decreaseOpacityNew(percentageDecimalToUInt8(opacityPercentage));
+}
+
+/// ditto
+void decreaseOpacityFInPlace(Pixmap source, const float opacityPercentage) @nogc {
+	return source.decreaseOpacityInPlace(percentageDecimalToUInt8(opacityPercentage));
+}
+
+/// ditto
+PixmapBlueprint decreaseOpacityF(Pixmap source, const float opacityPercentage) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
 }
 
 /++
