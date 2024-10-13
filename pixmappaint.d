@@ -364,9 +364,8 @@ static assert(Pixel.sizeof == uint.sizeof);
 	}
 
 	///
-	Pixel rgba(ubyte r, ubyte g, ubyte b, float aPct)
-	in (aPct >= 0 && aPct <= 1) {
-		return Pixel(r, g, b, castTo!ubyte(aPct * 255));
+	Pixel rgba(ubyte r, ubyte g, ubyte b, float aPct) {
+		return Pixel(r, g, b, percentageDecimalToUInt8(aPct));
 	}
 
 	///
