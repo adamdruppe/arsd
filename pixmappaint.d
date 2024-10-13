@@ -56,6 +56,9 @@
 		]
 	```
 
+
+
+
 	### Colors
 
 	Colors are stored in an RGBA format with 8 bit per channel.
@@ -82,6 +85,8 @@
 	It represents the total number of pixels in a pixmap.
 	It follows from the foregoing that the term $(I long) usually refers to
 	the length (not the width).
+
+
 
 
 	### Pixmaps
@@ -131,6 +136,8 @@
 	the aforementioned issues.)
 
 
+
+
 	### Image manipulation
 
 	The term “image manipulation function” here refers to functions that
@@ -146,6 +153,7 @@
 	)
 
 	Additionally, a “compute dimensions of target” function is provided.
+
 
 	#### Source to Target
 
@@ -207,6 +215,7 @@
 		Those are an implementation detail (and may change at any point).
 	)
 
+
 	#### Source to New Target
 
 	The “source to newly allocated target” wrapper allocates a new buffer to
@@ -230,6 +239,7 @@
 	// Create a new cropped Pixmap.
 	Pixmap target = sourceImage.cropNew(cropSize, cropOffset);
 	---
+
 
 	#### In-Place
 
