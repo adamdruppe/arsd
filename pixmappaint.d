@@ -477,13 +477,13 @@ struct Pixmap {
 	}
 
 	/++
-		Creates a $(I deep clone) of the Pixmap
+		Creates a $(I deep copy) of the Pixmap
 	 +/
 	Pixmap clone() const {
-		auto c = Pixmap();
-		c.width = this.width;
-		c.data = this.data.dup;
-		return c;
+		return Pixmap(
+			this.data.dup,
+			this.width,
+		);
 	}
 
 	/++
