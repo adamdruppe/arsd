@@ -303,8 +303,8 @@
 	Such functions are identified by a `-CalcDims` suffix;
 	e.g. [flipHorizontallyCalcDims] or [cropCalcDims].
 
-	They receive the same parameters as their corresponding “source to new
-	target” function. For consistency reasons this also applies in cases where
+	They usually take the same parameters as their corresponding
+	“source to new target” function. This does not apply in cases where
 	certain parameters are irrelevant for the computation of the target size.
  +/
 module arsd.pixmappaint;
@@ -2121,14 +2121,14 @@ private void decreaseOpacityInto(const Pixmap source, Pixmap target, ubyte opaci
 		Use [decreaseOpacityF] with decimal opacity values in percent (%).
  +/
 Pixmap decreaseOpacity(const Pixmap source, Pixmap target, ubyte opacityPercentage) @nogc {
-	target.adjustTo(source.decreaseOpacityCalcDims(opacityPercentage));
+	target.adjustTo(source.decreaseOpacityCalcDims());
 	source.decreaseOpacityInto(target, opacityPercentage);
 	return target;
 }
 
 /// ditto
 Pixmap decreaseOpacityNew(const Pixmap source, ubyte opacityPercentage) {
-	auto target = Pixmap.makeNew(source.decreaseOpacityCalcDims(opacityPercentage));
+	auto target = Pixmap.makeNew(source.decreaseOpacityCalcDims());
 	source.decreaseOpacityInto(target, opacityPercentage);
 	return target;
 }
@@ -2141,7 +2141,7 @@ void decreaseOpacityInPlace(Pixmap source, ubyte opacityPercentage) @nogc {
 }
 
 /// ditto
-PixmapBlueprint decreaseOpacityCalcDims(const Pixmap source, ubyte opacity) @nogc {
+PixmapBlueprint decreaseOpacityCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
@@ -2164,12 +2164,12 @@ Pixmap decreaseOpacityFNew(const Pixmap source, float opacityPercentage) {
 }
 
 /// ditto
-void decreaseOpacityFInPlace(Pixmap source, const float opacityPercentage) @nogc {
+void decreaseOpacityFInPlace(Pixmap source, float opacityPercentage) @nogc {
 	return source.decreaseOpacityInPlace(percentageDecimalToUInt8(opacityPercentage));
 }
 
 /// ditto
-PixmapBlueprint decreaseOpacityF(Pixmap source, const float opacityPercentage) @nogc {
+PixmapBlueprint decreaseOpacityF(Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
@@ -2253,7 +2253,7 @@ private alias cropInto = cropTo;
 	The target Pixmap must be big enough in length to hold the cropped image.
  +/
 Pixmap crop(const Pixmap source, Pixmap target, Size cropToSize, Point offset = Point(0, 0)) @nogc {
-	target.adjustTo(source.cropCalcDims(cropToSize, offset));
+	target.adjustTo(cropCalcDims(cropToSize));
 	cropInto(source, target, offset);
 	return target;
 }
@@ -2277,7 +2277,7 @@ Pixmap cropInPlace(Pixmap source, Size cropToSize, Point offset = Point(0, 0)) @
 }
 
 /// ditto
-PixmapBlueprint cropCalcDims(const Pixmap source, Size cropToSize, Point offset = Point(0, 0)) @nogc {
+PixmapBlueprint cropCalcDims(Size cropToSize) @nogc {
 	return PixmapBlueprint.fromSize(cropToSize);
 }
 
