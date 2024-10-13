@@ -2087,6 +2087,13 @@ Pixel invert(const Pixel color) @nogc {
 	);
 }
 
+private void invertTo(const Pixmap source, Pixmap target) @trusted @nogc {
+	debug assert(source.length == target.length);
+	foreach (idx, ref px; target.data) {
+		px = invert(source.data.ptr[idx]);
+	}
+}
+
 /++
 	Inverts all colors to produce a $(B negative image).
 
@@ -2094,10 +2101,29 @@ Pixel invert(const Pixel color) @nogc {
 		Develops a positive image when applied to a negative one.
 	)
  +/
-void invert(Pixmap pixmap) @nogc {
+Pixmap invert(const Pixmap source, Pixmap target) @nogc {
+	target.adjustTo(source.invertCalcDims());
+	source.invertTo(target);
+	return target;
+}
+
+/// ditto
+Pixmap invertNew(const Pixmap source) {
+	auto target = Pixmap.makeNew(source.invertCalcDims());
+	source.invertTo(target);
+	return target;
+}
+
+/// ditto
+void invertInPlace(Pixmap pixmap) @nogc {
 	foreach (ref px; pixmap.data) {
 		px = invert(px);
 	}
+}
+
+/// ditto
+PixmapBlueprint invertCalcDims(const Pixmap source) @nogc {
+	return PixmapBlueprint.fromPixmap(source);
 }
 
 /++
