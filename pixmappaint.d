@@ -375,7 +375,9 @@ static assert(Pixel.sizeof == uint.sizeof);
 }
 
 /++
-	Meta data for the construction a Pixmap
+	$(I Advanced functionality.)
+
+	Meta data for the construction of a Pixmap.
  +/
 struct PixmapBlueprint {
 	/++
