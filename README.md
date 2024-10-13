@@ -1,10 +1,13 @@
-# IMPORTANT NOTE
+# arsd – Adam Ruppe's Software Development
 
-As of January 1, 2024, this repo is written in the [OpenD Programming Language](https://dpldocs.info/opend/). This is very similar to, but NOT the same as Walter Bright's version of the D Programming Language.
+Generated documentation: <https://arsd-official.dpldocs.info>
 
-There will be no further public updates with supported compatibility with WB's D Language. If you depend on this code, either [contact me](mailto:destructionator@gmail.com) to negotiate a commercial support contract or switch to the [OpenD Programming Language](https://dpldocs.info/opend/). If things keep working from here on out, it is purely coincidental: support requests relating to WB's D are likely to go unanswered and new features are not guaranteed to work.
+> [!IMPORTANT]
+> As of January 1, 2024, this repo is written in the [OpenD Programming Language](https://dpldocs.info/opend/). This is very similar to, but NOT the same as Walter Bright's version of the D Programming Language.
+>
+> There will be no further public updates with supported compatibility with WB's D Language. If you depend on this code, either [contact me](mailto:destructionator@gmail.com) to negotiate a commercial support contract or switch to the [OpenD Programming Language](https://dpldocs.info/opend/). If things keep working from here on out, it is purely coincidental: support requests relating to WB's D are likely to go unanswered and new features are not guaranteed to work.
 
-# About
+## About
 
 This is a collection of modules that I've released over the years (the oldest module in here was originally written in 2006, pre-D1!) for a wide variety of purposes. Most of them stand alone, or have just one or two dependencies in here, so you don't have to download this whole repo. Feel free to email me, destructionator@gmail.com or ping me as `adam_d_ruppe` on the #d IRC channel if you want to ask me anything.
 
@@ -12,17 +15,17 @@ I'm always adding to it, but my policy on dependencies means you can ignore what
 
 See the full list of (at least slightly) documented module here: http://arsd-official.dpldocs.info/arsd.html and refer to https://code.dlang.org/packages/arsd-official for the list of `dub`-enabled subpackages. Please note that `dub` is no longer officially supported, but it may work for you anyway.
 
-## Links
+### Links
 
 I have [a patreon](https://www.patreon.com/adam_d_ruppe) and my (almost) [weekly blog](http://dpldocs.info/this-week-in-arsd/) you can check out if you'd like to financially support this work or see the updates and tips I write about.
 
-# Breaking Changelog
+## Breaking Changelog
 
 This only lists changes that broke things and got a major version bump. I didn't start keeping track here until 9.0.
 
 Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
 
-## 12.0
+### 12.0
 
 Future release, likely May 2024 or later.
 
@@ -30,7 +33,7 @@ Nothing is planned for it at this time.
 
 arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
-## 11.0
+### 11.0
 
 Released: Planned for May 2023, actually out August 2023.
 
@@ -61,7 +64,7 @@ Also:
 
 Note that dub currently gives a warning when you do `dub test` about there being no import paths. Ignore this, it is meaningless.
 
-### Diagnostics
+#### Diagnostics
 
 ```
 lld-link: error: undefined symbol: _MsgWaitForMultipleObjectsEx@20
@@ -78,7 +81,7 @@ lld-link: error: undefined symbol: _D4arsd4core21AsyncOperationRequest5startMFZv
 
 Generally, any symbol that starts with `_D4arsd4core` indicates a missing `core.d` in the build. Make sure you have it downloaded and included.
 
-### Still coming
+#### Still coming
 
 11.0 focused on getting breaking changes in before the deadline. Some additive features that had to be deferred will be coming in 11.1 and beyond, including, but not limited to:
 
@@ -93,7 +96,7 @@ Generally, any symbol that starts with `_D4arsd4core` indicates a missing `core.
 	* more dox
 	* i should prolly rewrite the script.d parser someday but maybe that will be a 12.0 thing
 
-## 10.0
+### 10.0
 
 Released: May 2021
 
@@ -101,7 +104,7 @@ minigui 2.0 came out with deprecations on some event properties, moved style pro
 
 database.d now considers null strings as NULL when inserting/updating. before it would consider it '' to the database. Empty strings are still ''.
 
-## 9.0
+### 9.0
 
 Released: December 2020
 
@@ -109,7 +112,7 @@ simpledisplay's OperatingSystemFont, which is also used by terminalemulator.d (w
 
 http2.d's "connection refused" handler used to throw an exception for any pending connection. Now it instead just sets that connection to `aborted` and carries on with other ones. When you are doing a request, be sure to check `response.code`. It may be < 100 if connection refused and other errors. You should already have been checking the http response code, but now some things that were exceptions are now codes, so it is even more important to check this properly.
 
-## Prehistory:
+### Prehistory:
 
 8.0 Released: June 2020
 
@@ -131,13 +134,13 @@ Joined github: July 2011
 
 Started project on my website: 2008
 
-## Credits
+### Credits
 
 Thanks go to Nick Sabalausky, Trass3r, Stanislav Blinov, ketmar, maartenvd, and many others over the years for input and patches.
 
 Several of the modules are also ports of other C code, see the comments in those files for their original authors.
 
-# Conventions
+## Conventions
 
 Many http-based functions in the lib also support unix sockets as an alternative to tcp.
 
