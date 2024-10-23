@@ -218,21 +218,21 @@ unittest {
 ulong readVla(ref const(ubyte)[] data) {
 	ulong n;
 
-	n = data[0] & 0x7f;
-	if(!(data[0] & 0x80))
-		data = data[1 .. $];
-
 	int i = 0;
 	while(data[0] & 0x80) {
 		i++;
-		data = data[1 .. $];
 
 		ubyte b = data[0];
+		data = data[1 .. $];
 		if(b == 0) return 0;
 
 
 		n |= cast(ulong) (b & 0x7F) << (i * 7);
 	}
+
+	n |= data[0] & 0x7f;
+	data = data[1 .. $];
+
 	return n;
 }
 
@@ -467,6 +467,7 @@ struct XzDecoder {
 			auto fid = readVla(initialData);
 			auto sz = readVla(initialData);
 
+			// import std.stdio; writefln("%02x %d", fid, sz);
 			assert(fid == 0x21);
 			assert(sz == 1);
 
