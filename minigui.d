@@ -1313,6 +1313,8 @@ class Widget : ReflectableProperties {
 			if(this.tabStop) {
 				this.focus();
 			}
+		} else if(event.button == MouseButton.right) {
+			showContextMenu(event.clientX, event.clientY);
 		}
 	}
 	/// ditto
@@ -12545,8 +12547,6 @@ class TextDisplayHelper : Widget {
 				mouseActuallyMoved = false;
 				parentWindow.captureMouse(this);
 				this.redraw();
-			} else if(ce.button == MouseButton.right) {
-				this.showContextMenu(ce.clientX, ce.clientY);
 			}
 			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
 		});
@@ -13975,7 +13975,7 @@ MessageBoxButton messageBox(Window originator, string title, string message, Mes
 
 /// ditto
 int messageBox(Window originator, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
-	return messageBox(originator, message, style, icon);
+	return messageBox(originator, null, message, style, icon);
 }
 
 
@@ -15785,6 +15785,9 @@ struct hotkey { dchar ch; }
 ///
 /// Group: generating_from_code
 struct tip { string tip; }
+///
+/// Group: generating_from_code
+enum context_menu = menu.init;
 
 
 /++
@@ -16653,6 +16656,74 @@ private bool endsWith(string test, string thing) {
 	if(test.length < thing.length)
 		return false;
 	return test[$ - thing.length .. $] == thing;
+}
+
+/++
+	Context menus can have `@hotkey`, `@label`, `@tip`, `@separator`, and `@icon`
+
+	Note they can NOT have accelerators or toolbars; those annotations will be ignored.
+
+	Mark the functions callable from it with `@context_menu { ... }` Presence of other `@menu(...)` annotations will exclude it from the context menu at this time.
+
+	See_Also:
+		[Widget.setMenuAndToolbarFromAnnotatedCode]
++/
+Menu createContextMenuFromAnnotatedCode(TWidget)(TWidget w) if(is(TWidget : Widget)) {
+	return createContextMenuFromAnnotatedCode(w, w);
+}
+
+/// ditto
+Menu createContextMenuFromAnnotatedCode(T)(Widget w, ref T t) if(!is(T == class) && !is(T == interface)) {
+	return createContextMenuFromAnnotatedCode_internal(w, t);
+}
+/// ditto
+Menu createContextMenuFromAnnotatedCode(T)(Widget w, T t) if(is(T == class) || is(T == interface)) {
+	return createContextMenuFromAnnotatedCode_internal(w, t);
+}
+Menu createContextMenuFromAnnotatedCode_internal(T)(Widget w, ref T t) {
+	Menu ret = new Menu("", w);
+
+	foreach(memberName; __traits(derivedMembers, T)) {
+		static if(memberName != "this")
+		static if(hasAnyRelevantAnnotations!(__traits(getAttributes, __traits(getMember, T, memberName)))) {
+			.menu menu;
+			bool separator;
+			.hotkey hotkey;
+			.icon icon;
+			string label;
+			string tip;
+			foreach(attr; __traits(getAttributes, __traits(getMember, T, memberName))) {
+				static if(is(typeof(attr) == .menu))
+					menu = attr;
+				else static if(is(attr == .separator))
+					separator = true;
+				else static if(is(typeof(attr) == .hotkey))
+					hotkey = attr;
+				else static if(is(typeof(attr) == .icon))
+					icon = attr;
+				else static if(is(typeof(attr) == .label))
+					label = attr.label;
+				else static if(is(typeof(attr) == .tip))
+					tip = attr.tip;
+			}
+
+			if(menu is .menu.init) {
+				ushort correctIcon = icon.id; // FIXME
+				if(label.length == 0)
+					label = memberName.toMenuLabel;
+
+				auto handler = makeAutomaticHandler!(__traits(getMember, T, memberName))(w.parentWindow, &__traits(getMember, t, memberName));
+
+				auto action = new Action(label, correctIcon, handler);
+
+				if(separator)
+					ret.addSeparator();
+					ret.addItem(new MenuItem(action));
+			}
+		}
+	}
+
+	return ret;
 }
 
 // still do layout delegation
