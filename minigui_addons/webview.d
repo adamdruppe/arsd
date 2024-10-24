@@ -943,7 +943,7 @@ version(cef) {
 			try {
 				auto ptr = callback.passable();
 				browser.runOnWebView((wv) {
-					getOpenFileName((string name) {
+					getOpenFileName(wv.parentWindow, (string name) {
 						auto callback = RC!cef_file_dialog_callback_t(ptr);
 						auto list = libcef.string_list_alloc();
 						auto item = cef_string_t(name);
