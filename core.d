@@ -204,6 +204,15 @@ version(OSXCocoa)
 else
 	enum CocoaAvailable = false;
 
+version(D_OpenD) {
+	version(OSXCocoa)
+		pragma(linkerDirective, "-framework", "Cocoa");
+} else {
+	version(OSXCocoa)
+	version(LDC)
+		pragma(linkerDirective, "-framework", "Cocoa");
+}
+
 version(Posix) {
 	import core.sys.posix.signal;
 	import core.sys.posix.unistd;
