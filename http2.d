@@ -2018,7 +2018,7 @@ class HttpRequest {
 							request.state = State.aborted;
 
 							request.responseData.code = 3;
-							request.responseData.codeText = "send failed to server";
+							request.responseData.codeText = "send failed to server: " ~ lastSocketError(sock);
 							inactive[inactiveCount++] = sock;
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
@@ -2047,7 +2047,7 @@ class HttpRequest {
 								request.state = State.aborted;
 
 								request.responseData.code = 3;
-								request.responseData.codeText = "receive error from server";
+								request.responseData.codeText = "receive error from server: " ~ lastSocketError(sock);
 							}
 							inactive[inactiveCount++] = sock;
 							sock.close();
@@ -3517,6 +3517,15 @@ void main() {
 	writeln(HttpRequest.socketsPerHost);
 }
 
+string lastSocketError(Socket sock) {
+	import std.socket;
+	version(use_openssl) {
+		if(auto s = cast(OpenSslSocket) sock)
+			if(s.lastSocketError.length)
+				return s.lastSocketError;
+	}
+	return std.socket.lastSocketError();
+}
 
 // From sslsocket.d, but this is the maintained version!
 version(use_openssl) {
@@ -3975,6 +3984,8 @@ version(use_openssl) {
 			}
 		}
 
+		private string lastSocketError;
+
 		@trusted
 		// returns true if it is finished, false if it would have blocked, throws if there's an error
 		int do_ssl_connect() {
@@ -3987,12 +3998,12 @@ version(use_openssl) {
 
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
-				int i;
+
 				auto err = OpenSSL.SSL_get_verify_result(ssl);
-				//printf("wtf\n");
-				//scanf("%d\n", i);
+				this.lastSocketError = str ~ " " ~ getOpenSslErrorCode(err);
+
 				throw new Exception("Secure connect failed: " ~ getOpenSslErrorCode(err));
-			}
+			} else this.lastSocketError = null;
 
 			return 0;
 		}
@@ -4005,18 +4016,13 @@ version(use_openssl) {
 
 			// don't need to throw anymore since it is checked elsewhere
 			// code useful sometimes for debugging hence commenting instead of deleting
-			version(none)
 			if(retval == -1) {
-
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
-				int i;
+				this.lastSocketError = str;
 
-				//printf("wtf\n");
-				//scanf("%d\n", i);
-
-				throw new Exception("ssl send failed " ~ str);
-			}
+				// throw new Exception("ssl send failed " ~ str);
+			} else this.lastSocketError = null;
 			return retval;
 
 		}
@@ -4032,18 +4038,14 @@ version(use_openssl) {
 
 			// don't need to throw anymore since it is checked elsewhere
 			// code useful sometimes for debugging hence commenting instead of deleting
-			version(none)
 			if(retval == -1) {
 
 				string str;
 				OpenSSL.ERR_print_errors_cb(&collectSslErrors, &str);
-				int i;
+				this.lastSocketError = str;
 
-				//printf("wtf\n");
-				//scanf("%d\n", i);
-
-				throw new Exception("ssl receive failed " ~ str);
-			}
+				// throw new Exception("ssl receive failed " ~ str);
+			} else this.lastSocketError = null;
 			return retval;
 		}
 		override ptrdiff_t receive(scope void[] buf) {
@@ -4790,7 +4792,7 @@ class WebSocket {
 		while(remaining.length) {
 			auto r = socket.send(remaining);
 			if(r < 0)
-				throw new Exception(lastSocketError());
+				throw new Exception(lastSocketError(socket));
 			if(r == 0)
 				throw new Exception("unexpected connection termination");
 			remaining = remaining[r .. $];
@@ -4805,7 +4807,7 @@ class WebSocket {
 			auto r = socket.receive(buffer[used.length .. $]);
 
 			if(r < 0)
-				throw new Exception(lastSocketError());
+				throw new Exception(lastSocketError(socket));
 			if(r == 0)
 				throw new Exception("unexpected connection termination");
 			//import std.stdio;writef("%s", cast(string) buffer[used.length .. used.length + r]);
@@ -5463,7 +5465,7 @@ class WebSocket {
 				sock.onerror();
 
 			if(sock.onclose)
-				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection lost", false, lastSocketError()));
+				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection lost", false, lastSocketError(sock.socket)));
 
 			unregisterActiveSocket(sock);
 			sock.socket.close();
