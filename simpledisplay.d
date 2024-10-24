@@ -1164,6 +1164,11 @@ unittest {
 
 version(OSX) version(DigitalMars) version=OSXCocoa;
 
+version(Emscripten) {
+	version=allow_unimplemented_features;
+	version=without_opengl;
+}
+
 
 version(OSXCocoa) {
 	version=without_opengl;
@@ -1185,7 +1190,6 @@ version(without_opengl) {
 //} else {
 //	enum SdpyIsUsingIVGLBinds = false;
 }
-
 
 version(Windows) {
 	//import core.sys.windows.windows;
@@ -1309,6 +1313,7 @@ version(Windows) {
 
 		pragma(lib, "dwmapi");
 	}
+} else version(Emscripten) {
 } else version (linux) {
 	//k8: this is hack for rdmd. sorry.
 	static import core.sys.linux.epoll;
@@ -1388,7 +1393,9 @@ Important  Do not use the LOWORD or HIWORD macros to extract the x- and y- coord
 
 */
 
-version(linux) {
+version(Emscripten) {
+
+} else version(linux) {
 	version = X11;
 	version(without_libnotify) {
 		// we cool
@@ -1497,6 +1504,8 @@ else
 /// Does this platform support multiple windows? If not, trying to create another will cause it to throw an exception.
 version(Windows)
 	enum multipleWindowsSupported = true;
+else version(Emscripten)
+	enum multipleWindowsSupported = false;
 else version(X11)
 	enum multipleWindowsSupported = true;
 else version(OSXCocoa)
@@ -2324,6 +2333,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			impl.window = nativeWindow;
 			if(nativeWindow)
 				display = XDisplayConnection.get(); // get initial display to not segfault
+		} else version(Emscripten) {
+			// FIXME
 		} else version(OSXCocoa) {
 			if(nativeWindow !is NullWindow) throw new NotYetImplementedException();
 		} else featureNotImplemented();
@@ -2425,6 +2436,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				GetWindowRect(hwnd, &rcClip);
 				ClipCursor(&rcClip);
 			}
+		} else version(Emscripten) {
+			// nothing necessary
 		} else version(OSXCocoa) {
 			// throw new NotYetImplementedException();
 		} else static assert(0);
@@ -2545,6 +2558,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			ClipCursor(null);
 		} else version(OSXCocoa) {
 			// throw new NotYetImplementedException();
+		} else version(Emscripten) {
+			// nothing needed
 		} else static assert(0);
 	}
 
@@ -2563,6 +2578,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			XSetInputFocus(XDisplayConnection.get, setTo.impl.window, RevertToParent, CurrentTime);
 		} else version(Windows) {
 			SetFocus(this.impl.hwnd);
+		} else version(Emscripten) {
+			throw new NotYetImplementedException();
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
@@ -2607,6 +2624,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		} else version(X11) {
 			demandingAttention = true;
 			demandAttention(this, true);
+		} else version(Emscripten) {
+			throw new NotYetImplementedException();
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
@@ -2861,6 +2880,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				XMapWindow(impl.display, impl.window);
 		} else version(OSXCocoa) {
 			// throw new NotYetImplementedException();
+		} else version(Emscripten) {
 		} else static assert(0);
 	}
 
@@ -3379,6 +3399,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				buffer.ptr,
 				cast(int) buffer.length);
 		} else version(OSXCocoa) {
+			throw new NotYetImplementedException();
+		} else version(Emscripten) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
@@ -4359,6 +4381,11 @@ struct EventLoopImpl {
 
 	bool notExited = true;
 
+	version(Emscripten) {
+		void delegate(int) signalHandler;
+		static import unix = core.sys.posix.unistd;
+		static import err = core.stdc.errno;
+	} else
 	version(linux) {
 		static import ep = core.sys.linux.epoll;
 		static import unix = core.sys.posix.unistd;
@@ -4370,6 +4397,7 @@ struct EventLoopImpl {
 
 	version(X11) {
 		int pulseFd = -1;
+		version(Emscripten) {} else
 		version(linux) ep.epoll_event[16] events = void;
 	} else version(Windows) {
 		Timer pulser;
@@ -4417,7 +4445,9 @@ struct EventLoopImpl {
 			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
 		}
 
-		version(linux) {
+		version(Emscripten) {
+
+		} else version(linux) {
 			prepareEventLoop();
 			{
 				auto display = XDisplayConnection.get;
@@ -4509,7 +4539,8 @@ struct EventLoopImpl {
 		version(linux) {
 			this.mtLock();
 			scope(exit) this.mtUnlock();
-			XPending(display); // no, really
+			version(X11)
+				XPending(display); // no, really
 		}
 
 		disposed = false;
@@ -4531,6 +4562,7 @@ struct EventLoopImpl {
 				pulseFd = -1;
 			}
 
+				version(Emscripten) {} else
 				version(linux)
 				if(displayFd != -1) {
 					// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
@@ -4997,6 +5029,7 @@ struct EventLoopImpl {
 	If this is an issue, let me know, it'd take about an hour to get it back in there, but I suggest
 	you use arsd 10.x when targeting Windows XP.
 +/
+version(Emscripten) {} else
 version(OSXCocoa) {} else // NotYetImplementedException
 class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
@@ -5960,6 +5993,7 @@ class Timer {
 
 			mapping[handle] = this;
 
+		} else version(Emscripten) {
 		} else version(linux) {
 			static import ep = core.sys.linux.epoll;
 
@@ -6014,6 +6048,10 @@ class Timer {
 			mapping.remove(handle);
 			CloseHandle(handle);
 		}
+	}
+	else version(Emscripten)
+	static void staticDestroy(int fd) @system {
+		assert(0);
 	}
 	else version(linux)
 	static void staticDestroy(int fd) @system {
@@ -6295,7 +6333,9 @@ class PosixFdReader {
 	}
 
 	void ready(uint flags) {
-		version(linux) {
+		version(Emscripten) {
+			assert(0);
+		} else version(linux) {
 			static import ep = core.sys.linux.epoll;
 			onReady(fd, (flags & ep.EPOLLIN) ? true : false, (flags & ep.EPOLLOUT) ? true : false);
 		} else {
@@ -6369,6 +6409,8 @@ void getClipboardText(SimpleWindow clipboardOwner, void delegate(in char[]) rece
 		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
+	} else version(Emscripten) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -6404,6 +6446,8 @@ void getClipboardImage()(SimpleWindow clipboardOwner, void delegate(MemoryImage)
 		getX11Selection!"CLIPBOARD"(clipboardOwner, receiver);
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
+	} else version(Emscripten) {
+		throw new NotYetImplementedException();
 	} else static assert(0);
 }
 
@@ -6432,6 +6476,8 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 	} else version(X11) {
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
 	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
+	} else version(Emscripten) {
 		throw new NotYetImplementedException();
 	} else static assert(0);
 }
@@ -6511,6 +6557,8 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 
 		setX11Selection!"CLIPBOARD"(clipboardOwner, new X11SetSelectionHandler_Image(img));
 	} else version(OSXCocoa) {
+		throw new NotYetImplementedException();
+	} else version(Emscripten) {
 		throw new NotYetImplementedException();
 	} else static assert(0);
 }
@@ -8015,6 +8063,8 @@ struct MouseEvent {
 			return p;
 		} else version(OSXCocoa) {
 			throw new NotYetImplementedException();
+		} else version(Emscripten) {
+			throw new NotYetImplementedException();
 		} else static assert(0);
 	}
 
@@ -8428,6 +8478,8 @@ final class Image {
 				}
 			} else version(OSXCocoa) {
 				return 0 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return 0;
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -8449,7 +8501,9 @@ final class Image {
 					return offset;
 				}
 			} else version(OSXCocoa) {
-				return 0 ; //throw new NotYetImplementedException();
+				return (y * width + x) * 4 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return (y * width + x) * 4 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -8464,7 +8518,9 @@ final class Image {
 				else
 					return -((cast(int) width * 3 + 3) / 4) * 4;
 			} else version(OSXCocoa) {
-				return 0 ; //throw new NotYetImplementedException();
+				return width * 4 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return width * 4 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -8475,7 +8531,9 @@ final class Image {
 			} else version(Windows) {
 				return 2;
 			} else version(OSXCocoa) {
-				return 0 ; //throw new NotYetImplementedException();
+				return 2 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return 2 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -8486,7 +8544,9 @@ final class Image {
 			} else version(Windows) {
 				return 1;
 			} else version(OSXCocoa) {
-				return 0 ; //throw new NotYetImplementedException();
+				return 1 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return 1 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 
@@ -8497,6 +8557,8 @@ final class Image {
 			} else version(Windows) {
 				return 0;
 			} else version(OSXCocoa) {
+				return 0 ; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
 				return 0 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
@@ -8509,6 +8571,8 @@ final class Image {
 				return 3;
 			} else version(OSXCocoa) {
 				return 3; //throw new NotYetImplementedException();
+			} else version(Emscripten) {
+				return 3 ; //throw new NotYetImplementedException();
 			} else static assert(0, "fill in this info for other OSes");
 		}
 	}
@@ -8727,7 +8791,9 @@ class OperatingSystemFont : MeasurableFont {
 	// FIXME: when the X Connection is lost, these need to be invalidated!
 	// that means I need to store the original stuff again to reconstruct it too.
 
-	version(X11) {
+	version(Emscripten) {
+		void* font;
+	} else version(X11) {
 		XFontStruct* font;
 		XFontSet fontset;
 
@@ -10323,6 +10389,8 @@ class Sprite : CapableOfBeingDrawnUpon {
 		HBITMAP handle;
 	else version(OSXCocoa)
 		CGContextRef handle;
+	else version(Emscripten)
+		void* handle;
 	else static assert(0);
 }
 
@@ -11039,6 +11107,19 @@ enum ModifierState : uint {
 	middleButtonDown = 512, /// ditto
 	rightButtonDown = 1024, /// ditto
 }
+else version(Emscripten)
+enum ModifierState : uint {
+	shift = 1, ///
+	capsLock = 2, ///
+	ctrl = 4, ///
+	alt = 8, /// Not always available on Windows
+	windows = 64, /// ditto
+	numLock = 16, ///
+
+	leftButtonDown = 256, /// these aren't available on Windows for key events, so don't use them for that unless your app is X only.
+	middleButtonDown = 512, /// ditto
+	rightButtonDown = 1024, /// ditto
+}
 else version(Windows)
 /// ditto
 enum ModifierState : uint {
@@ -11097,7 +11178,118 @@ enum MouseButtonLinear : ubyte {
 	forwardButton, /// often found on the thumb and used for forward in browsers
 }
 
-version(X11) {
+version(WebAssembly) {
+	/// Do not trust the numeric values as they are platform-specific. Always use the symbolic name.
+	enum Key {
+		Escape = 0xff1b, ///
+		F1 = 0xffbe, ///
+		F2 = 0xffbf, ///
+		F3 = 0xffc0, ///
+		F4 = 0xffc1, ///
+		F5 = 0xffc2, ///
+		F6 = 0xffc3, ///
+		F7 = 0xffc4, ///
+		F8 = 0xffc5, ///
+		F9 = 0xffc6, ///
+		F10 = 0xffc7, ///
+		F11 = 0xffc8, ///
+		F12 = 0xffc9, ///
+		PrintScreen = 0xff61, ///
+		ScrollLock = 0xff14, ///
+		Pause = 0xff13, ///
+		Grave = 0x60, /// The $(BACKTICK) ~ key
+		// number keys across the top of the keyboard
+		N1 = 0x31, /// Number key atop the keyboard
+		N2 = 0x32, ///
+		N3 = 0x33, ///
+		N4 = 0x34, ///
+		N5 = 0x35, ///
+		N6 = 0x36, ///
+		N7 = 0x37, ///
+		N8 = 0x38, ///
+		N9 = 0x39, ///
+		N0 = 0x30, ///
+		Dash = 0x2d, ///
+		Equals = 0x3d, ///
+		Backslash = 0x5c, /// The \ | key
+		Backspace = 0xff08, ///
+		Insert = 0xff63, ///
+		Home = 0xff50, ///
+		PageUp = 0xff55, ///
+		Delete = 0xffff, ///
+		End = 0xff57, ///
+		PageDown = 0xff56, ///
+		Up = 0xff52, ///
+		Down = 0xff54, ///
+		Left = 0xff51, ///
+		Right = 0xff53, ///
+
+		Tab = 0xff09, ///
+		Q = 0x71, ///
+		W = 0x77, ///
+		E = 0x65, ///
+		R = 0x72, ///
+		T = 0x74, ///
+		Y = 0x79, ///
+		U = 0x75, ///
+		I = 0x69, ///
+		O = 0x6f, ///
+		P = 0x70, ///
+		LeftBracket = 0x5b, /// the [ { key
+		RightBracket = 0x5d, /// the ] } key
+		CapsLock = 0xffe5, ///
+		A = 0x61, ///
+		S = 0x73, ///
+		D = 0x64, ///
+		F = 0x66, ///
+		G = 0x67, ///
+		H = 0x68, ///
+		J = 0x6a, ///
+		K = 0x6b, ///
+		L = 0x6c, ///
+		Semicolon = 0x3b, ///
+		Apostrophe = 0x27, ///
+		Enter = 0xff0d, ///
+		Shift = 0xffe1, ///
+		Z = 0x7a, ///
+		X = 0x78, ///
+		C = 0x63, ///
+		V = 0x76, ///
+		B = 0x62, ///
+		N = 0x6e, ///
+		M = 0x6d, ///
+		Comma = 0x2c, ///
+		Period = 0x2e, ///
+		Slash = 0x2f, /// the / ? key
+		Shift_r = 0xffe2, /// Note: this isn't sent on all computers, sometimes it just sends Shift, so don't rely on it. If it is supported though, it is the right Shift key, as opposed to the left Shift key
+		Ctrl = 0xffe3, ///
+		Windows = 0xffeb, ///
+		Alt = 0xffe9, ///
+		Space = 0x20, ///
+		Alt_r = 0xffea, /// ditto of shift_r
+		Windows_r = 0xffec, ///
+		Menu = 0xff67, ///
+		Ctrl_r = 0xffe4, ///
+
+		NumLock = 0xff7f, ///
+		Divide = 0xffaf, /// The / key on the number pad
+		Multiply = 0xffaa, /// The * key on the number pad
+		Minus = 0xffad, /// The - key on the number pad
+		Plus = 0xffab, /// The + key on the number pad
+		PadEnter = 0xff8d, /// Numberpad enter key
+		Pad1 = 0xff9c, /// Numberpad keys
+		Pad2 = 0xff99, ///
+		Pad3 = 0xff9b, ///
+		Pad4 = 0xff96, ///
+		Pad5 = 0xff9d, ///
+		Pad6 = 0xff98, ///
+		Pad7 = 0xff95, ///
+		Pad8 = 0xff97, ///
+		Pad9 = 0xff9a, ///
+		Pad0 = 0xff9e, ///
+		PadDot = 0xff9f, ///
+	}
+} version(X11) {
 	// FIXME: match ASCII whenever we can. Most of it is already there,
 	// but there's a few exceptions and mismatches with Windows
 
@@ -13118,6 +13310,16 @@ version(Windows) {
 
 	enum KEY_ESCAPE = 27;
 }
+
+version(Emscripten) {
+	alias int delegate(void*) NativeEventHandler;
+	alias void* NativeWindowHandle;
+
+	mixin template NativeSimpleWindowImplementation() { }
+	mixin template NativeScreenPainterImplementation() { }
+	mixin template NativeImageImplementation() { }
+}
+
 version(X11) {
 	/// This is the default font used. You might change this before doing anything else with
 	/// the library if you want to try something else. Surround that in `static if(UsingSimpledisplayX11)`
@@ -14802,8 +15004,9 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				else
 					isLocal_ = true;
 
+				XSetErrorHandler(&adrlogger);
+
 				debug(sdpy_x_errors) {
-					XSetErrorHandler(&adrlogger);
 					XSynchronize(display, true);
 
 					extern(C) int wtf() {
@@ -16548,6 +16751,7 @@ version(X11) {
 
 // Necessary C library bindings follow
 version(Windows) {} else
+version(Emscripten) {} else
 version(X11) {
 
 extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
@@ -20255,7 +20459,9 @@ private string typeToGl(T)() {
 
 }
 
-version(linux) {
+version(Emscripten) {
+
+} else version(linux) {
 	version(with_eventloop) {} else {
 		private int epollFd = -1;
 		void prepareEventLoop() {
@@ -22705,7 +22911,7 @@ private int doDragDropX11(SimpleWindow window, X11SetSelectionHandler handler, D
 	timeval tv;
 	gettimeofday(&tv, null);
 
-	Time dataTimestamp = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	Time dataTimestamp = cast(Time) ( tv.tv_sec * 1000 + tv.tv_usec / 1000 );
 
 	Time lastMouseTimestamp;
 

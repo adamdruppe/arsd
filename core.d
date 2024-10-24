@@ -69,31 +69,33 @@ else
 // see: When you only want to track changes on a file or directory, be sure to open it using the O_EVTONLY flag.
 
 ///ArsdUseCustomRuntime is used since other derived work from WebAssembly may be used and thus specified in the CLI
-version(WebAssembly) version = ArsdUseCustomRuntime;
+version(Emscripten) {
+	version = EmptyEventLoop;
+	version = EmptyCoreEvent;
+	version = HasTimer;
+} else version(WebAssembly) version = ArsdUseCustomRuntime;
+else
 
 // note that kqueue might run an i/o loop on mac, ios, etc. but then NSApp.run on the io thread
 // but on bsd, you want the kqueue loop in i/o too....
 
-version(iOS)
-{
-	version = EmptyEventLoop;
-	version = EmptyCoreEvent;
-}
 version(ArsdUseCustomRuntime)
 {
-	version = EmptyEventLoop;
 	version = UseStdioWriteln;
 }
 else
 {
-	version(OSX) version(DigitalMars) {
-		version=OSXCocoa;
+	version(D_OpenD) {
+		version(OSX)
+			version=OSXCocoa;
+		version(iOS)
+			version=OSXCocoa;
 	}
 
 	version = HasFile;
 	version = HasSocket;
 	version = HasThread;
-	version = HasErrno;
+	import core.stdc.errno;
 
 	version(Windows)
 		version = HasTimer;
@@ -108,25 +110,26 @@ version(HasThread)
 	import core.thread;
 	import core.volatile;
 	import core.atomic;
-	import core.time;
 }
 else
 {
 	// polyfill for missing core.time
+	/*
 	struct Duration {
 		static Duration max() { return Duration(); }
 	}
+	struct MonoTime {}
+	*/
 }
 
-version(OSX) {
+import core.time;
+
+version(OSXCocoa) {
 	version(ArsdNoCocoa)
 		enum bool UseCocoa = false;
 	else
 		enum bool UseCocoa = true;
 }
-
-version(HasErrno)
-import core.stdc.errno;
 
 import core.attribute;
 static if(!__traits(hasMember, core.attribute, "mustuse"))
@@ -135,7 +138,13 @@ static if(!__traits(hasMember, core.attribute, "mustuse"))
 // FIXME: add an arena allocator? can do task local destruction maybe.
 
 // the three implementations are windows, epoll, and kqueue
-version(Windows) {
+
+version(Emscripten)  {
+	import core.stdc.errno;
+	import core.atomic;
+	import core.volatile;
+
+} else version(Windows) {
 	version=Arsd_core_windows;
 
 	// import core.sys.windows.windows;
@@ -183,8 +192,13 @@ version(Windows) {
 	version=Arsd_core_kqueue;
 
 	import core.sys.darwin.sys.event;
+} else version(iOS) {
+	version=Arsd_core_kqueue;
+
+	import core.sys.darwin.sys.event;
 }
 
+// FIXME: pragma(linkerDirective, "-framework", "Cocoa") works in ldc
 version(OSXCocoa)
 	enum CocoaAvailable = true;
 else
@@ -194,9 +208,11 @@ version(Posix) {
 	import core.sys.posix.signal;
 	import core.sys.posix.unistd;
 
+	version(Emscripten) {} else {
 	import core.sys.posix.sys.un;
 	import core.sys.posix.sys.socket;
 	import core.sys.posix.netinet.in_;
+	}
 }
 
 // FIXME: the exceptions should actually give some explanatory text too (at least sometimes)
@@ -2934,7 +2950,7 @@ private struct ThreadLocalGcRoots {
 +/
 
 // the GC may not be able to see this! remember, it can be hidden inside kernel buffers
-version(HasThread) package(arsd) class CallbackHelper {
+package(arsd) class CallbackHelper {
 	import core.memory;
 
 	void call() {
@@ -2946,10 +2962,12 @@ version(HasThread) package(arsd) class CallbackHelper {
 	void*[3] argsStore;
 
 	void addref() {
+		version(HasThread)
 		atomicOp!"+="(refcount, 1);
 	}
 
 	void release() {
+		version(HasThread)
 		if(atomicOp!"-="(refcount, 1) <= 0) {
 			if(flags & 1)
 				GC.removeRoot(cast(void*) this);
@@ -2964,6 +2982,7 @@ version(HasThread) package(arsd) class CallbackHelper {
 	}
 
 	this(void delegate() callback, bool addRoot = true) {
+		version(HasThread)
 		if(addRoot) {
 			GC.addRoot(cast(void*) this);
 			this.flags |= 1;
@@ -3428,6 +3447,9 @@ version(HasFile) class AsyncFile : AbstractFile {
 	}
 
 }
+else class AsyncFile {
+	package(arsd) this(NativeFileHandle adoptPreSetup) {}
+}
 
 /++
 	Reads or writes a file in one call. It might internally yield, but is generally blocking if it returns values. The callback ones depend on the implementation.
@@ -3811,6 +3833,8 @@ class Timer {
 			if(handle is null)
 				throw new WindowsApiException("CreateWaitableTimer", GetLastError());
 			cbh = new CallbackHelper(&trigger);
+		} else version(Emscripten) {
+			assert(0);
 		} else version(linux) {
 			import core.sys.linux.timerfd;
 
@@ -3846,6 +3870,8 @@ class Timer {
 			initialTime.QuadPart = -intervalInMilliseconds * 10000000L / 1000; // Windows wants hnsecs, we have msecs
 			if(!SetWaitableTimer(handle, &initialTime, repeats ? intervalInMilliseconds : 0, &timerCallback, cast(void*) cbh, false))
 				throw new WindowsApiException("SetWaitableTimer", GetLastError());
+		} else version(Emscripten) {
+			assert(0);
 		} else version(linux) {
 			import core.sys.linux.timerfd;
 
@@ -8496,6 +8522,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			NSEventModifierFlagDeviceIndependentFlagsMask = 0xffff0000UL
 		}
 
+		version(OSX)
 		extern class NSEvent : NSObject {
 			NSEventType type() @selector("type");
 
@@ -8546,6 +8573,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 
 		alias NSTimeInterval = double;
 
+		version(OSX)
 		extern class NSResponder : NSObject {
 			NSMenu menu() @selector("menu");
 			void menu(NSMenu menu) @selector("setMenu:");
@@ -8575,6 +8603,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			// touch events should also be here btw among others
 		}
 
+		version(OSX)
 		extern class NSApplication : NSResponder {
 			static NSApplication shared_() @selector("sharedApplication");
 
@@ -8593,6 +8622,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void terminate(void*) @selector("terminate:");
 		}
 
+		version(OSX)
 		extern interface NSApplicationDelegate {
 			void applicationWillFinishLaunching(NSNotification notification) @selector("applicationWillFinishLaunching:");
 			void applicationDidFinishLaunching(NSNotification notification) @selector("applicationDidFinishLaunching:");
@@ -8619,6 +8649,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			NSGraphicsContext graphicsPort() @selector("graphicsPort");
 		}
 
+		version(OSX)
 		extern class NSMenu : NSObject {
 			override static NSMenu alloc() @selector("alloc");
 
@@ -8635,6 +8666,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			) @selector("addItemWithTitle:action:keyEquivalent:");
 		}
 
+		version(OSX)
 		extern class NSMenuItem : NSObject {
 			override static NSMenuItem alloc() @selector("alloc");
 			override NSMenuItem init() @selector("init");
@@ -8682,6 +8714,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			hUDWindow = 1 << 13 // Specifies a heads up display panel
 		}
 
+		version(OSX)
 		extern class NSWindow : NSObject {
 			override static NSWindow alloc() @selector("alloc");
 
@@ -8715,6 +8748,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void setBackgroundColor(NSColor color) @selector("setBackgroundColor:");
 		}
 
+		version(OSX)
 		extern interface NSWindowDelegate {
 			@optional:
 			void windowDidResize(NSNotification notification) @selector("windowDidResize:");
@@ -8724,8 +8758,9 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void windowWillClose(NSNotification notification) @selector("windowWillClose:");
 		}
 
+		version(OSX)
 		extern class NSView : NSResponder {
-			override NSView init() @selector("init");
+			//override NSView init() @selector("init");
 			NSView initWithFrame(NSRect frameRect) @selector("initWithFrame:");
 
 			void addSubview(NSView view) @selector("addSubview:");
@@ -8793,6 +8828,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		}
 
 
+		version(OSX)
 		extern class NSViewController : NSObject {
 			NSView view() @selector("view");
 			void view(NSView view) @selector("setView:");
@@ -8910,16 +8946,20 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 	extern(C) void NSLog(NSString, ...);
 	extern(C) SEL sel_registerName(const(char)* str);
 
+	version(OSX)
 	extern (Objective-C) __gshared NSApplication NSApp_;
 
+	version(OSX)
 	NSApplication NSApp() {
 		if(NSApp_ is null)
 			NSApp_ = NSApplication.shared_;
 		return NSApp_;
 	}
 
+	version(DigitalMars) {
 	// hacks to work around compiler bug
 	extern(C) __gshared void* _D4arsd4core17NSGraphicsContext7__ClassZ = null;
 	extern(C) __gshared void* _D4arsd4core6NSView7__ClassZ = null;
 	extern(C) __gshared void* _D4arsd4core8NSWindow7__ClassZ = null;
+	}
 }
