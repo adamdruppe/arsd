@@ -2866,7 +2866,7 @@ class Element : DomParent {
 			tag = tag.toLower();
 		Element[] ret;
 		foreach(e; tree)
-			if(e.tagName == tag)
+			if(e.tagName == tag || tag == "*")
 				ret ~= e;
 		return ret;
 	}
