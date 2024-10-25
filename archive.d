@@ -216,22 +216,22 @@ unittest {
 
 // Advances data up to the end of the vla
 ulong readVla(ref const(ubyte)[] data) {
-	ulong n;
-
+	ulong n = 0;
 	int i = 0;
-	while(data[0] & 0x80) {
-		i++;
 
+	while (data[0] & 0x80) {
 		ubyte b = data[0];
 		data = data[1 .. $];
+
+		assert(b != 0);
 		if(b == 0) return 0;
 
-
-		n |= cast(ulong) (b & 0x7F) << (i * 7);
+		n |= (ulong)(b & 0x7F) << (i * 7);
+		i++;
 	}
-
-	n |= data[0] & 0x7f;
+	ubyte b = data[0];
 	data = data[1 .. $];
+	n |= (ulong)(b & 0x7F) << (i * 7);
 
 	return n;
 }
@@ -246,12 +246,14 @@ ulong readVla(ref const(ubyte)[] data) {
 
 		chunkBuffer = an optional parameter providing memory that will be used to buffer uncompressed data chunks. If you pass `null`, it will allocate one for you. Any data in the buffer will be immediately overwritten.
 
-		inputBuffer = an optional parameter providing memory that will hold compressed input data. If you pass `null`, it will allocate one for you. You should NOT populate this buffer with any data; it will be immediately overwritten upon calling this function. The `inputBuffer` must be at least 32 bytes in size.
+		inputBuffer = an optional parameter providing memory that will hold compressed input data. If you pass `null`, it will allocate one for you. You should NOT populate this buffer with any data; it will be immediately overwritten upon calling this function. The `inputBuffer` must be at least 64 bytes in size.
 
 		allowPartialChunks = can be set to true if you want `chunkReceiver` to be called as soon as possible, even if it is only partially full before the end of the input stream. The default is to fill the input buffer for every call to `chunkReceiver` except the last which has remainder data from the input stream.
 
 	History:
 		Added March 24, 2023 (dub v11.0)
+
+		On October 25, 2024, the implementation got a major fix - it can read multiple blocks off the xz file now, were as before it would stop at the first one. This changed the requirement of the input buffer minimum size from 32 to 64 bytes (but it is always better to go more, I recommend 32 KB).
 +/
 version(WithLzmaDecoder)
 void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope ubyte[] delegate(ubyte[] buffer) bufferFiller, ubyte[] chunkBuffer = null, ubyte[] inputBuffer = null, bool allowPartialChunks = false) @trusted {
@@ -259,6 +261,10 @@ void decompressLzma(scope void delegate(in ubyte[] chunk) chunkReceiver, scope u
 		chunkBuffer = new ubyte[](1024 * 32);
 	if(inputBuffer is null)
 		inputBuffer = new ubyte[](1024 * 32);
+
+	assert(inputBuffer.length >= 64);
+
+	bool isStartOfFile = true;
 
 	const(ubyte)[] compressedData = bufferFiller(inputBuffer[]);
 
@@ -439,10 +445,50 @@ struct XzDecoder {
 		//uint crc32 = initialData[0 .. 4]; // FIXME just cast it. this is the crc of the flags.
 		initialData = initialData[4 .. $];
 
+		state = State.readingHeader;
+		readBlockHeader(initialData);
+	}
 
+	private enum State {
+		readingHeader,
+		readingData,
+		readingFooter,
+	}
+	private State state;
+
+	// returns true if it successfully read it, false if it needs more data
+	private bool readBlockHeader(const(ubyte)[] initialData) {
 		// now we are into an xz block...
 
+		if(initialData.length == 0) {
+			unprocessed = initialData;
+			needsMoreData_ = true;
+			finished_ = false;
+			return false;
+		}
+
+		if(initialData[0] == 0) {
+			// this is actually an index and a footer...
+			// we could process it but this also really marks us being done!
+
+			// FIXME: should actually pull the data out and finish it off
+			// see Index records etc at https://tukaani.org/xz/xz-file-format.txt
+			unprocessed = null;
+			finished_ = true;
+			needsMoreData_ = false;
+			return true;
+		}
+
 		int blockHeaderSize = (initialData[0] + 1) * 4;
+
+		auto first = initialData.ptr;
+
+		if(blockHeaderSize > initialData.length) {
+			unprocessed = initialData;
+			needsMoreData_ = true;
+			finished_ = false;
+			return false;
+		}
 
 		auto srcPostHeader = initialData[blockHeaderSize .. $];
 
@@ -453,11 +499,17 @@ struct XzDecoder {
 
 		if(blockFlags & 0x40) {
 			compressedSize = readVla(initialData);
+		} else {
+			compressedSize = 0;
 		}
 
 		if(blockFlags & 0x80) {
 			uncompressedSize = readVla(initialData);
+		} else {
+			uncompressedSize = 0;
 		}
+
+		//import std.stdio; writeln(compressedSize , " compressed, expands to ", uncompressedSize);
 
 		auto filterCount = (blockFlags & 0b11) + 1;
 
@@ -475,13 +527,23 @@ struct XzDecoder {
 			initialData = initialData[1 .. $];
 		}
 
-		//writeln(src.ptr);
-		//writeln(srcPostHeader.ptr);
+		// writeln(initialData.ptr);
+		// writeln(srcPostHeader.ptr);
 
 		// there should be some padding to a multiple of 4...
 		// three bytes of zeroes given the assumptions here
 
-		initialData = initialData[3 .. $];
+		assert(blockHeaderSize >= 4);
+		long expectedRemainder = cast(long) blockHeaderSize - 4;
+		expectedRemainder -= initialData.ptr - first;
+		assert(expectedRemainder >= 0);
+
+		while(expectedRemainder) {
+			expectedRemainder--;
+			if(initialData[0] != 0)
+				throw new Exception("non-zero where padding byte expected in xz file");
+			initialData = initialData[1 .. $];
+		}
 
 		// and then a header crc
 
@@ -506,6 +568,31 @@ struct XzDecoder {
 		Lzma2Dec_Init(&lzmaDecoder);
 
 		unprocessed = initialData;
+		state = State.readingData;
+
+		return true;
+	}
+
+	private bool readBlockFooter(const(ubyte)[] data) {
+		// skip block padding
+		while(data.length && data[0] == 0) {
+			data = data[1 .. $];
+		}
+
+		if(data.length < checkSize) {
+			unprocessed = data;
+			finished_ = false;
+			needsMoreData_ = true;
+			return false;
+		}
+
+		// skip the check
+		data = data[checkSize .. $];
+
+		state = State.readingHeader;
+
+		return readBlockHeader(data);
+		//return true;
 	}
 
 	~this() {
@@ -596,7 +683,12 @@ struct XzDecoder {
 
 
 	+/
-	ubyte[] processData(ubyte[] dest, const ubyte[] src) {
+	ubyte[] processData(ubyte[] dest, const(ubyte)[] src) {
+		if(state == State.readingHeader) {
+			if(!readBlockHeader(src))
+				return dest[0 .. 0];
+			src = unprocessed;
+		}
 
 		size_t destLen = dest.length;
 		size_t srcLen = src.length;
@@ -629,9 +721,11 @@ struct XzDecoder {
 			finished_ = false;
 			needsMoreData_ = true;
 		} else if(status == LZMA_STATUS_FINISHED_WITH_MARK || status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK) {
-			unprocessed = null;
-			finished_ = true;
-			needsMoreData_ = false;
+			// this is the end of a block, but not necessarily the end of the file
+			state = State.readingFooter;
+
+			// the readBlockFooter function updates state, unprocessed, finished, and needs more data
+			readBlockFooter(src[srcLen .. $]);
 		} else if(status == LZMA_STATUS_NOT_FINISHED) {
 			unprocessed = src[srcLen .. $];
 			finished_ = false;
