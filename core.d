@@ -3002,13 +3002,19 @@ package(arsd) class CallbackHelper {
 	}
 }
 
+// FIXME add uri from cgi/http2 and make sure the relative methods are reasonable compatible
+
 /++
 	This represents a file. Technically, file paths aren't actually strings (for example, on Linux, they need not be valid utf-8, while a D string is supposed to be), even though we almost always use them like that.
 
 	This type is meant to represent a filename / path. I might not keep it around.
 +/
 struct FilePath {
-	string path;
+	private string path;
+
+	this(string path) {
+		this.path = path;
+	}
 
 	bool isNull() {
 		return path is null;
@@ -3023,7 +3029,163 @@ struct FilePath {
 	}
 
 	//alias toString this;
+
+	/+ +++++++++++++++++ +/
+	/+  String analysis  +/
+	/+ +++++++++++++++++ +/
+
+	/+
+	bool isAbsolute() {
+
+	}
+
+	string driveName() {
+
+	}
+
+	FilePath relativeTo() {
+
+	}
+
+	FilePath makeAbsolute(FilePath base) {
+
+	}
+
+	bool matchesGlobPattern(string globPattern) {
+
+	}
+
+	this(string directoryName, string filename) {}
+	this(string directoryName, string basename, string extension) {}
+
+	// remove ./, ../, stuff like that
+	FilePath normalize(FilePath relativeTo) {}
+	+/
+
+	/++
+		Returns the path with the directory cut off.
+	+/
+	string filename() {
+		foreach_reverse(idx, ch; path) {
+			if(ch == '\\' || ch == '/')
+				return path[idx + 1 .. $];
+		}
+		return path;
+	}
+
+	/++
+		Returns the path with the filename cut off.
+	+/
+	string directoryName() {
+		auto fn = this.filename();
+		if(fn is path)
+			return null;
+		return path[0 .. $ - fn.length];
+	}
+
+	/++
+		Returns the file extension, if present, including the last dot.
+	+/
+	string extension() {
+		foreach_reverse(idx, ch; path) {
+			if(ch == '.')
+				return path[idx .. $];
+		}
+		return null;
+	}
+
+	/++
+		Guesses the media (aka mime) content type from the file extension for this path.
+
+		Only has a few things supported. Returns null if it doesn't know.
+
+		History:
+			Moved from arsd.cgi to arsd.core.FilePath on October 28, 2024
+	+/
+	string contentTypeFromFileExtension() {
+		switch(this.extension) {
+			// images
+			case ".png":
+				return "image/png";
+			case ".apng":
+				return "image/apng";
+			case ".svg":
+				return "image/svg+xml";
+			case ".jpg":
+			case ".jpeg":
+				return "image/jpeg";
+
+			case ".txt":
+				return "text/plain";
+
+			case ".html":
+				return "text/html";
+			case ".css":
+				return "text/css";
+			case ".js":
+				return "application/javascript";
+			case ".wasm":
+				return "application/wasm";
+
+			case ".mp3":
+				return "audio/mpeg";
+
+			case ".pdf":
+				return "application/pdf";
+
+			default:
+				return null;
+		}
+	}
 }
+
+unittest {
+	FilePath fn;
+
+	fn = FilePath("dir/name.ext");
+	assert(fn.directoryName == "dir/");
+	assert(fn.filename == "name.ext");
+	assert(fn.extension == ".ext");
+
+	fn = FilePath(null);
+	assert(fn.directoryName is null);
+	assert(fn.filename is null);
+	assert(fn.extension is null);
+
+	fn = FilePath("file.txt");
+	assert(fn.directoryName is null);
+	assert(fn.filename == "file.txt");
+	assert(fn.extension == ".txt");
+
+	fn = FilePath("dir/");
+	assert(fn.directoryName == "dir/");
+	assert(fn.filename == "");
+	assert(fn.extension is null);
+}
+
+/+
+struct FilePathGeneric {
+
+}
+
+struct FilePathWin32 {
+
+}
+
+struct FilePathPosix {
+
+}
+
+struct FilePathWindowsUnc {
+
+}
+
+version(Windows)
+	alias FilePath = FilePathWin32;
+else
+	alias FilePath = FilePathPosix;
++/
+
 
 /++
 	Represents a generic async, waitable request.
