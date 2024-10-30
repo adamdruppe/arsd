@@ -188,6 +188,12 @@ void main() {
 
 	For an embedded HTTP server, run `dmd yourfile.d cgi.d -version=embedded_httpd` and run the generated program. It listens on port 8085 by default. You can change this on the command line with the --port option when running your program.
 
+	Command_line_interface:
+
+	If using [GenericMain] or [DispatcherMain], an application using arsd.cgi will offer a command line interface out of the box.
+
+	See [RequestServer.listenSpec] for more information.
+
 	Simulating_requests:
 
 	If you are using one of the [GenericMain] or [DispatcherMain] mixins, or main with your own call to [RequestServer.trySimulatedRequest], you can simulate requests from your command-ine shell. Call the program like this:
@@ -4167,9 +4173,34 @@ struct RequestServer {
 		} else
 		version(stdio_http) {
 			serveSingleHttpConnectionOnStdio!(fun, CustomCgi, maxContentLength)();
-		} else {
-			//version=plain_cgi;
+		} else
+		version(plain_cgi) {
 			handleCgiRequest!(fun, CustomCgi, maxContentLength)();
+		} else {
+			if(this.listenSpec.length) {
+				// FIXME: what about heterogeneous listen specs?
+				if(this.listenSpec[0].startsWith("scgi:"))
+					serveScgi!(fun, CustomCgi, maxContentLength)();
+				else
+					serveEmbeddedHttp!(fun, CustomCgi, maxContentLength)();
+			} else {
+				import std.process;
+				if("REQUEST_METHOD" in environment) {
+					// GATEWAY_INTERFACE must be set according to the spec for it to be a cgi request
+					// REQUEST_METHOD must also be set
+					handleCgiRequest!(fun, CustomCgi, maxContentLength)();
+				} else {
+					import std.stdio;
+					writeln("To start a local-only http server, use `thisprogram --listen http://localhost:PORT_NUMBER`");
+					writeln("To start a externally-accessible http server, use `thisprogram --listen http://:PORT_NUMBER`");
+					writeln("To start a scgi server, use `thisprogram --listen scgi://localhost:PORT_NUMBER`");
+					writeln("To test a request on the command line, use `thisprogram REQUEST /path arg=value`");
+					writeln("Or copy this program to your web server's cgi-bin folder to run it that way.");
+					writeln("If you need FastCGI, recompile this program with -version=fastcgi");
+					writeln();
+					writeln("Learn more at https://opendlang.org/library/arsd.cgi.html#Command-line-interface");
+				}
+			}
 		}
 	}
 
@@ -11987,27 +12018,8 @@ auto serveStaticData(string urlPrefix, immutable(void)[] data, string contentTyp
 }
 
 string contentTypeFromFileExtension(string filename) {
-		if(filename.endsWith(".png"))
-			return "image/png";
-		if(filename.endsWith(".apng"))
-			return "image/apng";
-		if(filename.endsWith(".svg"))
-			return "image/svg+xml";
-		if(filename.endsWith(".jpg"))
-			return "image/jpeg";
-		if(filename.endsWith(".html"))
-			return "text/html";
-		if(filename.endsWith(".css"))
-			return "text/css";
-		if(filename.endsWith(".js"))
-			return "application/javascript";
-		if(filename.endsWith(".wasm"))
-			return "application/wasm";
-		if(filename.endsWith(".mp3"))
-			return "audio/mpeg";
-		if(filename.endsWith(".pdf"))
-			return "application/pdf";
-		return null;
+	import arsd.core;
+	return FilePath(filename).contentTypeFromFileExtension();
 }
 
 /// This serves a directory full of static files, figuring out the content-types from file extensions.
