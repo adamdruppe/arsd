@@ -543,6 +543,8 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 			ev.mode = NotifyModes.NotifyNormal;
 			ev.detail = NotifyDetail.NotifyVirtual;
 
+			// sdpyPrintDebugString("Sending FocusIn");
+
 			trapXErrors( {
 				XSendEvent(XDisplayConnection.get, ozone, false, 0, cast(XEvent*) &ev);
 			});
@@ -559,6 +561,8 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 			ev.window = ozone;
 			ev.mode = NotifyModes.NotifyNormal;
 			ev.detail = NotifyDetail.NotifyNonlinearVirtual;
+
+			// sdpyPrintDebugString("Sending FocusOut");
 
 			trapXErrors( {
 				XSendEvent(XDisplayConnection.get, ozone, false, 0, cast(XEvent*) &ev);
@@ -1284,6 +1288,7 @@ version(cef) {
 
 	class MiniguiFocusHandler : CEF!cef_focus_handler_t {
 		override void on_take_focus(RC!(cef_browser_t) browser, int next) nothrow {
+			// sdpyPrintDebugString("taking");
 			browser.runOnWebView(delegate(wv) {
 				Widget f;
 				if(next) {
@@ -1305,7 +1310,40 @@ version(cef) {
 				ev.focus(); // even this can steal focus from other parts of my application!
 			});
 			+/
-			//sdpyPrintDebugString("setting");
+			// sdpyPrintDebugString("setting");
+
+			// if either the parent window or the ozone window has the focus, we
+			// can redirect it to the input focus. CEF calls this method sometimes
+			// before setting the focus (where return 1 can override) and sometimes
+			// after... which is totally inappropriate for it to do but it does anyway
+			// and we want to undo the damage of this.
+			browser.runOnWebView((ev) {
+				arsd.simpledisplay.Window focus_window;
+				int revert_to_return;
+				XGetInputFocus(XDisplayConnection.get, &focus_window, &revert_to_return);
+				if(focus_window is ev.parentWindow.win.impl.window || focus_window is ev.ozone) {
+					// refocus our correct input focus
+					ev.parentWindow.win.focus();
+					XSync(XDisplayConnection.get, 0);
+
+					// and then tell the chromium thing it still has it
+					// so it will think it got it, lost it, then got it again
+					// and hopefully not try to get it again
+					XFocusChangeEvent eve;
+					eve.type = arsd.simpledisplay.EventType.FocusIn;
+					eve.display = XDisplayConnection.get;
+					eve.window = ev.ozone;
+					eve.mode = NotifyModes.NotifyNormal;
+					eve.detail = NotifyDetail.NotifyVirtual;
+
+					// sdpyPrintDebugString("Sending FocusIn hack here");
+
+					trapXErrors( {
+						XSendEvent(XDisplayConnection.get, ev.ozone, false, 0, cast(XEvent*) &eve);
+					});
+
+				}
+			});
 
 			return 1; // otherwise, cancel because this bullshit tends to steal focus from other applications and i never, ever, ever want that to happen.
 			// seems to happen because of race condition in it getting a focus event and then stealing the focus from the parent
@@ -1314,10 +1352,13 @@ version(cef) {
 			// it also breaks its own pop up menus and drop down boxes to allow this! wtf
 		}
 		override void on_got_focus(RC!(cef_browser_t) browser) nothrow {
+			// sdpyPrintDebugString("got");
 			browser.runOnWebView((ev) {
 				// this sometimes steals from the app too but it is relatively acceptable
 				// steals when i mouse in from the side of the window quickly, but still
 				// i want the minigui state to match so i'll allow it
+
+				//if(ev.parentWindow) ev.parentWindow.focus();
 				ev.focus();
 			});
 		}

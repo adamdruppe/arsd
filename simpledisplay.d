@@ -2406,6 +2406,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 						setTo = setRequestedInputFocus();
 					if(setTo is null)
 						setTo = this;
+
+					// sdpyPrintDebugString("grabInput() ", setTo.impl.window;
 					XSetInputFocus(XDisplayConnection.get, setTo.impl.window, RevertToParent, CurrentTime);
 				}
 			}
@@ -2575,6 +2577,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				setTo = setRequestedInputFocus();
 			if(setTo is null)
 				setTo = this;
+			// sdpyPrintDebugString("sdpy.focus() ", setTo.impl.window);
 			XSetInputFocus(XDisplayConnection.get, setTo.impl.window, RevertToParent, CurrentTime);
 		} else version(Windows) {
 			SetFocus(this.impl.hwnd);
@@ -16400,6 +16403,7 @@ version(X11) {
 
 						// FIXME: so this is actually supposed to focus to a relevant child window if appropriate
 
+						// sdpyPrintDebugString("WM_TAKE_FOCUS ", setTo.impl.window);
 						XSetInputFocus(display, setTo.impl.window, RevertToParent, e.xclient.data.l[1]);
 					}
 				} else if(e.xclient.message_type == GetAtom!"MANAGER"(e.xany.display)) {

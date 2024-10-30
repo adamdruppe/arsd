@@ -8243,6 +8243,7 @@ class Window : Widget {
 		};
 
 		win.onFocusChange = (bool getting) {
+			// sdpyPrintDebugString("onFocusChange ", getting, " ", this.toString);
 			if(this.focusedWidget) {
 				if(getting) {
 					this.focusedWidget.emit!FocusEvent();
@@ -8462,6 +8463,12 @@ class Window : Widget {
 		XMapWindow(display, inputProxy);
 		// writefln("input proxy: 0x%0x", inputProxy);
 		this.inputProxy = new SimpleWindow(inputProxy);
+
+		/+
+		this.inputProxy.onFocusChange = (bool getting) {
+			sdpyPrintDebugString("input proxy focus change ", getting);
+		};
+		+/
 
 		XEvent lastEvent;
 		this.inputProxy.handleNativeEvent = (XEvent ev) {
