@@ -12741,14 +12741,14 @@ struct cef_focus_handler_t
     /// component.
     ///
 
-    ///
-    /// Called when the browser component is requesting focus. |source| indicates
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_focus_handler_t* self,
         cef_browser_t* browser,
         int next) nothrow on_take_focus;
+
+    ///
+    /// Called when the browser component is requesting focus. |source| indicates
     /// where the focus request is originating from. Return false (0) to allow the
     /// focus to be set or true (1) to cancel setting the focus.
     ///
