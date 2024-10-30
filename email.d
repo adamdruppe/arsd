@@ -25,6 +25,8 @@ import std.algorithm.iteration;
 
 import arsd.characterencodings;
 
+public import arsd.core : FilePath;
+
 //         import std.uuid;
 // smtpMessageBoundary = randomUUID().toString();
 
@@ -457,15 +459,56 @@ class EmailMessage {
 	const(MimeAttachment)[] attachments;
 
 	/++
-		The filename is what is shown to the user, not the file on your sending computer. It should NOT have a path in it.
+		The attachmentFileName is what is shown to the user, not the file on your sending computer. It should NOT have a path in it.
+		If you want a filename from your computer, try [addFileAsAttachment].
+
+		The `mimeType` can be excluded if the filename has a common extension supported by the library.
 
 		---
 			message.addAttachment("text/plain", "something.txt", std.file.read("/path/to/local/something.txt"));
 		---
+
+		History:
+			The overload without `mimeType` was added October 28, 2024.
+
+			The parameter `attachmentFileName` was previously called `filename`. This was changed for clarity and consistency with other overloads on October 28, 2024.
 	+/
-	void addAttachment(string mimeType, string filename, const void[] content, string id = null) {
+	void addAttachment(string mimeType, string attachmentFileName, const void[] content, string id = null) {
 		isMime = true;
-		attachments ~= MimeAttachment(mimeType, filename, cast(const(ubyte)[]) content, id);
+		attachments ~= MimeAttachment(mimeType, attachmentFileName, cast(const(ubyte)[]) content, id);
+	}
+
+
+	/// ditto
+	void addAttachment(string attachmentFileName, const void[] content, string id = null) {
+		import arsd.core;
+		addAttachment(FilePath(attachmentFileName).contentTypeFromFileExtension, attachmentFileName, content, id);
+	}
+
+	/++
+		Reads the local file and attaches it.
+
+		If `attachmentFileName` is null, it uses the filename of `localFileName`, without the directory.
+
+		If `mimeType` is null, it guesses one based on the local file name's file extension.
+
+		If these cannot be determined, it will throw an `InvalidArgumentsException`.
+
+		History:
+			Added October 28, 2024
+	+/
+	void addFileAsAttachment(FilePath localFileName, string attachmentFileName = null, string mimeType = null, string id = null) {
+		if(mimeType is null)
+			mimeType = localFileName.contentTypeFromFileExtension;
+		if(attachmentFileName is null)
+			attachmentFileName = localFileName.filename;
+
+		import std.file;
+
+		addAttachment(mimeType, attachmentFileName, std.file.read(localFileName.toString()), id);
+
+		// see also: curl.h :1877    CURLOPT(CURLOPT_XOAUTH2_BEARER, CURLOPTTYPE_STRINGPOINT, 220),
+		// also option to force STARTTLS
 	}
 
 	/// in the html, use img src="cid:ID_GIVEN_HERE"
