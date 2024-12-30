@@ -1134,8 +1134,8 @@ class HttpRequest {
 	size_t bodyBytesReceived;
 
 	State state_;
-	State state() { return state_; }
-	State state(State s) {
+	final State state() { return state_; }
+	final State state(State s) {
 		assert(state_ != State.complete);
 		return state_ = s;
 	}
@@ -3972,7 +3972,7 @@ version(use_openssl) {
 			return 0;
 		}
 
-		bool dataPending() {
+		final bool dataPending() {
 			return OpenSSL.SSL_pending(ssl) > 0;
 		}
 
