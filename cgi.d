@@ -622,6 +622,8 @@ version(Posix) {
 
 	} else {
 		version(FreeBSD) {
+			// not implemented on bsds
+		} else version(OpenBSD) {
 			// I never implemented the fancy stuff there either
 		} else {
 			version=with_breaking_cgi_features;
@@ -10742,7 +10744,7 @@ html", true, true);
 			return dl;
 		} else static if(is(T == bool)) {
 			return Element.make("span", t ? "true" : "false", "automatic-data-display");
-		} else static if(is(T == E[], E)) {
+		} else static if(is(T == E[], E) || is(T == E[N], E, size_t N)) {
 			static if(is(E : RestObject!Proxy, Proxy)) {
 				// treat RestObject similar to struct
 				auto table = cast(Table) Element.make("table");
