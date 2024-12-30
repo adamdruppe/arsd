@@ -748,10 +748,7 @@ class DiscordGatewayConnection {
 		websocket.onmessage = &handleWebsocketMessage;
 		websocket.onclose = &handleWebsocketClose;
 
-		// FIXME: if the connect fails we should set a timer and try
-		// again, but if it fails then, quit. at least if it is not a websocket reply
-		// cuz it could be discord went down or something.
-		this.websocket_.connect();
+		websocketConnectInLoop();
 
 		var resumeData = var.emptyObject;
 		resumeData.token = this.token;
@@ -927,7 +924,7 @@ class DiscordGatewayConnection {
 		websocket.onmessage = &handleWebsocketMessage;
 		websocket.onclose = &handleWebsocketClose;
 
-		websocket.connect();
+		websocketConnectInLoop();
 
 		var d = var.emptyObject;
 		d.token = token;
@@ -940,6 +937,29 @@ class DiscordGatewayConnection {
 
 		sendWebsocketCommand(OpCode.Identify, d);
 	}
+
+	void websocketConnectInLoop() {
+		// FIXME: if the connect fails we should set a timer and try
+		// again, but if it fails then, quit. at least if it is not a websocket reply
+		// cuz it could be discord went down or something.
+
+		import core.time;
+		auto d = 1.seconds;
+		int count = 0;
+
+		try {
+			this.websocket_.connect();
+		} catch(Exception e) {
+			import core.thread;
+			Thread.sleep(d);
+			d *= 2;
+			count++;
+			if(count == 10)
+				throw e;
+		}
+	}
+
+
 }
 
 class DiscordRpcConnection {
