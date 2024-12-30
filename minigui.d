@@ -189,6 +189,17 @@ the virtual functions remain as the default calculated values. then the reads go
 
 		More to come.
 
+	My_UI_Guidelines:
+		In a perfect world, you'd achieve all the following goals:
+
+		$(LIST
+			* All operations are present in the menu
+			* The operations the user wants at the moment are right where they want them
+			* All operations can be scripted
+			* The UI does not move any elements without explicit user action
+			* All numbers can be seen and typed in if wanted, even if the ui usually hides them
+		)
+
 	History:
 		Minigui had mostly additive changes or bug fixes since its inception until May 2021.
 
@@ -2355,6 +2366,24 @@ abstract class ComboboxBase : Widget {
 		return cast(string[]) options_;
 	}
 
+	/++
+		Replaces the list of options in the box. Note that calling this will also reset the selection.
+
+		History:
+			Added December, 29 2024
+	+/
+	final @property void options(string[] options) {
+		version(win32_widgets)
+			SendMessageW(hwnd, 331 /*CB_RESETCONTENT*/, 0, 0);
+		selection_ = -1;
+		options_ = null;
+		foreach(opt; options)
+			addOption(opt);
+
+		version(custom_widgets)
+			redraw();
+	}
+
 	private string[] options_;
 	private int selection_ = -1;
 
@@ -2459,69 +2488,125 @@ abstract class ComboboxBase : Widget {
 		override int maxHeight() { return defaultLineHeight + 4; }
 	}
 
-	version(custom_widgets) {
+	version(custom_widgets)
+	void popup() {
+		CustomComboBoxPopup popup = new CustomComboBoxPopup(this);
+	}
+
+}
+
+private class CustomComboBoxPopup : Window {
+	private ComboboxBase associatedWidget;
+	private ListWidget lw;
+
+	this(ComboboxBase associatedWidget) {
+		this.associatedWidget = associatedWidget;
 
 		// FIXME: this should scroll if there's too many elements to reasonably fit on screen
 
-		SimpleWindow dropDown;
-		void popup() {
-			auto w = width;
-			// FIXME: suggestedDropdownHeight see below
-			auto h = cast(int) this.options.length * defaultLineHeight + 8;
+		auto w = associatedWidget.width;
+		// FIXME: suggestedDropdownHeight see below
+		auto h = cast(int) associatedWidget.options.length * defaultLineHeight + 8;
 
-			auto coord = this.globalCoordinates();
-			auto dropDown = new SimpleWindow(
-				w, h,
-				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow, parentWindow ? parentWindow.win : null);
+		if(h > associatedWidget.parentWindow.height)
+			h = associatedWidget.parentWindow.height;
 
-			dropDown.move(coord.x, coord.y + this.height);
+		auto coord = associatedWidget.globalCoordinates();
+		auto dropDown = new SimpleWindow(
+			w, h,
+			null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow, associatedWidget.parentWindow ? associatedWidget.parentWindow.win : null);
 
-			{
-				auto cs = getComputedStyle();
-				auto painter = dropDown.draw();
-				draw3dFrame(0, 0, w, h, painter, FrameStyle.risen, getComputedStyle().background.color);
-				auto p = Point(4, 4);
-				painter.outlineColor = cs.foregroundColor;
-				foreach(option; options) {
-					painter.drawText(p, option);
-					p.y += defaultLineHeight;
-				}
+		super(dropDown);
+
+		dropDown.move(coord.x, coord.y + associatedWidget.height);
+
+		this.lw = new ListWidget(this);
+		version(custom_widgets)
+			lw.multiSelect = false;
+		foreach(option; associatedWidget.options)
+			lw.addOption(option);
+
+		lw.setSelection(associatedWidget.getSelection);
+		lw.scrollSelectionIntoView();
+
+		/+
+		{
+			auto cs = getComputedStyle();
+			auto painter = dropDown.draw();
+			draw3dFrame(0, 0, w, h, painter, FrameStyle.risen, getComputedStyle().background.color);
+			auto p = Point(4, 4);
+			painter.outlineColor = cs.foregroundColor;
+			foreach(option; associatedWidget.options) {
+				painter.drawText(p, option);
+				p.y += defaultLineHeight;
 			}
-
-			dropDown.setEventHandlers(
-				(MouseEvent event) {
-					if(event.type == MouseEventType.buttonReleased) {
-						dropDown.close();
-						auto element = (event.y - 4) / defaultLineHeight;
-						if(element >= 0 && element <= options.length) {
-							selection_ = element;
-
-							fireChangeEvent();
-						}
-					}
-				}
-			);
-
-			dropDown.visibilityChanged = (bool visible) {
-				if(visible) {
-					this.redraw();
-					dropDown.grabInput();
-				} else {
-					dropDown.releaseInputGrab();
-				}
-			};
-
-			dropDown.show();
 		}
 
+		dropDown.setEventHandlers(
+			(MouseEvent event) {
+				if(event.type == MouseEventType.buttonReleased) {
+					dropDown.close();
+					auto element = (event.y - 4) / defaultLineHeight;
+					if(element >= 0 && element <= associatedWidget.options.length) {
+						associatedWidget.selection_ = element;
+
+						associatedWidget.fireChangeEvent();
+					}
+				}
+			}
+		);
+		+/
+
+		Widget previouslyFocusedWidget;
+
+		dropDown.visibilityChanged = (bool visible) {
+			if(visible) {
+				this.redraw();
+				captureMouse(this);
+				//dropDown.grabInput();
+
+				if(previouslyFocusedWidget is null)
+					previouslyFocusedWidget = associatedWidget.parentWindow.focusedWidget;
+				associatedWidget.parentWindow.focusedWidget = lw;
+			} else {
+				//dropDown.releaseInputGrab();
+				releaseMouseCapture();
+
+				associatedWidget.setSelection(lw.getSelection);
+
+				associatedWidget.parentWindow.focusedWidget = previouslyFocusedWidget;
+			}
+		};
+
+		dropDown.show();
+	}
+
+	override void defaultEventHandler_click(ClickEvent ce) {
+		if(ce.button == MouseButton.left && (ce.target is this || ce.target is lw)) {
+			this.win.close();
+		}
+	}
+
+	override void defaultEventHandler_char(CharEvent ce) {
+		if(ce.character == '\n')
+			this.win.close();
 	}
 }
 
 /++
 	A drop-down list where the user must select one of the
 	given options. Like `<select>` in HTML.
+
+	The current selection is given as a string or an index.
+	It emits a SelectionChangedEvent when it changes.
 +/
 class DropDownSelection : ComboboxBase {
+	/++
+		Creates a drop down selection, optionally passing its initial list of options.
+
+		History:
+			The overload with the `options` parameter was added December 29, 2024.
+	+/
 	this(Widget parent) {
 		version(win32_widgets)
 			super(3 /* CBS_DROPDOWNLIST */ | WS_VSCROLL, parent);
@@ -2537,6 +2622,12 @@ class DropDownSelection : ComboboxBase {
 					popup();
 			});
 		} else static assert(false);
+	}
+
+	/// ditto
+	this(string[] options, Widget parent) {
+		this(parent);
+		this.options = options;
 	}
 
 	mixin Padding!q{2};
@@ -4322,7 +4413,7 @@ struct StyleInformation {
 		/** */ Color activeTabColor() { return lightAccentColor; }
 		/** */ Color buttonColor() { return windowBackgroundColor; }
 		/** */ Color depressedButtonColor() { return darkAccentColor; }
-		/** */ Color hoveringColor() { return lightAccentColor; }
+		/** the background color of the widget when mouse hovering over it, if it responds to mouse hovers */ Color hoveringColor() { return lightAccentColor; }
 		deprecated("Use selectionForegroundColor and selectionBackgroundColor instead") Color activeListXorColor() {
 			auto c = WidgetPainter.visualTheme.selectionColor();
 			return Color(c.r ^ 255, c.g ^ 255, c.b ^ 255, c.a);
@@ -4825,6 +4916,9 @@ class ListWidget : ListWidgetBase {
 		if(y >= 0 && y < options.length)
 			options[y].selected = !options[y].selected;
 
+		version(custom_widgets)
+			focusOn = y;
+
 		this.emit!(ChangeEvent!void)(delegate {});
 
 		version(custom_widgets)
@@ -4845,12 +4939,16 @@ class ListWidget : ListWidgetBase {
 	}
 
 	version(custom_widgets)
+	private int focusOn;
+
+	version(custom_widgets)
 	override void defaultEventHandler_click(ClickEvent event) {
 		this.focus();
 		if(event.button == MouseButton.left) {
 			auto y = (event.clientY - 4) / defaultLineHeight;
 			if(y >= 0 && y < options.length) {
 				setSelection(y);
+				focusOn = y;
 			}
 		}
 		super.defaultEventHandler_click(event);
@@ -4889,6 +4987,13 @@ class ListWidget : ListWidgetBase {
 			painter.fillColor = painter.visualTheme.widgetBackgroundColor;
 			painter.outlineColor = painter.visualTheme.widgetBackgroundColor;
 			painter.drawRectangle(pos, width - 8, defaultLineHeight);
+
+			if(idx == focusOn) {
+				painter.fillColor = Color.transparent;
+				painter.pen =  Pen(option.selected ? cs.selectionForegroundColor : cs.foregroundColor, 1, Pen.Style.Dotted);
+				painter.drawRectangle(pos, width - 8, defaultLineHeight);
+			}
+
 			if(option.selected) {
 				//painter.rasterOp = RasterOp.xor;
 				painter.outlineColor = cs.selectionForegroundColor;
@@ -4934,6 +5039,59 @@ class ListWidget : ListWidgetBase {
 		}
 	}
 
+	version(custom_widgets)
+	override void defaultEventHandler_keydown(KeyDownEvent kde) {
+		switch(kde.key) {
+			case Key.Up:
+				if(focusOn) {
+					focusOn--;
+					ensureVisibleInScroll(Rectangle(Point(0, focusOn * defaultLineHeight), Size(1, defaultLineHeight)));
+					if(multiSelect)
+						redraw();
+					else
+						setSelection(focusOn);
+				}
+			break;
+			case Key.Down:
+				if(focusOn + 1 < options.length) {
+					focusOn++;
+					ensureVisibleInScroll(Rectangle(Point(0, focusOn * defaultLineHeight), Size(1, defaultLineHeight)));
+					if(multiSelect)
+						redraw();
+					else
+						setSelection(focusOn);
+				}
+			break;
+			default:
+		}
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_char(CharEvent ce) {
+		if(ce.character == '\n' || ce.character == ' ') {
+			setSelection(focusOn);
+		} else {
+			// search for the item that best matches and jump to it
+			// FIXME this sucks in tons of ways. the normal thing toolkits
+			// do here is to search for a substring on a timer, but i'd kinda
+			// rather make an actual little dialog with some options. still meh for now.
+			dchar search = ce.character;
+			if(search >= 'A' && search <= 'Z')
+				search += 32;
+			foreach(idx, option; options) {
+				auto ch = option.label.length ? option.label[0] : 0;
+				if(ch >= 'A' && ch <= 'Z')
+					ch += 32;
+				if(ch == search) {
+					setSelection(cast(int) idx);
+					scrollSelectionIntoView();
+					break;
+				}
+			}
+
+		}
+	}
+
 	Option[] options;
 	version(win32_widgets)
 		enum multiSelect = false; /// not implemented yet
@@ -4941,6 +5099,13 @@ class ListWidget : ListWidgetBase {
 		bool multiSelect;
 
 	override int heightStretchiness() { return 6; }
+
+	void scrollSelectionIntoView() {
+		// FIXME: implement on Windows
+
+		version(custom_widgets)
+			ensureVisibleInScroll(Point(4, getSelection() * defaultLineHeight + 2));
+	}
 }
 
 
@@ -8043,19 +8208,35 @@ int processWmCommand(HWND parentWindow, HWND handle, ushort cmd, ushort idm) {
 
 ///
 class Window : Widget {
-	int mouseCaptureCount = 0;
-	Widget mouseCapturedBy;
+	Widget[] mouseCapturedBy;
 	void captureMouse(Widget byWhom) {
-		assert(mouseCapturedBy is null || byWhom is mouseCapturedBy);
-		mouseCaptureCount++;
-		mouseCapturedBy = byWhom;
-		win.grabInput(false, true, false);
+		assert(byWhom !is null);
+		if(mouseCapturedBy.length > 0) {
+			auto cc = mouseCapturedBy[$-1];
+			if(cc is byWhom)
+				return; // or should it throw?
+			auto par = byWhom;
+			while(par) {
+				if(cc is par)
+					goto allowed;
+				par = par.parent;
+			}
+
+			throw new Exception("mouse is already captured by other widget");
+		}
+		allowed:
+		mouseCapturedBy ~= byWhom;
+		if(mouseCapturedBy.length == 1)
+			win.grabInput(false, true, false);
 		//void grabInput(bool keyboard = true, bool mouse = true, bool confine = false) {
 	}
 	void releaseMouseCapture() {
-		mouseCaptureCount--;
-		mouseCapturedBy = null;
-		win.releaseInputGrab();
+		if(mouseCapturedBy.length == 0)
+			return; // or should it throw?
+		mouseCapturedBy = mouseCapturedBy[0 .. $-1];
+		mouseCapturedBy.assumeSafeAppend();
+		if(mouseCapturedBy.length == 0)
+			win.releaseInputGrab();
 	}
 
 
@@ -8578,6 +8759,7 @@ class Window : Widget {
 
 		auto captureEle = ele;
 
+		auto mouseCapturedBy = this.mouseCapturedBy.length ? this.mouseCapturedBy[$-1] : null;
 		if(mouseCapturedBy !is null) {
 			if(ele !is mouseCapturedBy && !mouseCapturedBy.isAParentOf(ele))
 				captureEle = mouseCapturedBy;
@@ -9920,6 +10102,7 @@ class MainWindow : Window {
                         void New() {}
                         void Open() {}
                         void Save() {}
+			void Save_As() {} // underscores translate to spaces
                         @separator
                         void Exit() @accelerator("Alt+F4") @hotkey('x') {
                                 window.close();
@@ -9939,6 +10122,8 @@ class MainWindow : Window {
 
                 @menu("Help") {
                         void About() {}
+			@label("In Menu")
+			void InCode() {} // @label changes the name in the menu from what is in the code
                 }
         }
 
@@ -10044,6 +10229,27 @@ class MainWindow : Window {
 		auto str = event.originalKeyEvent.toStr;
 		if(auto acl = str in accelerators)
 			(*acl)();
+
+		// Windows this this automatically so only on custom need we implement it
+		version(custom_widgets) {
+			if(event.altKey && this.menuBar) {
+				foreach(item; this.menuBar.items) {
+					if(item.hotkey == keyToLetterCharAssumingLotsOfThingsThatYouMightBetterNotAssume(event.key)) {
+						// FIXME this kinda sucks but meh just pretending to click on it to trigger other existing mediocre code
+						item.dynamicState = DynamicState.hover | DynamicState.depressed;
+						item.redraw();
+						auto e = new MouseDownEvent(item);
+						e.dispatch();
+						break;
+					}
+				}
+			}
+
+			if(event.key == Key.Menu) {
+				showContextMenu(-1, -1);
+			}
+		}
+
 		super.defaultEventHandler_keydown(event);
 	}
 
@@ -11065,10 +11271,18 @@ class Menu : Window {
 
 	version(win32_widgets) {}
 	else version(custom_widgets) {
+
+		Widget previouslyFocusedWidget;
+		Widget* previouslyFocusedWidgetBelongsIn;
+
 		SimpleWindow dropDown;
 		Widget menuParent;
 		void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
 			this.menuParent = parent;
+
+			previouslyFocusedWidget = parent.parentWindow.focusedWidget;
+			previouslyFocusedWidgetBelongsIn = &parent.parentWindow.focusedWidget;
+			parent.parentWindow.focusedWidget = this;
 
 			int w = 150;
 			int h = paddingTop + paddingBottom;
@@ -11134,6 +11348,9 @@ class Menu : Window {
 			// menuParent.parentWindow.win.focus();
 		}
 		clickListener.disconnect();
+
+		if(previouslyFocusedWidgetBelongsIn)
+			*previouslyFocusedWidgetBelongsIn = previouslyFocusedWidget;
 	}
 
 	MenuItem[] items;
@@ -11179,9 +11396,163 @@ class Menu : Window {
 	override int maxHeight() { return defaultLineHeight; }
 	override int minHeight() { return defaultLineHeight; }
 
-	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.risen, getComputedStyle.background.color);
+	version(custom_widgets) {
+		Widget currentPlace;
+
+		void changeCurrentPlace(Widget n) {
+			if(currentPlace) {
+				currentPlace.dynamicState = 0;
+			}
+
+			if(n) {
+				n.dynamicState = DynamicState.hover;
+			}
+
+			currentPlace = n;
+		}
+
+		override void paint(WidgetPainter painter) {
+			this.draw3dFrame(painter, FrameStyle.risen, getComputedStyle.background.color);
+		}
+
+		override void defaultEventHandler_keydown(KeyDownEvent ke) {
+			switch(ke.key) {
+				case Key.Down:
+					Widget next;
+					Widget first;
+					foreach(w; this.children) {
+						if((cast(MenuItem) w) is null)
+							continue;
+
+						if(first is null)
+							first = w;
+
+						if(next !is null) {
+							next = w;
+							break;
+						}
+
+						if(currentPlace is null) {
+							next = w;
+							break;
+						}
+
+						if(w is currentPlace) {
+							next = w;
+						}
+					}
+
+					if(next is currentPlace)
+						next = first;
+
+					changeCurrentPlace(next);
+					break;
+				case Key.Up:
+					Widget prev;
+					foreach(w; this.children) {
+						if((cast(MenuItem) w) is null)
+							continue;
+						if(w is currentPlace) {
+							if(prev is null) {
+								foreach_reverse(c; this.children) {
+									if((cast(MenuItem) c) !is null) {
+										prev = c;
+										break;
+									}
+								}
+							}
+							break;
+						}
+						prev = w;
+					}
+					changeCurrentPlace(prev);
+					break;
+				case Key.Left:
+				case Key.Right:
+					if(menuParent) {
+						Menu first;
+						Menu last;
+						Menu prev;
+						Menu next;
+						bool found;
+
+						size_t prev_idx;
+						size_t next_idx;
+
+						MenuBar mb = cast(MenuBar) menuParent.parent;
+
+						if(mb) {
+							foreach(idx, menu; mb.subMenus) {
+								if(first is null)
+									first = menu;
+								last = menu;
+								if(found && next is null) {
+									next = menu;
+									next_idx = idx;
+								}
+								if(menu is this)
+									found = true;
+								if(!found) {
+									prev = menu;
+									prev_idx = idx;
+								}
+							}
+
+							Menu nextMenu;
+							size_t nextMenuIdx;
+							if(ke.key == Key.Left) {
+								nextMenu = prev ? prev : last;
+								nextMenuIdx = prev ? prev_idx : mb.subMenus.length - 1;
+							} else {
+								nextMenu = next ? next : first;
+								nextMenuIdx = next ? next_idx : 0;
+							}
+
+							unpopup();
+
+							auto rent = mb.children[nextMenuIdx]; // FIXME thsi is not necessarily right
+							rent.dynamicState = DynamicState.depressed | DynamicState.hover;
+							nextMenu.popup(rent);
+						}
+					}
+					break;
+				case Key.Enter:
+				case Key.PadEnter:
+					// because the key up and char events will go back to the other window after we unpopup!
+					// we will wait for the char event to come (in the following method)
+					break;
+				case Key.Escape:
+					unpopup();
+					break;
+				default:
+			}
+		}
+		override void defaultEventHandler_char(CharEvent ke) {
+			// if one is selected, enter activates it
+			if(currentPlace) {
+				if(ke.character == '\n') {
+					// enter selects
+					auto event = new Event(EventType.triggered, currentPlace);
+					event.dispatch();
+					unpopup();
+					return;
+				}
+			}
+
+			// otherwise search for a hotkey
+			foreach(item; items) {
+				if(item.hotkey == ke.character) {
+					auto event = new Event(EventType.triggered, item);
+					event.dispatch();
+					unpopup();
+					return;
+				}
+			}
+		}
+		override void defaultEventHandler_mouseover(MouseOverEvent moe) {
+			if(moe.target && moe.target.parent is this)
+				changeCurrentPlace(moe.target);
+		}
 	}
 }
 
@@ -11193,6 +11564,7 @@ class MenuItem : MouseActivatedWidget {
 
 	Action action;
 	string label;
+	dchar hotkey;
 
 	override int paddingLeft() { return 4; }
 
@@ -11209,9 +11581,16 @@ class MenuItem : MouseActivatedWidget {
 	this(string lbl, Widget parent = null) {
 		super(parent);
 		//label = lbl; // FIXME
-		foreach(char ch; lbl) // FIXME
-			if(ch != '&') // FIXME
+		foreach(idx, char ch; lbl) // FIXME
+			if(ch != '&') { // FIXME
 				label ~= ch; // FIXME
+			} else {
+				if(idx + 1 < lbl.length) {
+					hotkey = lbl[idx + 1];
+					if(hotkey >= 'A' && hotkey <= 'Z')
+						hotkey += 32;
+				}
+			}
 		tabStop = false; // these are selected some other way
 	}
 
@@ -11228,6 +11607,18 @@ class MenuItem : MouseActivatedWidget {
 		auto cs = getComputedStyle();
 		if(dynamicState & DynamicState.depressed)
 			this.draw3dFrame(painter, FrameStyle.sunk, cs.background.color);
+		else {
+			if(dynamicState & DynamicState.hover) {
+				painter.fillColor = cs.hoveringColor;
+				painter.outlineColor = Color.transparent;
+			} else {
+				painter.fillColor = cs.background.color;
+				painter.outlineColor = Color.transparent;
+			}
+
+			painter.drawRectangle(Point(0, 0), Size(this.width, this.height));
+		}
+
 		if(dynamicState & DynamicState.hover)
 			painter.outlineColor = cs.activeMenuItemColor;
 		else
@@ -12142,24 +12533,16 @@ class TextLabel : Widget {
 
 }
 
-version(custom_widgets)
+version(trash_text) {
+	alias EditableTextWidgetParent = ScrollableWidget; ///
 	private struct etc {
 		mixin ExperimentalTextComponent;
 	}
-
-version(win32_widgets) {
+} else {
 	alias EditableTextWidgetParent = Widget; ///
 	version=use_new_text_system;
 	import arsd.textlayouter;
-} else version(custom_widgets) {
-	version(trash_text) {
-		alias EditableTextWidgetParent = ScrollableWidget; ///
-	} else {
-		alias EditableTextWidgetParent = Widget;
-		version=use_new_text_system;
-		import arsd.textlayouter;
-	}
-} else static assert(0);
+}
 
 version(use_new_text_system)
 class TextDisplayHelper : Widget {
@@ -12797,7 +13180,7 @@ class TextWidget : Widget {
 
 
 /+
-	This awful thing has to be rewritten. And it needs to takecare of parentWindow.inputProxy.setIMEPopupLocation too
+	make sure it calls parentWindow.inputProxy.setIMEPopupLocation too
 +/
 
 /// Contains the implementation of text editing
