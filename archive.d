@@ -22,6 +22,8 @@
 		A number of improvements were made with the help of Steven Schveighoffer on March 22, 2023.
 
 		`arsd.archive` was changed to require [arsd.core] on March 23, 2023 (dub v11.0). Previously, it was a standalone module. It uses arsd.core's exception helpers only at this time and you could turn them back into plain (though uninformative) D base `Exception` instances to remove the dependency if you wanted to keep the file independent.
+
+                The [ArzArchive] class had a memory leak prior to November 2, 2024. It now uses the GC instead.
 +/
 module arsd.archive;
 
@@ -226,12 +228,12 @@ ulong readVla(ref const(ubyte)[] data) {
 		assert(b != 0);
 		if(b == 0) return 0;
 
-		n |= (ulong)(b & 0x7F) << (i * 7);
+		n |= cast(ulong)(b & 0x7F) << (i * 7);
 		i++;
 	}
 	ubyte b = data[0];
 	data = data[1 .. $];
-	n |= (ulong)(b & 0x7F) << (i * 7);
+	n |= cast(ulong)(b & 0x7F) << (i * 7);
 
 	return n;
 }
@@ -913,13 +915,13 @@ private:
         assert(nfo.rc);
         if (--nfo.rc == 0) {
           import core.memory : GC;
-          import core.stdc.stdlib : free;
+          // import core.stdc.stdlib : free;
           if (nfo.afl !is null) fclose(nfo.afl);
           nfo.chunks.destroy;
           nfo.files.destroy;
           nfo.afl = null;
           GC.removeRange(cast(void*)nfo/*, Nfo.sizeof*/);
-          free(nfo);
+          xfree(nfo);
           debug(arcz_rc) { import core.stdc.stdio : printf; printf("Nfo %p freed\n", nfo); }
         }
       }
@@ -961,11 +963,13 @@ private:
   }
 
   static T* xalloc(T, bool clear=true) (uint mem) if (T.sizeof > 0) {
+    import core.memory;
     import core.exception : onOutOfMemoryError;
     assert(mem != 0);
     static if (clear) {
-      import core.stdc.stdlib : calloc;
-      auto res = calloc(mem, T.sizeof);
+      // import core.stdc.stdlib : calloc;
+      // auto res = calloc(mem, T.sizeof);
+      auto res = GC.calloc(mem * T.sizeof, GC.BlkAttr.NO_SCAN);
       if (res is null) onOutOfMemoryError();
       static if (is(T == struct)) {
         import core.stdc.string : memcpy;
@@ -973,10 +977,12 @@ private:
         foreach (immutable idx; 0..mem) memcpy(res+idx, &i, T.sizeof);
       }
       debug(arcz_alloc) { import core.stdc.stdio : printf; printf("allocated %u bytes at %p\n", cast(uint)(mem*T.sizeof), res); }
+      debug(arcz_alloc) { try { throw new Exception("mem trace c"); } catch(Exception e) { import std.stdio; writeln(e.toString()); } }
       return cast(T*)res;
     } else {
-      import core.stdc.stdlib : malloc;
-      auto res = malloc(mem*T.sizeof);
+      //import core.stdc.stdlib : malloc;
+      //auto res = malloc(mem*T.sizeof);
+      auto res = GC.malloc(mem*T.sizeof, GC.BlkAttr.NO_SCAN);
       if (res is null) onOutOfMemoryError();
       static if (is(T == struct)) {
         import core.stdc.string : memcpy;
@@ -984,16 +990,26 @@ private:
         foreach (immutable idx; 0..mem) memcpy(res+idx, &i, T.sizeof);
       }
       debug(arcz_alloc) { import core.stdc.stdio : printf; printf("allocated %u bytes at %p\n", cast(uint)(mem*T.sizeof), res); }
+      debug(arcz_alloc) { try { throw new Exception("mem trace"); } catch(Exception e) { import std.stdio; writeln(e.toString()); } }
       return cast(T*)res;
     }
   }
 
   static void xfree(T) (T* ptr) {
+    // just let the GC do it
+    if(ptr !is null) {
+        import core.memory;
+        GC.free(ptr);
+    }
+
+
+    /+
     if (ptr !is null) {
       import core.stdc.stdlib : free;
       debug(arcz_alloc) { import core.stdc.stdio : printf; printf("freing at %p\n", ptr); }
       free(ptr);
     }
+    +/
   }
 
   static if (arcz_has_balz) static ubyte balzDictSize (uint blockSize) {
@@ -1264,11 +1280,11 @@ private:
         auto zl = cast(LowLevelPackedRO*)me;
         assert(zl.rc);
         if (--zl.rc == 0) {
-          import core.stdc.stdlib : free;
-          if (zl.chunkData !is null) free(zl.chunkData);
-          version(arcz_use_more_memory) if (zl.pkdata !is null) free(zl.pkdata);
+          //import core.stdc.stdlib : free;
+          if (zl.chunkData !is null) xfree(zl.chunkData);
+          version(arcz_use_more_memory) if (zl.pkdata !is null) xfree(zl.pkdata);
           Nfo.decRef(zl.nfop);
-          free(zl);
+          xfree(zl);
           debug(arcz_rc) { import core.stdc.stdio : printf; printf("Zl %p freed\n", zl); }
         } else {
           //debug(arcz_rc) { import core.stdc.stdio : printf; printf("Zl %p; rc after decRef is %u\n", zl, zl.rc); }
