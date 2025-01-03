@@ -1,3 +1,10 @@
+/+
+	BreakpointSplitter
+		- if not all widgets fit, it collapses to tabs
+		- if they do, you get a splitter
+		- you set priority to display things first and optional breakpoint (otherwise it uses flex basis and min width)
++/
+
 // http://msdn.microsoft.com/en-us/library/windows/desktop/bb775498%28v=vs.85%29.aspx
 
 // if doing nested menus, make sure the straight line from where it pops up to any destination on the new popup is not going to disappear the menu until at least a delay
@@ -13,6 +20,8 @@
 // responsive minigui, menu search, and file open with a preview hook on the side.
 
 // FIXME: add menu checkbox and menu icon eventually
+
+// FOXME: look at Windows rebar control too
 
 /*
 
@@ -112,14 +121,261 @@ the virtual functions remain as the default calculated values. then the reads go
 	minigui is a smallish GUI widget library, aiming to be on par with at least
 	HTML4 forms and a few other expected gui components. It uses native controls
 	on Windows and does its own thing on Linux (Mac is not currently supported but
-	may be later, and should use native controls) to keep size down. The Linux
-	appearance is similar to Windows 95 and avoids using images to maintain network
-	efficiency on remote X connections, though you can customize that.
+	I'm slowly working on it).
 
 
-	minigui's only required dependencies are [arsd.simpledisplay] and [arsd.color],
-	on which it is built. simpledisplay provides the low-level interfaces and minigui
-	builds the concept of widgets inside the windows on top of it.
+	$(H3 Conceptual Overviews)
+
+	A gui application is made out of widgets laid out in windows that display information and respond to events from the user. They also typically have actions available in menus, and you might also want to customize the appearance. How do we do these things with minigui? Let's break it down into several categories.
+
+	$(H4 Code structure)
+
+	You will typically want to create the ui, prepare event handlers, then run an event loop. The event loop drives the program, calling your methods to respond to user activity.
+
+	---
+	import arsd.minigui;
+
+	void main() {
+		// first, create a window, the (optional) string here is its title
+		auto window = new MainWindow("Hello, World!");
+
+		// lay out some widgets inside the window to create the ui
+		auto name = new LabeledLineEdit("What is your name?", window);
+		auto button = new Button("Say Hello", window);
+
+		// prepare event handlers
+		button.addEventListener(EventType.triggered, () {
+			window.messageBox("Hello, " ~ name.content ~ "!");
+		});
+
+		// show the window and run the event loop until this window is closed
+		window.loop();
+	}
+	---
+
+	To compile, run `opend hello.d`, then run the generated `hello` program.
+
+	While the specifics will change, nearly all minigui applications will roughly follow this pattern.
+
+	$(TIP
+		There are two other ways to run event loops: `arsd.simpledisplay.EventLoop.get.run();` and `arsd.core.getThisThreadEventLoop().run();`. They all call the same underlying functions, but have different exit conditions - the `EventLoop.get.run()` keeps running until all top-level windows are closed, and `getThisThreadEventLoop().run` keeps running until all "tasks are resolved"; it is more abstract, supporting more than just windows.
+
+		You may call this if you don't have a single main window.
+
+		Even a basic minigui window can benefit from these if you don't have a single main window:
+
+		---
+		import arsd.minigui;
+
+		void main() {
+			// create a struct to hold gathered info
+			struct Hello { string name; }
+			// let minigui create a dialog box to get that
+			// info from the user. If you have a main window,
+			// you'd pass that here, but it is not required
+			dialog((Hello info) {
+				// inline handler of the "OK" button
+				messageBox("Hello, " ~ info.name);
+			});
+
+			// since there is no main window to loop on,
+			// we instead call the event loop singleton ourselves
+			EventLoop.get.run;
+		}
+		---
+
+		This is also useful when your programs lives as a notification area (aka systray) icon instead of as a window. But let's not get too far ahead of ourselves!
+	)
+
+	$(H4 How to lay out widgets)
+
+	To better understand the details of layout algorithms and see more available included classes, see [Layout].
+
+	$(H5 Default layouts)
+
+	minigui windows default to a flexible vertical layout, where widgets are added, from top to bottom on the window, in the same order of you creating them, then they are sized according to layout hints on the widget itself to fill the available space. This gives a reasonably usable setup but you'll probably want to customize it.
+
+	$(TIP
+		minigui's default [VerticalLayout] and [HorizontalLayout] are roughly based on css flexbox with wrap turned off.
+	)
+
+	Generally speaking, there are two ways to customize layouts: either subclass the widget and change its hints, or wrap it in another layout widget. You can also create your own layout classes and do it all yourself, but that's fairly complicated. Wrapping existing widgets in other layout widgets is usually the easiest way to make things work.
+
+	$(NOTE
+		minigui widgets are not supposed to overlap, but can contain children, and are always rectangular. Children are laid out as rectangles inside the parent's rectangular area.
+	)
+
+	For example, to display two widgets side-by-side, you can wrap them in a [HorizontalLayout]:
+
+	---
+	import arsd.minigui;
+	void main() {
+		auto window = new MainWindow();
+
+		// make the layout a child of our window
+		auto hl = new HorizontalLayout(window);
+
+		// then make the widgets children of the layout
+		auto leftButton = new Button("Left", hl);
+		auto rightButton = new Button("Right", hl);
+
+		window.loop();
+	}
+	---
+
+	A [HorizontalLayout] works just like the default [VerticalLayout], except in the other direction. These two buttons will take up all the available vertical space, then split available horizontal space equally.
+
+	$(H5 Nesting layouts)
+
+	Nesting layouts lets you carve up the rectangle in different ways.
+
+	$(EMBED_UNITTEST layout-example)
+
+	$(H5 Special layouts)
+
+	[TabWidget] can show pages of layouts as tabs.
+
+	See [ScrollableWidget] but be warned that it is weird. You might want to consider something like [GenericListViewWidget] instead.
+
+	$(H5 Other common layout classes)
+
+	[HorizontalLayout], [VerticalLayout], [InlineBlockLayout], [GridLayout]
+
+	$(H4 How to respond to widget events)
+
+	To better understanding the underlying event system, see [Event].
+
+	Each widget emits its own events, which propagate up through their parents until they reach their top-level window.
+
+	$(H4 How to do overall ui - title, icons, menus, toolbar, hotkeys, statuses, etc.)
+
+	We started this series with a [MainWindow], but only added widgets to it. MainWindows also support menus and toolbars with various keyboard shortcuts. You can construct these menus by constructing classes and calling methods, but minigui also lets you just write functions in a command object and it does the rest!
+
+	See [MainWindow.setMenuAndToolbarFromAnnotatedCode] for an example.
+
+	Note that toggleable menu or toolbar items are not yet implemented, but on the todolist. Submenus and disabled items are also not supported at this time and not currently on the work list (but if you need it, let me know and MAYBE we can work something out. Emphasis on $(I maybe)).
+
+	$(TIP
+		The automatic dialog box logic is also available for you to invoke on demand with [dialog] and the data setting logic can be used with a child widget inside an existing window [addDataControllerWidget], which also has annotation-based layout capabilities.
+	)
+
+	All windows also have titles. You can change this at any time with the `window.title = "string";` property.
+
+	Windows also have icons, which can be set with the `window.icon` property. It takes a [arsd.color.MemoryImage] object, which is an in-memory bitmap. [arsd.image] can load common file formats into these objects, or you can make one yourself. The default icon on Windows is the icon of your exe, which you can set through a resource file. (FIXME: explain how to do this easily.)
+
+	The `MainWindow` also provides a status bar across the bottom. These aren't so common in new applications, but I love them - on my own computer, I even have a global status bar for my whole desktop! I suggest you use it: a status bar is a consistent place to put information and notifications that will never overlap other content.
+
+	A status bar has parts, and the parts have content. The first part's content is assumed to change frequently; the default mouse over event will set it to [Widget.statusTip], a public `string` you can assign to any widget you want at any time.
+
+	Other parts can be added by you and are under your control. You add them with:
+
+	---
+	window.statusBar.parts ~= StatusBar.Part(optional_size, optional_units);
+	---
+
+	The size can be in a variety of units and what you get with mixes can get complicated. The rule is: explicit pixel sizes are used first. Then, proportional sizes are applied to the remaining space. Then, finally, if there is any space left, any items without an explicit size split them equally.
+
+	You may prefer to set them all at once, with:
+
+	---
+	window.statusBar.parts.setSizes(1, 1, 1);
+	---
+
+	This makes a three-part status bar, each with the same size - they all take the same proportion of the total size. Negative numbers here will use auto-scaled pixels.
+
+	You should call this right after creating your `MainWindow` as part of your setup code.
+
+	Once you make parts, you can explicitly change their content with `window.statusBar.parts[index].content = "some string";`
+
+	$(NOTE
+		I'm thinking about making the other parts do other things by default too, but if I do change it, I'll try not to break any explicitly set things you do anyway.
+	)
+
+	If you really don't want a status bar on your main window, you can remove it with `window.statusBar = null;` Make sure you don't try to use it again, or your program will likely crash!
+
+	Status bars, at this time, cannot hold non-text content, but I do want to change that. They also cannot have event listeners at this time, but again, that is likely to change. I have something in mind where they can hold clickable messages with a history and maybe icons, but haven't implemented any of that yet. Right now, they're just a (still very useful!) display area.
+
+	$(H4 How to do custom styles)
+
+	Minigui's custom widgets support styling parameters on the level of individual widgets, or application-wide with [VisualTheme]s.
+
+	$(WARNING
+		These don't apply to non-custom widgets! They will use the operating system's native theme unless the documentation for that specific class says otherwise.
+
+		At this time, custom widgets gain capability in styling, but lose capability in terms of keeping all the right integrated details of the user experience and availability to accessibility and other automation tools. Evaluate if the benefit is worth the costs before making your decision.
+
+		I'd like to erase more and more of these gaps, but no promises as to when - or even if - that will ever actually happen.
+	)
+
+	See [Widget.Style] for more information.
+
+	$(H4 Selection of categorized widgets)
+
+	$(LIST
+		* Buttons: [Button]
+		* Text display widgets: [TextLabel], [TextDisplay]
+		* Text edit widgets: [LineEdit] (and [LabeledLineEdit]), [PasswordEdit] (and [LabeledPasswordEdit]), [TextEdit]
+		* Selecting multiple on/off options: [Checkbox]
+		* Selecting just one from a list of options: [Fieldset], [Radiobox], [DropDownSelection]
+		* Getting rough numeric input: [HorizontalSlider], [VerticalSlider]
+		* Displaying data: [ImageBox], [ProgressBar], [TableView]
+		* Showing a list of editable items: [GenericListViewWidget]
+		* Helpers for building your own widgets: [OpenGlWidget], [ScrollMessageWidget]
+	)
+
+	And more. See [#members] until I write up more of this later and also be aware of the package [arsd.minigui_addons].
+
+	If none of these do what you need, you'll want to write your own. More on that in the following section.
+
+	$(H4 custom widgets - how to write your own)
+
+	See [Widget].
+
+	If you override [Widget.recomputeChildLayout], don't forget to call `registerMovement()` at the top of it, then call recomputeChildLayout of all its children too!
+
+		If you need a nested OS level window, see [NestedChildWindowWidget]. Use [Widget.scaleWithDpi] to convert logical pixels to physical pixels, as required.
+
+		See [Widget.OverrideStyle], [Widget.paintContent], [Widget.dynamicState] for some useful starting points.
+
+		You may also want to provide layout and style hints by overriding things like [Widget.flexBasisWidth], [Widget.flexBasisHeight], [Widget.minHeight], yada, yada, yada.
+
+		You might make a compound widget out of other widgets. [Widget.encapsulatedChildren] can help hide this from the outside world (though is not necessary and might hurt some debugging!)
+
+		$(TIP
+			Compile your application with the `-debug` switch and press F12 in your window to open a web-browser-inspired debug window. It sucks right now and doesn't do a lot, but is sometimes better than nothing.
+		)
+
+	$(H5 Timers and animations)
+
+	The [Timer] class is available and you can call `widget.redraw();` to trigger a redraw from a timer handler.
+
+	I generally don't like animations in my programs, so it hasn't been a priority for me to do more than this. I also hate uis that move outside of explicit user action, so minigui kinda supports this but I'd rather you didn't. I kinda wanna do something like `requestAnimationFrame` or something but haven't yet so it is just the `Timer` class.
+
+	$(H5 Clipboard integrations, drag and drop)
+
+	GUI application users tend to expect integration with their system, so clipboard support is basically a must, and drag and drop is nice to offer too. The functions for these are provided in [arsd.simpledisplay], which is public imported from minigui, and thus available to you here too.
+
+	I'd like to think of some better abstractions to make this more automagic, but you must do it yourself when implementing your custom widgets right now.
+
+	See: [draggable], [DropHandler], [setClipboardText], [setClipboardImage], [getClipboardText], [getClipboardImage], [setPrimarySelection], and others from simpledisplay.
+
+	$(H5 Context menus)
+
+	Override [Widget.contextMenu] in your subclass.
+
+	$(H4 Coming later)
+
+	Among the unfinished features: unified selections, translateable strings, external integrations.
+
+	$(H2 Running minigui programs)
+
+	Note the environment variable ARSD_SCALING_FACTOR on Linux can set multi-monitor scaling factors. I should also read it from a root window property so it easier to do with migrations... maybe a default theme selector from there too.
+
+	$(H2 Building minigui programs)
+
+	minigui's only required dependencies are [arsd.simpledisplay], [arsd.color], and
+	[arsd.textlayouter], on which it is built. simpledisplay provides the low-level
+	interfaces and minigui builds the concept of widgets inside the windows on top of it.
 
 	Its #1 goal is to be useful without being large and complicated like GTK and Qt.
 	It isn't hugely concerned with appearance - on Windows, it just uses the native
@@ -143,6 +399,7 @@ the virtual functions remain as the default calculated values. then the reads go
 		HTML Code | Minigui Class
 
 		`<input type="text">` | [LineEdit]
+		`<input type="password">` | [PasswordEdit]
 		`<textarea>` | [TextEdit]
 		`<select>` | [DropDownSelection]
 		`<input type="checkbox">` | [Checkbox]
@@ -190,6 +447,8 @@ the virtual functions remain as the default calculated values. then the reads go
 		More to come.
 
 	My_UI_Guidelines:
+		Note that the Linux custom widgets generally aim to be efficient on remote X network connections.
+
 		In a perfect world, you'd achieve all the following goals:
 
 		$(LIST
@@ -199,6 +458,10 @@ the virtual functions remain as the default calculated values. then the reads go
 			* The UI does not move any elements without explicit user action
 			* All numbers can be seen and typed in if wanted, even if the ui usually hides them
 		)
+
+	$(H2 Future Directions)
+
+	I want to do some newer ideas that might not be easy to keep working fully on Windows, like adding a menu search feature and scrollbar custom marks and typing in numbers. I might make them a default part of the widget with custom, and let you provide them through a menu or something elsewhere.
 
 	History:
 		Minigui had mostly additive changes or bug fixes since its inception until May 2021.
@@ -220,8 +483,6 @@ the virtual functions remain as the default calculated values. then the reads go
 
 			See [Widget.Style] for details.
 
-			// * A widget must now opt in to receiving keyboard focus, rather than opting out.
-
 			* Widgets now draw their keyboard focus by default instead of opt in. You may wish to set `tabStop = false;` if it wasn't supposed to receive it.
 
 			* Most Widget constructors no longer have a default `parent` argument. You must pass the parent to almost all widgets, or in rare cases, an explict `null`, but more often than not, you need the parent so the default argument was not very useful at best and misleading to a crash at worst.
@@ -234,6 +495,7 @@ the virtual functions remain as the default calculated values. then the reads go
 		)
 +/
 module arsd.minigui;
+			// * A widget must now opt in to receiving keyboard focus, rather than opting out.
 
 /++
 	This hello world sample will have an oversized button, but that's ok, you see your first window!
@@ -259,6 +521,8 @@ unittest {
 }
 
 /++
+	$(ID layout-example)
+
 	This example shows one way you can partition your window into a header
 	and sidebar. Here, the header and sidebar have a fixed width, while the
 	rest of the content sizes with the window.
@@ -333,6 +597,8 @@ unittest {
 
 
 import arsd.core;
+import arsd.textlayouter;
+
 alias Timer = arsd.simpledisplay.Timer;
 public import arsd.simpledisplay;
 /++
@@ -380,10 +646,6 @@ version(Windows) {
 		version = win32_widgets;
 		enum bool UsingCustomWidgets = false;
 		enum bool UsingWin32Widgets = true;
-
-		// give access to my text system for the rich text cross platform stuff
-		version = use_new_text_system;
-		import arsd.textlayouter;
 	}
 	// and native theming when needed
 	//version = win32_theming;
@@ -1132,9 +1394,26 @@ class Widget : ReflectableProperties {
 		this.emit!ResizeEvent();
 	}
 
+	/++
+		Override this to provide a custom context menu for your widget. (x, y) is where the menu was requested. If x == -1 && y == -1, the menu was triggered by the keyboard instead of the mouse and it should use the current cursor, selection, or whatever would make sense for where a keyboard user's attention would currently be.
+
+		It should return an instance of the [Menu] object. You may choose to cache this object. To construct one, either make `new Menu("", this);` (the empty string there is the menu's label, but for a context menu, that is not important), then call the `menu.addItem(new Action("Label Text", 0 /* icon id */, () { on clicked handler }), menu);` and `menu.addSeparator() methods, or use `return createContextMenuFromAnnotatedCode(this, some_command_struct);`
+
+		Context menus are automatically triggered by default by the keyboard menu key, mouse right click, and possibly other conventions per platform. You can also invoke one by calling the [showContextMenu] method.
+
+		See_Also:
+			[createContextMenuFromAnnotatedCode]
+	+/
 	Menu contextMenu(int x, int y) { return null; }
 
-	final bool showContextMenu(int x, int y, int screenX = -2, int screenY = -2) {
+	/++
+		Shows the widget's context menu, as if the user right clicked at the x, y position. You should rarely, if ever, have to call this, since default event handlers will do it for you automatically. To control what menu shows up, override [contextMenu] instead.
+	+/
+	final bool showContextMenu(int x, int y) {
+		return showContextMenu(x, y, -2, -2);
+	}
+
+	private final bool showContextMenu(int x, int y, int screenX, int screenY) {
 		if(parentWindow is null || parentWindow.win is null) return false;
 
 		auto menu = this.contextMenu(x, y);
@@ -1143,7 +1422,9 @@ class Widget : ReflectableProperties {
 
 		version(win32_widgets) {
 			// FIXME: if it is -1, -1, do it at the current selection location instead
-			// tho the corner of the window, whcih it does now, isn't the literal worst.
+			// tho the corner of the window, which it does now, isn't the literal worst.
+
+			// i see notepad just seems to put it in the center of the window so idk
 
 			if(screenX < 0 && screenY < 0) {
 				auto p = this.globalCoordinates();
@@ -1725,7 +2006,7 @@ class Widget : ReflectableProperties {
 			parentWindow.focusedWidget.setDynamicState(DynamicState.focus, false);
 			parentWindow.focusedWidget = null;
 			from.emit!BlurEvent();
-			this.emit!FocusOutEvent();
+			from.emit!FocusOutEvent();
 		}
 
 
@@ -2298,8 +2579,6 @@ class GridLayout : Layout {
 							child.y += diff / 2;
 						}
 					}
-
-
 					child.recomputeChildLayout();
 					onGrid--;
 					continue c;
@@ -2337,17 +2616,11 @@ abstract class ComboboxBase : Widget {
 
 			addEventListener((KeyDownEvent event) {
 				if(event.key == Key.Up) {
-					if(selection_ > -1) { // -1 means select blank
-						selection_--;
-						fireChangeEvent();
-					}
+					setSelection(selection_-1);
 					event.preventDefault();
 				}
 				if(event.key == Key.Down) {
-					if(selection_ + 1 < options.length) {
-						selection_++;
-						fireChangeEvent();
-					}
+					setSelection(selection_+1);
 					event.preventDefault();
 				}
 
@@ -2355,6 +2628,8 @@ abstract class ComboboxBase : Widget {
 
 		}
 	else static assert(false);
+
+	protected void scrollSelectionIntoView() {}
 
 	/++
 		Returns the current list of options in the selection.
@@ -2426,12 +2701,20 @@ abstract class ComboboxBase : Widget {
 			The return value was `void` prior to March 1, 2022.
 	+/
 	int setSelection(int idx) {
+		if(idx < -1)
+			idx = -1;
+		if(idx + 1 > options.length)
+			idx = cast(int) options.length - 1;
+
 		selection_ = idx;
+
 		version(win32_widgets)
 		SendMessageW(hwnd, 334 /*CB_SETCURSEL*/, idx, 0);
 
 		auto t = new SelectionChangedEvent(this, selection_, selection_ == -1 ? null : options[selection_]);
 		t.dispatch();
+
+		scrollSelectionIntoView();
 
 		return idx;
 	}
@@ -2480,6 +2763,8 @@ abstract class ComboboxBase : Widget {
 		t.dispatch();
 	}
 
+	override int minWidth() { return scaleWithDpi(32); }
+
 	version(win32_widgets) {
 		override int minHeight() { return defaultLineHeight + 6; }
 		override int maxHeight() { return defaultLineHeight + 6; }
@@ -2498,6 +2783,7 @@ abstract class ComboboxBase : Widget {
 private class CustomComboBoxPopup : Window {
 	private ComboboxBase associatedWidget;
 	private ListWidget lw;
+	private bool cancelled;
 
 	this(ComboboxBase associatedWidget) {
 		this.associatedWidget = associatedWidget;
@@ -2506,10 +2792,15 @@ private class CustomComboBoxPopup : Window {
 
 		auto w = associatedWidget.width;
 		// FIXME: suggestedDropdownHeight see below
-		auto h = cast(int) associatedWidget.options.length * defaultLineHeight + 8;
+		auto h = cast(int) associatedWidget.options.length * associatedWidget.defaultLineHeight + associatedWidget.scaleWithDpi(8);
 
+		// FIXME: this sux
 		if(h > associatedWidget.parentWindow.height)
 			h = associatedWidget.parentWindow.height;
+
+		auto mh = associatedWidget.scaleWithDpi(16 + 16 + 32); // to make the scrollbar look ok
+		if(h < mh)
+			h = mh;
 
 		auto coord = associatedWidget.globalCoordinates();
 		auto dropDown = new SimpleWindow(
@@ -2526,7 +2817,8 @@ private class CustomComboBoxPopup : Window {
 		foreach(option; associatedWidget.options)
 			lw.addOption(option);
 
-		lw.setSelection(associatedWidget.getSelection);
+		auto originalSelection = associatedWidget.getSelection;
+		lw.setSelection(originalSelection);
 		lw.scrollSelectionIntoView();
 
 		/+
@@ -2572,7 +2864,8 @@ private class CustomComboBoxPopup : Window {
 				//dropDown.releaseInputGrab();
 				releaseMouseCapture();
 
-				associatedWidget.setSelection(lw.getSelection);
+				if(!cancelled)
+					associatedWidget.setSelection(lw.getSelection);
 
 				associatedWidget.parentWindow.focusedWidget = previouslyFocusedWidget;
 			}
@@ -2581,8 +2874,17 @@ private class CustomComboBoxPopup : Window {
 		dropDown.show();
 	}
 
+	private bool shouldCloseIfClicked(Widget w) {
+		if(w is this)
+			return true;
+		version(custom_widgets)
+		if(cast(TextListViewWidget.TextListViewItem) w)
+			return true;
+		return false;
+	}
+
 	override void defaultEventHandler_click(ClickEvent ce) {
-		if(ce.button == MouseButton.left && (ce.target is this || ce.target is lw)) {
+		if(ce.button == MouseButton.left && shouldCloseIfClicked(ce.target)) {
 			this.win.close();
 		}
 	}
@@ -2590,6 +2892,17 @@ private class CustomComboBoxPopup : Window {
 	override void defaultEventHandler_char(CharEvent ce) {
 		if(ce.character == '\n')
 			this.win.close();
+	}
+
+	override void defaultEventHandler_keydown(KeyDownEvent kde) {
+		if(kde.key == Key.Escape) {
+			cancelled = true;
+			this.win.close();
+		}/+ else if(kde.key == Key.Up || kde.key == Key.Down)
+			{} // intentionally blank, the list view handles these
+			// separately from the scroll message widget default handler
+		else if(lw && lw.glvw && lw.glvw.smw)
+			lw.glvw.smw.defaultKeyboardListener(kde);+/
 	}
 }
 
@@ -2692,6 +3005,10 @@ class DropDownSelection : ComboboxBase {
 +/
 class FreeEntrySelection : ComboboxBase {
 	this(Widget parent) {
+		this(null, parent);
+	}
+
+	this(string[] options, Widget parent) {
 		version(win32_widgets)
 			super(2 /* CBS_DROPDOWN */, parent);
 		else version(custom_widgets) {
@@ -2701,11 +3018,17 @@ class FreeEntrySelection : ComboboxBase {
 
 			tabStop = false;
 
-			lineEdit.addEventListener("focus", &lineEdit.selectAll);
+			// lineEdit.addEventListener((FocusEvent fe) {  lineEdit.selectAll(); } );
 
 			auto btn = new class ArrowButton {
 				this() {
 					super(ArrowDirection.down, hl);
+				}
+				override int heightStretchiness() {
+					return 1;
+				}
+				override int heightShrinkiness() {
+					return 1;
 				}
 				override int maxHeight() {
 					return lineEdit.maxHeight;
@@ -2720,10 +3043,35 @@ class FreeEntrySelection : ComboboxBase {
 			});
 		}
 		else static assert(false);
+
+		this.options = options;
+	}
+
+	string content() {
+		version(win32_widgets)
+			assert(0, "not implemented");
+		else version(custom_widgets)
+			return lineEdit.content;
+		else static assert(0);
+	}
+
+	void content(string s) {
+		version(win32_widgets)
+			assert(0, "not implemented");
+		else version(custom_widgets)
+			lineEdit.content = s;
+		else static assert(0);
 	}
 
 	version(custom_widgets) {
 		LineEdit lineEdit;
+
+		override int widthStretchiness() {
+			return lineEdit ? lineEdit.widthStretchiness : super.widthStretchiness;
+		}
+		override int flexBasisWidth() {
+			return lineEdit ? lineEdit.flexBasisWidth : super.flexBasisWidth;
+		}
 	}
 }
 
@@ -2751,8 +3099,8 @@ class ComboBox : ComboboxBase {
 
 			listWidget.tabStop = false;
 			this.tabStop = false;
-			listWidget.addEventListener("focus", &lineEdit.focus);
-			this.addEventListener("focus", &lineEdit.focus);
+			listWidget.addEventListener("focusin", &lineEdit.focus);
+			this.addEventListener("focusin", &lineEdit.focus);
 
 			addDirectEventListener(EventType.change, {
 				listWidget.setSelection(selection_);
@@ -2762,7 +3110,7 @@ class ComboBox : ComboboxBase {
 				redraw();
 			});
 
-			lineEdit.addEventListener("focus", &lineEdit.selectAll);
+			lineEdit.addEventListener("focusin", &lineEdit.selectAll);
 
 			listWidget.addDirectEventListener(EventType.change, {
 				int set = -1;
@@ -2786,8 +3134,12 @@ class ComboBox : ComboboxBase {
 		ListWidget listWidget;
 
 		override void addOption(string s) {
-			listWidget.options ~= ListWidget.Option(s);
+			listWidget.addOption(s);
 			ComboboxBase.addOption(s);
+		}
+
+		override void scrollSelectionIntoView() {
+			listWidget.scrollSelectionIntoView();
 		}
 	}
 }
@@ -4883,9 +5235,92 @@ unittest {
 }
 
 version(custom_widgets)
-	private alias ListWidgetBase = ScrollableWidget;
-else
-	private alias ListWidgetBase = Widget;
+private class TextListViewWidget : GenericListViewWidget {
+	static class TextListViewItem : GenericListViewItem {
+		ListWidget controller;
+		this(ListWidget controller, Widget parent) {
+			this.controller = controller;
+			this.tabStop = false;
+			super(parent);
+		}
+
+		ListWidget.Option* showing;
+
+		override void showItem(int idx) {
+			showing = idx < controller.options.length ? &controller.options[idx] : null;
+			redraw(); // is this necessary? the generic thing might call it...
+		}
+
+		override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+			if(showing is null)
+				return bounds;
+			painter.drawText(bounds.upperLeft, showing.label);
+			return bounds;
+		}
+
+		static class Style : Widget.Style {
+			override WidgetBackground background() {
+				// FIXME: change it if it is focused or not
+				// needs to reliably detect if focused (noting the actual focus may be on a parent or child... or even sibling for FreeEntrySelection. maybe i just need a better way to proxy focus in widgets generically). also will need to redraw correctly without defaultEventHandler_focusin hacks like EditableTextWidget uses
+				auto tlvi = cast(TextListViewItem) widget;
+				if(tlvi && tlvi.showing && tlvi && tlvi.showing.selected)
+					return WidgetBackground(true /*widget.parent.isFocused*/ ? WidgetPainter.visualTheme.selectionBackgroundColor : Color(128, 128, 128)); // FIXME: don't hardcode
+				return super.background();
+			}
+
+			override Color foregroundColor() {
+				auto tlvi = cast(TextListViewItem) widget;
+				return tlvi && tlvi.showing && tlvi && tlvi.showing.selected ? WidgetPainter.visualTheme.selectionForegroundColor : super.foregroundColor();
+			}
+
+			override FrameStyle outlineStyle() {
+				// FIXME: change it if it is focused or not
+				auto tlvi = cast(TextListViewItem) widget;
+				return (tlvi && tlvi.currentIndexLoaded() == tlvi.controller.focusOn) ? FrameStyle.dotted : super.outlineStyle();
+			}
+		}
+		mixin OverrideStyle!Style;
+
+		mixin Padding!q{2};
+
+		override void defaultEventHandler_click(ClickEvent event) {
+			if(event.button == MouseButton.left) {
+				controller.setSelection(currentIndexLoaded());
+				controller.focusOn = currentIndexLoaded();
+			}
+		}
+
+	}
+
+	ListWidget controller;
+
+	this(ListWidget parent) {
+		this.controller = parent;
+		this.tabStop = false; // this is only used as a child of the ListWidget
+		super(parent);
+
+		smw.movementPerButtonClick(1, itemSize().height);
+	}
+
+	override Size itemSize() {
+		return Size(0, defaultLineHeight + scaleWithDpi(4 /* the top and bottom padding */));
+	}
+
+	override GenericListViewItem itemFactory(Widget parent) {
+		return new TextListViewItem(controller, parent);
+	}
+
+	static class Style : Widget.Style {
+		override FrameStyle borderStyle() {
+			return FrameStyle.sunk;
+		}
+
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+		}
+	}
+	mixin OverrideStyle!Style;
+}
 
 /++
 	A list widget contains a list of strings that the user can examine and select.
@@ -4896,15 +5331,19 @@ else
 	See_Also:
 		[TableView]
 +/
-class ListWidget : ListWidgetBase {
+class ListWidget : Widget {
 	/// Sends a change event when the selection changes, but the data is not attached to the event. You must instead loop the options to see if they are selected.
 	mixin Emits!(ChangeEvent!void);
+
+	version(custom_widgets)
+		TextListViewWidget glvw;
 
 	static struct Option {
 		string label;
 		bool selected;
 		void* tag;
 	}
+	private Option[] options;
 
 	/++
 		Sets the current selection to the `y`th item in the list. Will emit [ChangeEvent] when complete.
@@ -4941,22 +5380,12 @@ class ListWidget : ListWidgetBase {
 	version(custom_widgets)
 	private int focusOn;
 
-	version(custom_widgets)
-	override void defaultEventHandler_click(ClickEvent event) {
-		this.focus();
-		if(event.button == MouseButton.left) {
-			auto y = (event.clientY - 4) / defaultLineHeight;
-			if(y >= 0 && y < options.length) {
-				setSelection(y);
-				focusOn = y;
-			}
-		}
-		super.defaultEventHandler_click(event);
-	}
-
 	this(Widget parent) {
-		tabStop = false;
 		super(parent);
+
+		version(custom_widgets)
+			glvw = new TextListViewWidget(this);
+
 		version(win32_widgets)
 			createWin32Window(this, WC_LISTBOX, "",
 				0|WS_CHILD|WS_VISIBLE|LBS_NOTIFY, 0);
@@ -4974,47 +5403,6 @@ class ListWidget : ListWidgetBase {
 	}
 
 
-	version(custom_widgets)
-	override void paintFrameAndBackground(WidgetPainter painter) {
-		draw3dFrame(this, painter, FrameStyle.sunk, painter.visualTheme.widgetBackgroundColor);
-	}
-
-	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
-		auto cs = getComputedStyle();
-		auto pos = Point(4, 4);
-		foreach(idx, option; options) {
-			painter.fillColor = painter.visualTheme.widgetBackgroundColor;
-			painter.outlineColor = painter.visualTheme.widgetBackgroundColor;
-			painter.drawRectangle(pos, width - 8, defaultLineHeight);
-
-			if(idx == focusOn) {
-				painter.fillColor = Color.transparent;
-				painter.pen =  Pen(option.selected ? cs.selectionForegroundColor : cs.foregroundColor, 1, Pen.Style.Dotted);
-				painter.drawRectangle(pos, width - 8, defaultLineHeight);
-			}
-
-			if(option.selected) {
-				//painter.rasterOp = RasterOp.xor;
-				painter.outlineColor = cs.selectionForegroundColor;
-				painter.fillColor = cs.selectionBackgroundColor;
-				painter.drawRectangle(pos, width - 8, defaultLineHeight);
-				//painter.rasterOp = RasterOp.normal;
-			}
-			painter.outlineColor = option.selected ? cs.selectionForegroundColor : cs.foregroundColor;
-			painter.drawText(pos, option.label);
-			pos.y += defaultLineHeight;
-		}
-	}
-
-	static class Style : Widget.Style {
-		override WidgetBackground background() {
-			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
-		}
-	}
-	mixin OverrideStyle!Style;
-	//mixin Padding!q{2};
-
 	void addOption(string text, void* tag = null) {
 		options ~= Option(text, false, tag);
 		version(win32_widgets) {
@@ -5022,7 +5410,8 @@ class ListWidget : ListWidgetBase {
 			SendMessageW(hwnd, LB_ADDSTRING, 0, cast(LPARAM) buffer.ptr);
 		}
 		version(custom_widgets) {
-			setContentSize(width, cast(int) (options.length * defaultLineHeight));
+			glvw.setItemCount(cast(int) options.length);
+			//setContentSize(width, cast(int) (options.length * defaultLineHeight));
 			redraw();
 		}
 	}
@@ -5034,34 +5423,63 @@ class ListWidget : ListWidgetBase {
 				{}
 
 		} else version(custom_widgets) {
-			scrollTo(Point(0, 0));
+			focusOn = -1;
+			glvw.setItemCount(0);
 			redraw();
 		}
 	}
 
 	version(custom_widgets)
 	override void defaultEventHandler_keydown(KeyDownEvent kde) {
+		void changedFocusOn() {
+			scrollFocusIntoView();
+			if(multiSelect)
+				redraw();
+			else
+				setSelection(focusOn);
+		}
 		switch(kde.key) {
 			case Key.Up:
 				if(focusOn) {
 					focusOn--;
-					ensureVisibleInScroll(Rectangle(Point(0, focusOn * defaultLineHeight), Size(1, defaultLineHeight)));
-					if(multiSelect)
-						redraw();
-					else
-						setSelection(focusOn);
+					changedFocusOn();
 				}
 			break;
 			case Key.Down:
 				if(focusOn + 1 < options.length) {
 					focusOn++;
-					ensureVisibleInScroll(Rectangle(Point(0, focusOn * defaultLineHeight), Size(1, defaultLineHeight)));
-					if(multiSelect)
-						redraw();
-					else
-						setSelection(focusOn);
+					changedFocusOn();
 				}
 			break;
+			case Key.Home:
+				if(focusOn) {
+					focusOn = 0;
+					changedFocusOn();
+				}
+			break;
+			case Key.End:
+				if(options.length && focusOn + 1 != options.length) {
+					focusOn = cast(int) options.length - 1;
+					changedFocusOn();
+				}
+			break;
+			case Key.PageUp:
+				auto n = glvw.numberOfCurrentlyFullyVisibleItems;
+				focusOn -= n;
+				if(focusOn < 0)
+					focusOn = 0;
+				changedFocusOn();
+			break;
+			case Key.PageDown:
+				if(options.length == 0)
+					break;
+				auto n = glvw.numberOfCurrentlyFullyVisibleItems;
+				focusOn += n;
+				if(focusOn >= options.length)
+					focusOn = cast(int) options.length - 1;
+				changedFocusOn();
+			break;
+
 			default:
 		}
 	}
@@ -5092,7 +5510,6 @@ class ListWidget : ListWidgetBase {
 		}
 	}
 
-	Option[] options;
 	version(win32_widgets)
 		enum multiSelect = false; /// not implemented yet
 	else
@@ -5100,17 +5517,36 @@ class ListWidget : ListWidgetBase {
 
 	override int heightStretchiness() { return 6; }
 
+	version(custom_widgets)
+	void scrollFocusIntoView() {
+		glvw.ensureItemVisibleInScroll(focusOn);
+	}
+
 	void scrollSelectionIntoView() {
 		// FIXME: implement on Windows
 
 		version(custom_widgets)
-			ensureVisibleInScroll(Point(4, getSelection() * defaultLineHeight + 2));
+			glvw.ensureItemVisibleInScroll(getSelection());
 	}
+
+	/*
+	version(custom_widgets)
+	override void defaultEventHandler_focusout(Event foe) {
+		glvw.redraw();
+	}
+
+	version(custom_widgets)
+	override void defaultEventHandler_focusin(Event foe) {
+		glvw.redraw();
+	}
+	*/
+
 }
 
 
 
 /// For [ScrollableWidget], determines when to show the scroll bar to the user.
+/// NEVER USED
 enum ScrollBarShowPolicy {
 	automatic, /// automatically show the scroll bar if it is necessary
 	never, /// never show the scroll bar (scrolling must be done programmatically)
@@ -5124,6 +5560,7 @@ enum ScrollBarShowPolicy {
 +/
 // FIXME ScrollBarShowPolicy
 // FIXME: use the ScrollMessageWidget in here now that it exists
+// deprecated("Use ScrollMessageWidget or ScrollableContainerWidget instead") // ugh compiler won't let me do it
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
 	// FIXME: add keyboard controls
@@ -5796,6 +6233,7 @@ class ScrollableContainerWidget : ContainerWidget {
 
 
 version(custom_widgets)
+// deprecated // i can't deprecate it w/o stupid messages ugh
 private class InternalScrollableContainerWidget : Widget {
 
 	ScrollableWidget sw;
@@ -7539,7 +7977,6 @@ class HorizontalLayout : Layout {
 		}
 		return max;
 	}
-
 }
 
 version(win32_widgets)
@@ -7797,52 +8234,11 @@ class ScrollMessageWidget : Widget {
 			shiftMultiplier = multiplies the scroll amount by this when shift is held
 	+/
 	void addDefaultKeyboardListeners(int verticalArrowScrollAmount = 1, int horizontalArrowScrollAmount = 1, int shiftMultiplier = 3) {
-		auto _this = this;
+		defaultKeyboardListener_verticalArrowScrollAmount = verticalArrowScrollAmount;
+		defaultKeyboardListener_horizontalArrowScrollAmount = horizontalArrowScrollAmount;
+		defaultKeyboardListener_shiftMultiplier = shiftMultiplier;
 
-		container.addEventListener((scope KeyDownEvent ke) {
-			switch(ke.key) {
-				case Key.Left:
-					_this.scrollLeft(horizontalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.Right:
-					_this.scrollRight(horizontalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.Up:
-					_this.scrollUp(verticalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.Down:
-					_this.scrollDown(verticalArrowScrollAmount * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.PageUp:
-					if(ke.altKey)
-						_this.scrollLeft(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
-					else
-						_this.scrollUp(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.PageDown:
-					if(ke.altKey)
-						_this.scrollRight(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
-					else
-						_this.scrollDown(_this.vsb.viewableArea_ * (ke.shiftKey ? shiftMultiplier : 1));
-				break;
-				case Key.Home:
-					if(ke.altKey)
-						_this.scrollLeft(short.max * 16);
-					else
-						_this.scrollUp(short.max * 16);
-				break;
-				case Key.End:
-					if(ke.altKey)
-						_this.scrollRight(short.max * 16);
-					else
-						_this.scrollDown(short.max * 16);
-				break;
-
-				default:
-					// ignore, not for us.
-			}
-
-		});
+		container.addEventListener(&defaultKeyboardListener);
 	}
 
 	/// ditto
@@ -7877,6 +8273,54 @@ class ScrollMessageWidget : Widget {
 		});
 	}
 
+	int defaultKeyboardListener_verticalArrowScrollAmount = 1;
+	int defaultKeyboardListener_horizontalArrowScrollAmount = 1;
+	int defaultKeyboardListener_shiftMultiplier = 3;
+
+	void defaultKeyboardListener(scope KeyDownEvent ke) {
+		switch(ke.key) {
+			case Key.Left:
+				this.scrollLeft(defaultKeyboardListener_horizontalArrowScrollAmount * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.Right:
+				this.scrollRight(defaultKeyboardListener_horizontalArrowScrollAmount * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.Up:
+				this.scrollUp(defaultKeyboardListener_verticalArrowScrollAmount * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.Down:
+				this.scrollDown(defaultKeyboardListener_verticalArrowScrollAmount * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.PageUp:
+				if(ke.altKey)
+					this.scrollLeft(this.vsb.viewableArea_ * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+				else
+					this.scrollUp(this.vsb.viewableArea_ * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.PageDown:
+				if(ke.altKey)
+					this.scrollRight(this.vsb.viewableArea_ * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+				else
+					this.scrollDown(this.vsb.viewableArea_ * (ke.shiftKey ? defaultKeyboardListener_shiftMultiplier : 1));
+			break;
+			case Key.Home:
+				if(ke.altKey)
+					this.scrollLeft(short.max * 16);
+				else
+					this.scrollUp(short.max * 16);
+			break;
+			case Key.End:
+				if(ke.altKey)
+					this.scrollRight(short.max * 16);
+				else
+					this.scrollDown(short.max * 16);
+			break;
+
+			default:
+				// ignore, not for us.
+		}
+	}
+
 	/++
 		Scrolls the given amount.
 
@@ -7884,22 +8328,22 @@ class ScrollMessageWidget : Widget {
 			The scroll up and down functions was here in the initial release of the class, but the `amount` parameter and left/right functions were added on September 28, 2021.
 	+/
 	void scrollUp(int amount = 1) {
-		vsb.setPosition(vsb.position - amount);
+		vsb.setPosition(vsb.position.NonOverflowingInt - amount);
 		notify();
 	}
 	/// ditto
 	void scrollDown(int amount = 1) {
-		vsb.setPosition(vsb.position + amount);
+		vsb.setPosition(vsb.position.NonOverflowingInt + amount);
 		notify();
 	}
 	/// ditto
 	void scrollLeft(int amount = 1) {
-		hsb.setPosition(hsb.position - amount);
+		hsb.setPosition(hsb.position.NonOverflowingInt - amount);
 		notify();
 	}
 	/// ditto
 	void scrollRight(int amount = 1) {
-		hsb.setPosition(hsb.position + amount);
+		hsb.setPosition(hsb.position.NonOverflowingInt + amount);
 		notify();
 	}
 
@@ -8098,6 +8542,13 @@ class ScrollMessageWidget : Widget {
 			max += horizontalScrollBar.minHeight;
 		return max;
 	}
+
+	static class Style : Widget.Style {
+		override WidgetBackground background() {
+			return WidgetBackground(WidgetPainter.visualTheme.windowBackgroundColor);
+		}
+	}
+	mixin OverrideStyle!Style;
 }
 
 /++
@@ -8255,6 +8706,8 @@ class Window : Widget {
 
 	/++
 		Sets the window icon which is often seen in title bars and taskbars.
+
+		A future plan is to offer an overload that takes an array too for multiple sizes, but right now you should probably set 16x16 or 32x32 images here.
 
 		History:
 			Added April 5, 2022 (dub v10.8)
@@ -8937,7 +9390,8 @@ class Window : Widget {
 		if(firstShow) {
 			firstShow = false;
 			queueRecomputeChildLayout();
-			auto f = getFirstFocusable(this); // FIXME: autofocus?
+			// unless the programmer already called focus on something, pick something ourselves
+			auto f = focusedWidget is null ? getFirstFocusable(this) : focusedWidget; // FIXME: autofocus?
 			if(f)
 				f.focus();
 			redraw();
@@ -9076,6 +9530,7 @@ debug private class DevToolWindow : Window {
 			str ~= to!string(i);
 		str ~= "\n";
 		logWindow.addText(str);
+		logWindow.scrollToBottom();
 
 		//version(custom_widgets)
 		//logWindow.ensureVisibleInScroll(logWindow.textLayout.caretBoundingBox());
@@ -10095,41 +10550,134 @@ class MainWindow : Window {
 	/++
 		Adds a menu and toolbar from annotated functions. It uses the top-level annotations from this module, so it is better to put the commands in a separate struct instad of in your window subclass, to avoid potential conflicts with method names (if you do hit one though, you can use `@(.icon(...))` instead of plain `@icon(...)` to disambiguate, though).
 
+		The only required annotation on a function is `@menu("Label")` to make it appear, but there are several optional ones I'd recommend considering, including `@toolbar("group name")`, `@icon()`, `@accelerator("keyboard shortcut string")`, and `@hotkey('char')`.
+
+		You can also use `@separator` to put a separating line in the menu before the function.
+
+		Functions may have zero or one argument. If they have an argument, an automatic dialog box (see: [dialog]) will be created to request the data from the user before calling your function. Some types have special treatment, like [FileName], will invoke the file dialog, assuming open or save based on the name of your function.
+
+		Let's look at a complete example:
+
 	---
-        struct Commands {
-                @menu("File") {
-			@toolbar("") // adds it to a generic toolbar
-                        void New() {}
-                        void Open() {}
-                        void Save() {}
-			void Save_As() {} // underscores translate to spaces
-                        @separator
-                        void Exit() @accelerator("Alt+F4") @hotkey('x') {
-                                window.close();
-                        }
-                }
+	import arsd.minigui;
 
-                @menu("Edit") {
-			@icon(GenericIcons.Undo)
-                        void Undo() {
-                                undo();
-                        }
-                        @separator
-                        void Cut() {}
-                        void Copy() {}
-                        void Paste() {}
-                }
+	void main() {
+		auto window = new MainWindow();
 
-                @menu("Help") {
-                        void About() {}
-			@label("In Menu")
-			void InCode() {} // @label changes the name in the menu from what is in the code
-                }
-        }
+		// we can add widgets before or after setting the menu, either way is fine.
+		// i'll do it before here so the local variables are available to the commands.
 
-        Commands commands;
+		auto textEdit = new TextEdit(window);
 
-        window.setMenuAndToolbarFromAnnotatedCode(commands);
+		// Remember, in D, you can define structs inside of functions
+		// and those structs can access the function's local variables.
+		//
+		// Of course, you might also want to do this separately, and if you
+		// do, make sure you keep a reference to the window as a struct data
+		// member so you can refer to it in cases like this Exit function.
+		struct Commands {
+			// the & in the string indicates that the next letter is the hotkey
+			// to access it from the keyboard (so here, alt+f will open the
+			// file menu)
+			@menu("&File") {
+				@accelerator("Ctrl+N")
+				@hotkey('n')
+				@icon(GenericIcons.New) // add an icon to the action
+				@toolbar("File") // adds it to a toolbar.
+				// The toolbar name is never visible to the user, but is used to group icons.
+				void New() {
+					previousFileReferenced = null;
+					textEdit.content = "";
+				}
+
+				@icon(GenericIcons.Open)
+				@toolbar("File")
+				@hotkey('s')
+				@accelerator("Ctrl+O")
+				void Open(FileName!() filename) {
+					import std.file;
+					textEdit.content = std.file.readText(filename);
+				}
+
+				@icon(GenericIcons.Save)
+				@toolbar("File")
+				@accelerator("Ctrl+S")
+				@hotkey('s')
+				void Save() {
+					// these are still functions, so of course you can
+					// still call them yourself too
+					Save_As(previousFileReferenced);
+				}
+
+				// underscores translate to spaces in the visible name
+				@hotkey('a')
+				void Save_As(FileName!() filename) {
+					import std.file;
+					std.file.write(previousFileReferenced, textEdit.content);
+				}
+
+				// you can put the annotations before or after the function name+args and it works the same way
+				@separator
+				void Exit() @accelerator("Alt+F4") @hotkey('x') {
+					window.close();
+				}
+			}
+
+			@menu("&Edit") {
+				// not putting accelerators here because the text edit widget
+				// does it locally, so no need to duplicate it globally.
+
+				@icon(GenericIcons.Undo)
+				void Undo() @toolbar("Undo") {
+					textEdit.undo();
+				}
+
+				@separator
+
+				@icon(GenericIcons.Cut)
+				void Cut() @toolbar("Edit") {
+					textEdit.cut();
+				}
+				@icon(GenericIcons.Copy)
+				void Copy() @toolbar("Edit") {
+					textEdit.copy();
+				}
+				@icon(GenericIcons.Paste)
+				void Paste() @toolbar("Edit") {
+					textEdit.paste();
+				}
+
+				@separator
+				void Select_All() {
+					textEdit.selectAll();
+				}
+			}
+
+			@menu("Help") {
+				void About() @accelerator("F1") {
+					window.messageBox("A minigui sample program.");
+				}
+
+				// @label changes the name in the menu from what is in the code
+				@label("In Menu Name")
+				void otherNameInCode() {}
+			}
+		}
+
+		// declare the object that holds the commands, and set
+		// and members you want from it
+		Commands commands;
+
+		// and now tell minigui to do its magic and create the ui for it!
+		window.setMenuAndToolbarFromAnnotatedCode(commands);
+
+		// then, loop the window normally;
+		window.loop();
+
+		// important to note that the `commands` variable must live through the window's whole life cycle,
+		// or you can have crashes. If you declare the variable and loop in different functions, make sure
+		// you do `new Commands` so the garbage collector can take over management of it for you.
+	}
 	---
 
 	Note that you can call this function multiple times and it will add the items in order to the given items.
@@ -10143,9 +10691,11 @@ class MainWindow : Window {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
 	}
 	void setMenuAndToolbarFromAnnotatedCode_internal(T)(ref T t) {
-		Action[] toolbarActions;
 		auto menuBar = this.menuBar is null ? new MenuBar() : this.menuBar;
 		Menu[string] mcs;
+
+		alias ToolbarSection = ToolBar.ToolbarSection;
+		ToolbarSection[] toolbarSections;
 
 		foreach(menu; menuBar.subMenus) {
 			mcs[menu.label] = menu;
@@ -10196,8 +10746,18 @@ class MainWindow : Window {
 						accelerators[ke.toStr] = handler;
 					}
 
-					if(toolbar !is .toolbar.init)
-						toolbarActions ~= action;
+					if(toolbar !is .toolbar.init) {
+						bool found;
+						foreach(ref section; toolbarSections)
+							if(section.name == toolbar.groupName) {
+								section.actions ~= action;
+								found = true;
+								break;
+							}
+						if(!found) {
+							toolbarSections ~= ToolbarSection(toolbar.groupName, [action]);
+						}
+					}
 					if(menu !is .menu.init) {
 						Menu mc;
 						if(menu.name in mcs) {
@@ -10210,7 +10770,10 @@ class MainWindow : Window {
 
 						if(separator)
 							mc.addSeparator();
-						mc.addItem(new MenuItem(action));
+						auto mi = mc.addItem(new MenuItem(action));
+
+						if(hotkey !is .hotkey.init)
+							mi.hotkey = hotkey.ch;
 					}
 				}
 			}
@@ -10218,8 +10781,8 @@ class MainWindow : Window {
 
 		this.menuBar = menuBar;
 
-		if(toolbarActions.length) {
-			auto tb = new ToolBar(toolbarActions, this);
+		if(toolbarSections.length) {
+			auto tb = new ToolBar(toolbarSections, this);
 		}
 	}
 
@@ -10380,13 +10943,18 @@ class ToolBar : Widget {
 	} else static assert(false);
 	override int heightStretchiness() { return 0; }
 
+	static struct ToolbarSection {
+		string name;
+		Action[] actions;
+	}
+
 	version(win32_widgets) {
 		HIMAGELIST imageListSmall;
 		HIMAGELIST imageListLarge;
 	}
 
 	this(Widget parent) {
-		this(null, parent);
+		this(cast(ToolbarSection[]) null, parent);
 	}
 
 	version(win32_widgets)
@@ -10411,8 +10979,16 @@ class ToolBar : Widget {
 		SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 	}
 
-	///
+	/++
+		History:
+			The `ToolbarSection` overload was added December 31, 2024
+	+/
 	this(Action[] actions, Widget parent) {
+		this([ToolbarSection(null, actions)], parent);
+	}
+
+	/// ditto
+	this(ToolbarSection[] sections, Widget parent) {
 		super(parent);
 
 		tabStop = false;
@@ -10448,16 +11024,29 @@ class ToolBar : Widget {
 			TBBUTTON[] buttons;
 
 			// FIXME: I_IMAGENONE is if here is no icon
-			foreach(action; actions)
-				buttons ~= TBBUTTON(
-					MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0),
-					action.id,
-					TBSTATE_ENABLED, // state
-					0, // style
-					0, // reserved array, just zero it out
-					0, // dwData
-					cast(size_t) toWstringzInternal(action.label) // INT_PTR
-				);
+			foreach(sidx, section; sections) {
+				if(sidx)
+					buttons ~= TBBUTTON(
+						scaleWithDpi(4),
+						0,
+						TBSTATE_ENABLED, // state
+						TBSTYLE_SEP | BTNS_SEP, // style
+						0, // reserved array, just zero it out
+						0, // dwData
+						-1
+					);
+
+				foreach(action; section.actions)
+					buttons ~= TBBUTTON(
+						MAKELONG(cast(ushort)(action.iconId ? (action.iconId - 1) : -2 /* I_IMAGENONE */), 0),
+						action.id,
+						TBSTATE_ENABLED, // state
+						0, // style
+						0, // reserved array, just zero it out
+						0, // dwData
+						cast(size_t) toWstringzInternal(action.label) // INT_PTR
+					);
+			}
 
 			SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, cast(WPARAM)TBBUTTON.sizeof, 0);
 			SendMessageW(hwnd, TB_ADDBUTTONSW, cast(WPARAM) buttons.length, cast(LPARAM)buttons.ptr);
@@ -10472,8 +11061,12 @@ class ToolBar : Widget {
 
 			assert(idealHeight);
 		} else version(custom_widgets) {
-			foreach(action; actions)
-				new ToolButton(action, this);
+			foreach(sidx, section; sections) {
+				if(sidx)
+					new HorizontalSpacer(4, this);
+				foreach(action; section.actions)
+					new ToolButton(action, this);
+			}
 		} else static assert(false);
 	}
 
@@ -10496,11 +11089,6 @@ enum toolbarIconSize = 24;
 
 /// An implementation helper for [ToolBar]. Generally, you shouldn't create these yourself and instead just pass [Action]s to [ToolBar]'s constructor and let it create the buttons for you.
 class ToolButton : Button {
-	///
-	this(string label, Widget parent) {
-		super(label, parent);
-		tabStop = false;
-	}
 	///
 	this(Action action, Widget parent) {
 		super(action.label, parent);
@@ -10619,6 +11207,7 @@ class ToolButton : Button {
 				);
 			break;
 			default:
+				painter.outlineColor = getComputedStyle.foregroundColor;
 				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 		}
 		return bounds;
@@ -10756,6 +11345,26 @@ class StatusBar : Widget {
 			} else static assert(false);
 
 			return p;
+		}
+
+		/++
+			Sets up proportional parts in one function call. You can use negative numbers to indicate device-independent pixels, and positive numbers to indicate proportions.
+
+			No given item should be 0.
+
+			History:
+				Added December 31, 2024
+		+/
+		void setSizes(int[] proportions...) {
+			assert(this.owner);
+			this.owner.partsArray = null;
+
+			foreach(n; proportions) {
+				assert(n, "do not give 0 to statusBar.parts.set, it would make an invisible part. Try 1 instead.");
+
+				this.opOpAssign!"~"(new StatusBar.Part(n > 0 ? n : -n, n > 0 ? StatusBar.Part.WidthUnits.Proportional : StatusBar.Part.WidthUnits.DeviceIndependentPixels));
+			}
+
 		}
 	}
 
@@ -11966,18 +12575,50 @@ class Checkbox : MouseActivatedWidget {
 
 /// Adds empty space to a layout.
 class VerticalSpacer : Widget {
-	///
+	private int mh;
+
+	/++
+		History:
+			The overload with `maxHeight` was added on December 31, 2024
+	+/
 	this(Widget parent) {
+		this(0, parent);
+	}
+
+	/// ditto
+	this(int maxHeight, Widget parent) {
+		this.mh = maxHeight;
 		super(parent);
+		this.tabStop = false;
+	}
+
+	override int maxHeight() {
+		return mh ? scaleWithDpi(mh) : super.maxHeight();
 	}
 }
 
+
 /// ditto
 class HorizontalSpacer : Widget {
-	///
+	private int mw;
+
+	/++
+		History:
+			The overload with `maxWidth` was added on December 31, 2024
+	+/
 	this(Widget parent) {
+		this(0, parent);
+	}
+
+	/// ditto
+	this(int maxWidth, Widget parent) {
+		this.mw = maxWidth;
 		super(parent);
 		this.tabStop = false;
+	}
+
+	override int maxWidth() {
+		return mw ? scaleWithDpi(mw) : super.maxWidth();
 	}
 }
 
@@ -12530,21 +13171,8 @@ class TextLabel : Widget {
 		painter.drawText(bounds.upperLeft, this.label, bounds.lowerRight, alignment);
 		return bounds;
 	}
-
 }
 
-version(trash_text) {
-	alias EditableTextWidgetParent = ScrollableWidget; ///
-	private struct etc {
-		mixin ExperimentalTextComponent;
-	}
-} else {
-	alias EditableTextWidgetParent = Widget; ///
-	version=use_new_text_system;
-	import arsd.textlayouter;
-}
-
-version(use_new_text_system)
 class TextDisplayHelper : Widget {
 	protected TextLayouter l;
 	protected ScrollMessageWidget smw;
@@ -12885,8 +13513,8 @@ class TextDisplayHelper : Widget {
 				break;
 				*/
 				case Key.Tab:
-					// we process the char event, so don't want to change focus on it
-					if(acceptsTabInput)
+					// we process the char event, so don't want to change focus on it, unless the user overrides that with ctrl
+					if(acceptsTabInput && !kde.ctrlKey)
 						kde.preventDefault();
 				break;
 				default:
@@ -13049,7 +13677,7 @@ class TextDisplayHelper : Widget {
 
 	// we want to delegate all the Widget.Style stuff up to the other class that the user can see
 	override void useStyleProperties(scope void delegate(scope .Widget.Style props) dg) {
-		// this should be the upper container - first parent is a ScrollMessageWidget content area container, then ScrollMessageWidget itself, next parent is finally the EditableTextWidgetParent
+		// this should be the upper container - first parent is a ScrollMessageWidget content area container, then ScrollMessageWidget itself, next parent is finally the EditableTextWidget Parent
 		if(parent && parent.parent && parent.parent.parent)
 			parent.parent.parent.useStyleProperties(dg);
 		else
@@ -13146,7 +13774,6 @@ class TextDisplayHelper : Widget {
 }
 
 /+
-version(use_new_text_system)
 class TextWidget : Widget {
 	TextLayouter l;
 	ScrollMessageWidget smw;
@@ -13183,9 +13810,11 @@ class TextWidget : Widget {
 	make sure it calls parentWindow.inputProxy.setIMEPopupLocation too
 +/
 
-/// Contains the implementation of text editing
-abstract class EditableTextWidget : EditableTextWidgetParent {
-	this(Widget parent) {
+/++
+	Contains the implementation of text editing and shared basic api. You should construct one of the child classes instead, like [TextEdit], [LineEdit], or [PasswordEdit].
++/
+abstract class EditableTextWidget : Widget {
+	protected this(Widget parent) {
 		version(custom_widgets)
 			this(true, parent);
 		else
@@ -13194,7 +13823,7 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 	private bool useCustomWidget;
 
-	this(bool useCustomWidget, Widget parent) {
+	protected this(bool useCustomWidget, Widget parent) {
 		this.useCustomWidget = useCustomWidget;
 
 		super(parent);
@@ -13204,11 +13833,13 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 
 	private bool wordWrapEnabled_;
+	/++
+		Enables or disables wrapping of long lines on word boundaries.
+	+/
 	void wordWrapEnabled(bool enabled) {
 		if(useCustomWidget) {
 			wordWrapEnabled_ = enabled;
-			version(use_new_text_system)
-				textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
+			textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
 		} else version(win32_widgets) {
 			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
 		}
@@ -13218,7 +13849,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	override int widthStretchiness() { return 7; }
 	override int widthShrinkiness() { return 1; }
 
-	version(use_new_text_system)
 	override int maxHeight() {
 		if(useCustomWidget)
 			return tdh.maxHeight;
@@ -13226,7 +13856,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			return super.maxHeight();
 	}
 
-	version(use_new_text_system)
 	override void focus() {
 		if(useCustomWidget && tdh)
 			tdh.focus();
@@ -13234,28 +13863,87 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 			super.focus();
 	}
 
+	override void defaultEventHandler_focusout(Event foe) {
+		if(tdh !is null && foe.target is tdh)
+			tdh.redraw();
+	}
+
+	override void defaultEventHandler_focusin(Event foe) {
+		if(tdh !is null && foe.target is tdh)
+			tdh.redraw();
+	}
+
+
+	/++
+		Selects all the text in the control, as if the user did it themselves. When the user types in a widget, the selected text is replaced with the new input, so this might be useful for putting in default text that is easy for the user to replace.
+	+/
 	void selectAll() {
 		if(useCustomWidget) {
-			version(use_new_text_system)
-				tdh.selectAll();
-			else version(trash_text)
-				textLayout.selectAll();
-			redraw();
+			tdh.selectAll();
 		} else version(win32_widgets) {
 			SendMessage(hwnd, EM_SETSEL, 0, -1);
 		}
 	}
 
-	version(use_new_text_system)
-		TextDisplayHelper tdh;
+	/++
+		Basic clipboard operations.
 
+		History:
+			Added December 31, 2024
+	+/
+	void copy() {
+		if(useCustomWidget) {
+			tdh.copy();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, WM_COPY, 0, 0);
+		}
+	}
+
+	/// ditto
+	void cut() {
+		if(useCustomWidget) {
+			tdh.cut();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, WM_CUT, 0, 0);
+		}
+	}
+
+	/// ditto
+	void paste() {
+		if(useCustomWidget) {
+			tdh.paste();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, WM_PASTE, 0, 0);
+		}
+	}
+
+	///
+	void undo() {
+		if(useCustomWidget) {
+			tdh.undo();
+		} else version(win32_widgets) {
+			SendMessage(hwnd, EM_UNDO, 0, 0);
+		}
+	}
+
+	// note that WM_CLEAR deletes the selection without copying it to the clipboard
+	// also windows supports margins, modified flag, and much more
+
+	// EM_UNDO and EM_CANUNDO. EM_REDO is only supported in rich text boxes here
+
+	// EM_GETSEL, EM_REPLACESEL, and EM_SETSEL might be usable for find etc.
+
+
+
+	/*protected*/ TextDisplayHelper tdh;
+	/*protected*/ TextLayouter textLayout;
+
+	/++
+		Gets or sets the current content of the control, as a plain text string. Setting the content will reset the cursor position and overwrite any changes the user made.
+	+/
 	@property string content() {
 		if(useCustomWidget) {
-			version(use_new_text_system) {
-				return textLayout.getTextString();
-			} else version(trash_text) {
-				return textLayout.getPlainText();
-			}
+			return textLayout.getTextString();
 		} else version(win32_widgets) {
 			wchar[4096] bufferstack;
 			wchar[] buffer;
@@ -13274,64 +13962,37 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 
 		assert(0);
 	}
+	/// ditto
 	@property void content(string s) {
 		if(useCustomWidget) {
-			version(use_new_text_system) {
-				with(textLayout.selection) {
-					moveToStartOfDocument();
-					setAnchor();
-					moveToEndOfDocument();
-					setFocus();
-					replaceContent(s);
-				}
-
-				tdh.adjustScrollbarSizes();
-				// these don't seem to help
-				// tdh.smw.setPosition(0, 0);
-				// tdh.scrollForCaret();
-
-				redraw();
-			} else version(trash_text) {
-				textLayout.clear();
-				textLayout.addText(s);
-
-				{
-				// FIXME: it should be able to get this info easier
-				auto painter = draw();
-				textLayout.redoLayout(painter);
-				}
-				auto cbb = textLayout.contentBoundingBox();
-				setContentSize(cbb.width, cbb.height);
-				/*
-				textLayout.addText(ForegroundColor.red, s);
-				textLayout.addText(ForegroundColor.blue, TextFormat.underline, "http://dpldocs.info/");
-				textLayout.addText(" is the best!");
-				*/
-				redraw();
+			with(textLayout.selection) {
+				moveToStartOfDocument();
+				setAnchor();
+				moveToEndOfDocument();
+				setFocus();
+				replaceContent(s);
 			}
+
+			tdh.adjustScrollbarSizes();
+			// these don't seem to help
+			// tdh.smw.setPosition(0, 0);
+			// tdh.scrollForCaret();
+
+			redraw();
 		} else version(win32_widgets) {
 			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
 			SetWindowTextW(hwnd, bfr.ptr);
 		}
 	}
 
+	/++
+		Appends some text to the widget at the end, without affecting the user selection or cursor position.
+	+/
 	void addText(string txt) {
 		if(useCustomWidget) {
-			version(use_new_text_system) {
-				textLayout.appendText(txt);
-				tdh.adjustScrollbarSizes();
-				redraw();
-			} else if(trash_text) {
-				textLayout.addText(txt);
-
-				{
-				// FIXME: it should be able to get this info easier
-				auto painter = draw();
-				textLayout.redoLayout(painter);
-				}
-				auto cbb = textLayout.contentBoundingBox();
-				setContentSize(cbb.width, cbb.height);
-			}
+			textLayout.appendText(txt);
+			tdh.adjustScrollbarSizes();
+			redraw();
 		} else version(win32_widgets) {
 			// get the current selection
 			DWORD StartPos, EndPos;
@@ -13350,23 +14011,24 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		}
 	}
 
-	version(custom_widgets)
-	version(trash_text)
-	override void paintFrameAndBackground(WidgetPainter painter) {
-		this.draw3dFrame(painter, FrameStyle.sunk, Color.white);
+	// EM_SCROLLCARET scrolls the caret into view
+
+	void scrollToBottom() {
+		if(useCustomWidget) {
+			tdh.smw.scrollDown(int.max);
+		} else version(win32_widgets) {
+			SendMessageW( hwnd, EM_LINESCROLL, 0, int.max );
+		}
 	}
 
-	version(use_new_text_system)
-	TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
+	protected TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
 		return new TextDisplayHelper(textLayout, smw);
 	}
 
-	version(use_new_text_system)
-	TextStyle defaultTextStyle() {
+	protected TextStyle defaultTextStyle() {
 		return new TextDisplayHelper.MyTextStyle(getUsedFont());
 	}
 
-	version(use_new_text_system)
 	private OperatingSystemFont getUsedFont() {
 		auto cs = getComputedStyle();
 		auto font = cs.font;
@@ -13377,64 +14039,31 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 		return font;
 	}
 
-	version(use_new_text_system) {
-		TextLayouter textLayout;
+	protected void setupCustomTextEditing() {
+		textLayout = new TextLayouter(defaultTextStyle());
 
-		void setupCustomTextEditing() {
-			textLayout = new TextLayouter(defaultTextStyle());
+		auto smw = new ScrollMessageWidget(this);
+		if(!showingHorizontalScroll)
+			smw.horizontalScrollBar.hide();
+		if(!showingVerticalScroll)
+			smw.verticalScrollBar.hide();
+		this.tabStop = false;
+		smw.tabStop = false;
+		tdh = textDisplayHelperFactory(textLayout, smw);
+	}
 
-			auto smw = new ScrollMessageWidget(this);
-			if(!showingHorizontalScroll)
-				smw.horizontalScrollBar.hide();
-			if(!showingVerticalScroll)
-				smw.verticalScrollBar.hide();
-			this.tabStop = false;
-			smw.tabStop = false;
-			tdh = textDisplayHelperFactory(textLayout, smw);
-		}
+	override void newParentWindow(Window old, Window n) {
+		if(n is null) return;
+		this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
+			if(textLayout) {
+				if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
+					// the dpi change can change the font, so this informs the layouter that it has changed too
+					style.font_ = getUsedFont();
 
-		override void newParentWindow(Window old, Window n) {
-			if(n is null) return;
-			this.parentWindow.addEventListener((scope DpiChangedEvent dce) {
-				if(textLayout) {
-					if(auto style = cast(TextDisplayHelper.MyTextStyle) textLayout.defaultStyle()) {
-						// the dpi change can change the font, so this informs the layouter that it has changed too
-						style.font_ = getUsedFont();
-
-						// arsd.core.writeln(this.parentWindow.win.actualDpi);
-					}
+					// arsd.core.writeln(this.parentWindow.win.actualDpi);
 				}
-			});
-		}
-
-	} else version(trash_text) {
-		static if(SimpledisplayTimerAvailable)
-			Timer caretTimer;
-		etc.TextLayout textLayout;
-
-		void setupCustomTextEditing() {
-			textLayout = new etc.TextLayout(Rectangle(4, 2, width - 8, height - 4));
-			textLayout.selectionXorColor = getComputedStyle().activeListXorColor;
-		}
-
-		override void paint(WidgetPainter painter) {
-			if(parentWindow.win.closed) return;
-
-			textLayout.boundingBox = Rectangle(4, 2, width - 8, height - 4);
-
-			/*
-			painter.outlineColor = Color.white;
-			painter.fillColor = Color.white;
-			painter.drawRectangle(Point(4, 4), contentWidth, contentHeight);
-			*/
-
-			painter.outlineColor = Color.black;
-			// painter.drawText(Point(4, 4), content, Point(width - 4, height - 4));
-
-			textLayout.caretShowingOnScreen = false;
-
-			textLayout.drawInto(painter, !parentWindow.win.closed && isFocused());
-		}
+			}
+		});
 	}
 
 	static class Style : Widget.Style {
@@ -13456,107 +14085,6 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 	mixin OverrideStyle!Style;
 
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_mousedown(MouseDownEvent ev) {
-		super.defaultEventHandler_mousedown(ev);
-		if(parentWindow.win.closed) return;
-		if(ev.button == MouseButton.left) {
-			if(textLayout.selectNone())
-				redraw();
-			textLayout.moveCaretToPixelCoordinates(ev.clientX, ev.clientY);
-			this.focus();
-			//this.parentWindow.win.grabInput();
-		} else if(ev.button == MouseButton.middle) {
-			static if(UsingSimpledisplayX11) {
-				getPrimarySelection(parentWindow.win, (in char[] txt) {
-					textLayout.insert(txt);
-					redraw();
-
-					auto cbb = textLayout.contentBoundingBox();
-					setContentSize(cbb.width, cbb.height);
-				});
-			}
-		}
-	}
-
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_mouseup(MouseUpEvent ev) {
-		//this.parentWindow.win.releaseInputGrab();
-		super.defaultEventHandler_mouseup(ev);
-	}
-
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_mousemove(MouseMoveEvent ev) {
-		super.defaultEventHandler_mousemove(ev);
-		if(ev.state & ModifierState.leftButtonDown) {
-			textLayout.selectToPixelCoordinates(ev.clientX, ev.clientY);
-			redraw();
-		}
-	}
-
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_focus(Event ev) {
-		super.defaultEventHandler_focus(ev);
-		if(parentWindow.win.closed) return;
-		auto painter = this.draw();
-		textLayout.drawCaret(painter);
-
-		static if(SimpledisplayTimerAvailable)
-		if(caretTimer) {
-			caretTimer.destroy();
-			caretTimer = null;
-		}
-
-		bool blinkingCaret = true;
-		static if(UsingSimpledisplayX11)
-			if(!Image.impl.xshmAvailable)
-				blinkingCaret = false; // if on a remote connection, don't waste bandwidth on an expendable blink
-
-		if(blinkingCaret)
-		static if(SimpledisplayTimerAvailable)
-		caretTimer = new Timer(500, {
-			if(parentWindow.win.closed) {
-				caretTimer.destroy();
-				return;
-			}
-			if(isFocused()) {
-				auto painter = this.draw();
-				textLayout.drawCaret(painter);
-			} else if(textLayout.caretShowingOnScreen) {
-				auto painter = this.draw();
-				textLayout.eraseCaret(painter);
-			}
-		});
-	}
-
-	version(trash_text) {
-		private string lastContentBlur;
-
-		override void defaultEventHandler_blur(Event ev) {
-			super.defaultEventHandler_blur(ev);
-			if(parentWindow.win.closed) return;
-			version(custom_widgets) {
-				auto painter = this.draw();
-				textLayout.eraseCaret(painter);
-				static if(SimpledisplayTimerAvailable)
-				if(caretTimer) {
-					caretTimer.destroy();
-					caretTimer = null;
-				}
-			}
-
-			if(this.content != lastContentBlur) {
-				auto evt = new ChangeEvent!string(this, &this.content);
-				evt.dispatch();
-				lastContentBlur = this.content;
-			}
-		}
-	}
-
 	version(win32_widgets) {
 		private string lastContentBlur;
 
@@ -13573,85 +14101,29 @@ abstract class EditableTextWidget : EditableTextWidgetParent {
 	}
 
 
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_char(CharEvent ev) {
-		super.defaultEventHandler_char(ev);
-		textLayout.insert(ev.character);
-		redraw();
-
-		// FIXME: too inefficient
-		auto cbb = textLayout.contentBoundingBox();
-		setContentSize(cbb.width, cbb.height);
-	}
-	version(trash_text)
-	version(custom_widgets)
-	override void defaultEventHandler_keydown(KeyDownEvent ev) {
-		//super.defaultEventHandler_keydown(ev);
-		switch(ev.key) {
-			case Key.Delete:
-				textLayout.delete_();
-				redraw();
-			break;
-			case Key.Left:
-				textLayout.moveLeft();
-				redraw();
-			break;
-			case Key.Right:
-				textLayout.moveRight();
-				redraw();
-			break;
-			case Key.Up:
-				textLayout.moveUp();
-				redraw();
-			break;
-			case Key.Down:
-				textLayout.moveDown();
-				redraw();
-			break;
-			case Key.Home:
-				textLayout.moveHome();
-				redraw();
-			break;
-			case Key.End:
-				textLayout.moveEnd();
-				redraw();
-			break;
-			case Key.PageUp:
-				foreach(i; 0 .. 32)
-				textLayout.moveUp();
-				redraw();
-			break;
-			case Key.PageDown:
-				foreach(i; 0 .. 32)
-				textLayout.moveDown();
-				redraw();
-			break;
-
-			default:
-				 {} // intentionally blank, let "char" handle it
-		}
-		/*
-		if(ev.key == Key.Backspace) {
-			textLayout.backspace();
-			redraw();
-		}
-		*/
-		ensureVisibleInScroll(textLayout.caretBoundingBox());
-	}
-
-	version(use_new_text_system) {
-		bool showingVerticalScroll() { return true; }
-		bool showingHorizontalScroll() { return true; }
-	}
+	bool showingVerticalScroll() { return true; }
+	bool showingHorizontalScroll() { return true; }
 }
 
-///
+/++
+	A `LineEdit` is an editor of a single line of text, comparable to a HTML `<input type="text" />`.
+
+	A `CustomLineEdit` always uses the custom implementation, even on operating systems where the native control is implemented in minigui, which may provide more api styling features but at the cost of poorer integration with the OS and potentially worse user experience in other ways.
+
+	See_Also:
+		[PasswordEdit] for a `LineEdit` that obscures its input.
+
+		[TextEdit] for a multi-line plain text editor widget.
+
+		[TextLabel] for a single line piece of static text.
+
+		[TextDisplay] for a read-only display of a larger piece of plain text.
++/
 class LineEdit : EditableTextWidget {
 	override bool showingVerticalScroll() { return false; }
 	override bool showingHorizontalScroll() { return false; }
 
-	 override int flexBasisWidth() { return 250; }
+	override int flexBasisWidth() { return 250; }
 	override int widthShrinkiness() { return 10; }
 
 	///
@@ -13661,13 +14133,6 @@ class LineEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "",
 				0, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
-			version(trash_text) {
-				setupCustomTextEditing();
-				addEventListener(delegate(CharEvent ev) {
-					if(ev.character == '\n')
-						ev.preventDefault();
-				});
-			}
 		} else static assert(false);
 	}
 
@@ -13678,7 +14143,6 @@ class LineEdit : EditableTextWidget {
 			super(true, parent);
 	}
 
-	version(use_new_text_system)
 	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
 		auto tdh = new TextDisplayHelper(textLayout, smw);
 		tdh.singleLine = true;
@@ -13711,10 +14175,10 @@ class CustomLineEdit : LineEdit {
 	Alas, Windows requires the window to be created differently to use this style,
 	so it had to be a new class instead of a toggle on and off on an existing object.
 
-	FIXME: this is not yet implemented on Linux, it will work the same as a TextEdit there for now.
-
 	History:
 		Added January 24, 2021
+
+		Implemented on Linux on January 31, 2023.
 +/
 class PasswordEdit : EditableTextWidget {
 	override bool showingVerticalScroll() { return false; }
@@ -13722,7 +14186,6 @@ class PasswordEdit : EditableTextWidget {
 
 	override int flexBasisWidth() { return 250; }
 
-	version(use_new_text_system)
 	override TextStyle defaultTextStyle() {
 		auto cs = getComputedStyle();
 
@@ -13741,7 +14204,6 @@ class PasswordEdit : EditableTextWidget {
 		return new TextDisplayHelper.MyTextStyle(osf);
 	}
 
-	version(use_new_text_system)
 	override TextDisplayHelper textDisplayHelperFactory(TextLayouter textLayout, ScrollMessageWidget smw) {
 		static class TDH : TextDisplayHelper {
 			this(TextLayouter textLayout, ScrollMessageWidget smw) {
@@ -13768,15 +14230,6 @@ class PasswordEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "",
 				ES_PASSWORD, WS_EX_CLIENTEDGE);//|WS_HSCROLL|ES_AUTOHSCROLL);
 		} else version(custom_widgets) {
-			version(trash_text) {
-				setupCustomTextEditing();
-
-				// should this be under trash text? i think so.
-				addEventListener(delegate(CharEvent ev) {
-					if(ev.character == '\n')
-						ev.preventDefault();
-				});
-			}
 		} else static assert(false);
 	}
 
@@ -13802,7 +14255,16 @@ class CustomPasswordEdit : PasswordEdit {
 }
 
 
-///
+/++
+	A `TextEdit` is a multi-line plain text editor, comparable to a HTML `<textarea>`.
+
+	See_Also:
+		[TextDisplay] for a read-only text display.
+
+		[LineEdit] for a single line text editor.
+
+		[PasswordEdit] for a single line text editor that obscures its input.
++/
 class TextEdit : EditableTextWidget {
 	///
 	this(Widget parent) {
@@ -13811,8 +14273,6 @@ class TextEdit : EditableTextWidget {
 			createWin32Window(this, "edit"w, "",
 				0|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_WANTRETURN|ES_AUTOHSCROLL|ES_AUTOVSCROLL, WS_EX_CLIENTEDGE);
 		} else version(custom_widgets) {
-			version(trash_text)
-			setupCustomTextEditing();
 		} else static assert(false);
 	}
 
@@ -13849,7 +14309,7 @@ class RichTextDisplay : Widget {
 +/
 
 /++
-	A read-only text display
+	A read-only text display. It is based on the editable widget base, but does not allow user edits and displays it on the direct background instead of on an editable background.
 
 	History:
 		Added October 31, 2023 (dub v11.3)
@@ -13938,10 +14398,13 @@ abstract class GenericListViewWidget : Widget {
 		super(parent);
 
 		smw = new ScrollMessageWidget(this);
-		smw.addDefaultKeyboardListeners();
+		smw.addDefaultKeyboardListeners(itemSize.height, itemSize.width);
 		smw.addDefaultWheelListeners(itemSize.height, itemSize.width);
+		smw.hsb.hide(); // FIXME: this might actually be useful but we can't really communicate that yet
 
-		inner = new GenericListViewWidgetInner(this, smw);
+		inner = new GenericListViewWidgetInner(this, smw, new GenericListViewInnerContainer(smw));
+		inner.tabStop = this.tabStop;
+		this.tabStop = false;
 	}
 
 	private ScrollMessageWidget smw;
@@ -14002,7 +14465,59 @@ abstract class GenericListViewWidget : Widget {
 	void notifyItemsMoved(int movedFromIndex, int movedToIndex, int count = 1) {
 	}
 
+	/++
+		History:
+			Added January 1, 2025
+	+/
+	void ensureItemVisibleInScroll(int index) {
+		auto itemPos = index * itemSize().height;
+		auto vsb = smw.verticalScrollBar;
+		auto viewable = vsb.viewableArea_;
+
+		if(viewable == 0) {
+			// viewable == 0 isn't actually supposed to happen, this means
+			// this method is being called before having our size assigned, it should
+			// probably just queue it up for later.
+			queuedScroll = index;
+			return;
+		}
+
+		queuedScroll = int.min;
+
+		if(itemPos < vsb.position) {
+			// scroll up to it
+			vsb.setPosition(itemPos);
+			smw.notify();
+		} else if(itemPos + itemSize().height > (vsb.position + viewable)) {
+			// scroll down to it, so it is at the bottom
+
+			auto lastViewableItemPosition = (viewable - itemSize.height) / itemSize.height * itemSize.height;
+			// need the itemPos to be at the lastViewableItemPosition after scrolling, so subtraction does it
+
+			vsb.setPosition(itemPos - lastViewableItemPosition);
+			smw.notify();
+		}
+	}
+
+	/++
+		History:
+			Added January 1, 2025;
+	+/
+	int numberOfCurrentlyFullyVisibleItems() {
+		return smw.verticalScrollBar.viewableArea_ / itemSize.height;
+	}
+
+	private int queuedScroll = int.min;
+
+	override void recomputeChildLayout() {
+		super.recomputeChildLayout();
+		if(queuedScroll != int.min)
+			ensureItemVisibleInScroll(queuedScroll);
+	}
+
 	private GenericListViewItem[] items;
+
+	override void paint(WidgetPainter painter) {}
 }
 
 /// ditto
@@ -14085,11 +14600,73 @@ unittest {
 	}
 }
 
-private class GenericListViewWidgetInner : Widget {
-	this(GenericListViewWidget glvw, ScrollMessageWidget smw) {
-		super(smw);
-		this.glvw = glvw;
+// this exists just to wrap the actual GenericListViewWidgetInner so borders
+// and padding and stuff can work
+private class GenericListViewInnerContainer : Widget {
+	this(Widget parent) {
+		super(parent);
 		this.tabStop = false;
+	}
+
+	override void recomputeChildLayout() {
+		registerMovement();
+
+		auto cs = getComputedStyle();
+		auto bw = getBorderWidth(cs.borderStyle);
+
+		assert(children.length < 2);
+		foreach(child; children) {
+			child.x = bw + paddingLeft();
+			child.y = bw + paddingTop();
+			child.width = this.width.NonOverflowingUint - bw - bw - paddingLeft() - paddingRight();
+			child.height = this.height.NonOverflowingUint - bw - bw - paddingTop() - paddingBottom();
+
+			child.recomputeChildLayout();
+		}
+	}
+
+	override void useStyleProperties(scope void delegate(scope .Widget.Style props) dg) {
+		if(parent && parent.parent && parent.parent.parent) // ScrollMessageWidgetInner then ScrollMessageWidget then GenericListViewWidget
+			return parent.parent.parent.useStyleProperties(dg);
+		else
+			return super.useStyleProperties(dg);
+	}
+
+	override int paddingTop() {
+		if(parent && parent.parent && parent.parent.parent) // ScrollMessageWidgetInner then ScrollMessageWidget then GenericListViewWidget
+			return parent.parent.parent.paddingTop();
+		else
+			return super.paddingTop();
+	}
+
+	override int paddingBottom() {
+		if(parent && parent.parent && parent.parent.parent) // ScrollMessageWidgetInner then ScrollMessageWidget then GenericListViewWidget
+			return parent.parent.parent.paddingBottom();
+		else
+			return super.paddingBottom();
+	}
+
+	override int paddingLeft() {
+		if(parent && parent.parent && parent.parent.parent) // ScrollMessageWidgetInner then ScrollMessageWidget then GenericListViewWidget
+			return parent.parent.parent.paddingLeft();
+		else
+			return super.paddingLeft();
+	}
+
+	override int paddingRight() {
+		if(parent && parent.parent && parent.parent.parent) // ScrollMessageWidgetInner then ScrollMessageWidget then GenericListViewWidget
+			return parent.parent.parent.paddingRight();
+		else
+			return super.paddingRight();
+	}
+
+
+}
+
+private class GenericListViewWidgetInner : Widget {
+	this(GenericListViewWidget glvw, ScrollMessageWidget smw, GenericListViewInnerContainer parent) {
+		super(parent);
+		this.glvw = glvw;
 
 		reloadVisible();
 
@@ -14106,10 +14683,12 @@ private class GenericListViewWidgetInner : Widget {
 
 	void reloadVisible() {
 		auto y = glvw.smw.position.y / glvw.itemSize.height;
-		int offset = glvw.smw.position.y % glvw.itemSize.height;
 
-		if(offset || y >= glvw.itemCount())
-			y--;
+		// idk why i had this here it doesn't seem to be ueful and actually made last items diasppear
+		//int offset = glvw.smw.position.y % glvw.itemSize.height;
+		//if(offset || y >= glvw.itemCount())
+			//y--;
+
 		if(y < 0)
 			y = 0;
 
@@ -14138,6 +14717,8 @@ private class GenericListViewWidgetInner : Widget {
 		scope(exit)
 			inRcl = false;
 
+		registerMovement();
+
 		auto ih = glvw.itemSize().height;
 
 		auto itemCount = this.height / ih + 2; // extra for partial display before and after
@@ -14151,12 +14732,12 @@ private class GenericListViewWidgetInner : Widget {
 		if(hadNew)
 			reloadVisible();
 
-		int y = -(glvw.smw.position.y % ih);
+		int y = -(glvw.smw.position.y % ih) + this.paddingTop();
 		foreach(child; children) {
-			child.x = 0;
+			child.x = this.paddingLeft();
 			child.y = y;
 			y += glvw.itemSize().height;
-			child.width = this.width;
+			child.width = this.width.NonOverflowingUint - this.paddingLeft() - this.paddingRight();
 			child.height = ih;
 
 			child.recomputeChildLayout();
@@ -14279,7 +14860,7 @@ enum MessageBoxButton {
 
 
 /++
-	Displays a modal message box, blocking until the user dismisses it.
+	Displays a modal message box, blocking until the user dismisses it. These global ones are discouraged in favor of the same methods on [Window], which give better user experience since the message box is tied the parent window instead of acting independently.
 
 	Returns: the button pressed.
 +/
@@ -15000,6 +15581,9 @@ void emitCommand(string CommandString, WidgetType, Args...)(WidgetType w, Args a
 	event.dispatch();
 }
 
+/++
+
++/
 class ResizeEvent : Event {
 	enum EventString = "resize";
 
@@ -15730,6 +16314,10 @@ enum FileDialogType {
 	Open,
 	Save
 }
+
+/++
+	The default string [FileName] refers to to store the last file referenced. You can use this if you like, or provide a different variable to `FileName` in your function.
++/
 string previousFileReferenced;
 
 /++
@@ -15750,6 +16338,10 @@ string previousFileReferenced;
 struct FileName(alias storage = previousFileReferenced, string[] filters = null, FileDialogType type = FileDialogType.Automatic) {
 	string name;
 	alias name this;
+
+	@implicit this(string name) {
+		this.name = name;
+	}
 }
 
 /++
@@ -15818,6 +16410,203 @@ void getSaveFileName(
 	return getFileName(null, false, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
+/++
+	It is possible to override or customize the file dialog in some cases. These members provide those hooks: you do `fileDialogDelegate = new YourSubclassOf_FileDialogDelegate;` and you can do your own thing.
+
+	This is a customization hook and you should not call methods on this class directly. Use the public functions [getOpenFileName] and [getSaveFileName], or make an automatic dialog with [FileName] instead.
+
+	History:
+		Added January 1, 2025
++/
+class FileDialogDelegate {
+
+	/++
+
+	+/
+	static abstract class PreviewWidget : Widget {
+		/// Call this from your subclass' constructor
+		this(Widget parent) {
+			super(parent);
+		}
+
+		/// Load the file given to you and show its preview inside the widget here
+		abstract void previewFile(string filename);
+	}
+
+	/++
+		Override this to add preview capabilities to the dialog for certain files.
+	+/
+	protected PreviewWidget makePreviewWidget(Widget parent) {
+		return null;
+	}
+
+	/++
+		Override this to change the dialog entirely.
+
+		This function IS allowed to block, but is NOT required to.
+	+/
+	protected void getFileName(
+		Window owner,
+		bool openOrSave, // true if open, false if save
+		void delegate(string) onOK,
+		string prefilledName,
+		string[] filters, // format here is like ["Text files\0*.txt;*.text", "Image files\0*.png;*.jpg"]
+		void delegate() onCancel,
+		string initialDirectory,
+	)
+	{
+
+		version(win32_widgets) {
+			import core.sys.windows.commdlg;
+		/*
+		Ofn.lStructSize = sizeof(OPENFILENAME);
+		Ofn.hwndOwner = hWnd;
+		Ofn.lpstrFilter = szFilter;
+		Ofn.lpstrFile= szFile;
+		Ofn.nMaxFile = sizeof(szFile)/ sizeof(*szFile);
+		Ofn.lpstrFileTitle = szFileTitle;
+		Ofn.nMaxFileTitle = sizeof(szFileTitle);
+		Ofn.lpstrInitialDir = (LPSTR)NULL;
+		Ofn.Flags = OFN_SHOWHELP | OFN_OVERWRITEPROMPT;
+		Ofn.lpstrTitle = szTitle;
+		 */
+
+
+			wchar[1024] file = 0;
+			wchar[1024] filterBuffer = 0;
+			makeWindowsString(prefilledName, file[]);
+			OPENFILENAME ofn;
+			ofn.lStructSize = ofn.sizeof;
+			ofn.hwndOwner = owner is null ? null : owner.win.hwnd;
+			if(filters.length) {
+				string filter;
+				foreach(i, f; filters) {
+					filter ~= f;
+					filter ~= "\0";
+				}
+				filter ~= "\0";
+				ofn.lpstrFilter = makeWindowsString(filter, filterBuffer[], 0 /* already terminated */).ptr;
+			}
+			ofn.lpstrFile = file.ptr;
+			ofn.nMaxFile = file.length;
+
+			wchar[1024] initialDir = 0;
+			if(initialDirectory !is null) {
+				makeWindowsString(initialDirectory, initialDir[]);
+				ofn.lpstrInitialDir = file.ptr;
+			}
+
+			if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn))
+			{
+				string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
+				if(okString.length && okString[$-1] == '\0')
+					okString = okString[0..$-1];
+				onOK(okString);
+			} else {
+				if(onCancel)
+					onCancel();
+			}
+		} else version(custom_widgets) {
+			filters ~= ["All Files\0*.*"];
+			auto picker = new FilePicker(openOrSave, prefilledName, filters, initialDirectory, owner);
+			picker.onOK = onOK;
+			picker.onCancel = onCancel;
+			picker.show();
+		}
+	}
+
+}
+
+/// ditto
+FileDialogDelegate fileDialogDelegate() {
+	if(fileDialogDelegate_ is null)
+		fileDialogDelegate_ = new FileDialogDelegate();
+	return fileDialogDelegate_;
+}
+
+/// ditto
+void fileDialogDelegate(FileDialogDelegate replacement) {
+	fileDialogDelegate_ = replacement;
+}
+
+private FileDialogDelegate fileDialogDelegate_;
+
+struct FileNameFilter {
+	string description;
+	string[] globPatterns;
+
+	string toString() {
+		string ret;
+		ret ~= description;
+		ret ~= " (";
+		foreach(idx, pattern; globPatterns) {
+			if(idx)
+				ret ~= "; ";
+			ret ~= pattern;
+		}
+		ret ~= ")";
+
+		return ret;
+	}
+
+	static FileNameFilter fromString(string s) {
+		size_t end = s.length;
+		size_t start = 0;
+		foreach_reverse(idx, ch; s) {
+			if(ch == ')' && end == s.length)
+				end = idx;
+			else if(ch == '(' && end != s.length) {
+				start = idx + 1;
+				break;
+			}
+		}
+
+		FileNameFilter fnf;
+		fnf.description = s[0 .. start ? start - 1 : 0];
+		size_t globStart = 0;
+		s = s[start .. end];
+		foreach(idx, ch; s)
+			if(ch == ';') {
+				auto ptn = stripInternal(s[globStart .. idx]);
+				if(ptn.length)
+					fnf.globPatterns ~= ptn;
+				globStart = idx + 1;
+
+			}
+		auto ptn = stripInternal(s[globStart .. $]);
+		if(ptn.length)
+			fnf.globPatterns ~= ptn;
+		return fnf;
+	}
+}
+
+struct FileNameFilterSet {
+	FileNameFilter[] filters;
+
+	static FileNameFilterSet fromWindowsFileNameFilterDescription(string[] filters) {
+		FileNameFilter[] ret;
+
+		foreach(filter; filters) {
+			FileNameFilter fnf;
+			size_t filterStartPoint;
+			foreach(idx, ch; filter) {
+				if(ch == 0) {
+					fnf.description = filter[0 .. idx];
+					filterStartPoint = idx + 1;
+				} else if(filterStartPoint && ch == ';') {
+					fnf.globPatterns ~= filter[filterStartPoint .. idx];
+					filterStartPoint = idx + 1;
+				}
+			}
+			fnf.globPatterns ~= filter[filterStartPoint .. $];
+
+			ret ~= fnf;
+		}
+
+		return FileNameFilterSet(ret);
+	}
+}
+
 void getFileName(
 	Window owner,
 	bool openOrSave,
@@ -15828,65 +16617,7 @@ void getFileName(
 	string initialDirectory = null,
 )
 {
-
-	version(win32_widgets) {
-		import core.sys.windows.commdlg;
-	/*
-	Ofn.lStructSize = sizeof(OPENFILENAME);
-	Ofn.hwndOwner = hWnd;
-	Ofn.lpstrFilter = szFilter;
-	Ofn.lpstrFile= szFile;
-	Ofn.nMaxFile = sizeof(szFile)/ sizeof(*szFile);
-	Ofn.lpstrFileTitle = szFileTitle;
-	Ofn.nMaxFileTitle = sizeof(szFileTitle);
-	Ofn.lpstrInitialDir = (LPSTR)NULL;
-	Ofn.Flags = OFN_SHOWHELP | OFN_OVERWRITEPROMPT;
-	Ofn.lpstrTitle = szTitle;
-	 */
-
-
-		wchar[1024] file = 0;
-		wchar[1024] filterBuffer = 0;
-		makeWindowsString(prefilledName, file[]);
-		OPENFILENAME ofn;
-		ofn.lStructSize = ofn.sizeof;
-		ofn.hwndOwner = owner is null ? null : owner.win.hwnd;
-		if(filters.length) {
-			string filter;
-			foreach(i, f; filters) {
-				filter ~= f;
-				filter ~= "\0";
-			}
-			filter ~= "\0";
-			ofn.lpstrFilter = makeWindowsString(filter, filterBuffer[], 0 /* already terminated */).ptr;
-		}
-		ofn.lpstrFile = file.ptr;
-		ofn.nMaxFile = file.length;
-
-		wchar[1024] initialDir = 0;
-		if(initialDirectory !is null) {
-			makeWindowsString(initialDirectory, initialDir[]);
-			ofn.lpstrInitialDir = file.ptr;
-		}
-
-		if(openOrSave ? GetOpenFileName(&ofn) : GetSaveFileName(&ofn))
-		{
-			string okString = makeUtf8StringFromWindowsString(ofn.lpstrFile);
-			if(okString.length && okString[$-1] == '\0')
-				okString = okString[0..$-1];
-			onOK(okString);
-		} else {
-			if(onCancel)
-				onCancel();
-		}
-	} else version(custom_widgets) {
-		if(filters.length == 0)
-			filters = ["All Files\0*.*"];
-		auto picker = new FilePicker(prefilledName, filters, initialDirectory, owner);
-		picker.onOK = onOK;
-		picker.onCancel = onCancel;
-		picker.show();
-	}
+	return fileDialogDelegate().getFileName(owner, openOrSave, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
 version(custom_widgets)
@@ -15894,48 +16625,141 @@ private
 class FilePicker : Dialog {
 	void delegate(string) onOK;
 	void delegate() onCancel;
-	LineEdit lineEdit;
+	LabeledLineEdit lineEdit;
+	bool isOpenDialogInsteadOfSave;
+
+	static struct HistoryItem {
+		string cwd;
+		FileNameFilter filters;
+	}
+	HistoryItem[] historyStack;
+	size_t historyStackPosition;
+
+	void back() {
+		if(historyStackPosition) {
+			historyStackPosition--;
+			currentDirectory = historyStack[historyStackPosition].cwd;
+			currentFilter = historyStack[historyStackPosition].filters;
+			filesOfType.content = currentFilter.toString();
+			loadFiles(historyStack[historyStackPosition].cwd, historyStack[historyStackPosition].filters, true);
+			lineEdit.focus();
+		}
+	}
+
+	void forward() {
+		if(historyStackPosition + 1 < historyStack.length) {
+			historyStackPosition++;
+			currentDirectory = historyStack[historyStackPosition].cwd;
+			currentFilter = historyStack[historyStackPosition].filters;
+			filesOfType.content = currentFilter.toString();
+			loadFiles(historyStack[historyStackPosition].cwd, historyStack[historyStackPosition].filters, true);
+			lineEdit.focus();
+		}
+	}
+
+	void up() {
+		currentDirectory = currentDirectory ~ "..";
+		loadFiles(currentDirectory, currentFilter);
+		lineEdit.focus();
+	}
+
+	void refresh() {
+		loadFiles(currentDirectory, currentFilter);
+		lineEdit.focus();
+	}
 
 	// returns common prefix
-	string loadFiles(string cwd, string[] filters...) {
+	string loadFiles(string cwd, FileNameFilter filters, bool comingFromHistory = false) {
+
+		if(!comingFromHistory) {
+			if(historyStack.length) {
+				historyStack = historyStack[0 .. historyStackPosition + 1];
+				historyStack.assumeSafeAppend();
+			}
+			historyStack ~= HistoryItem(cwd, filters);
+			historyStackPosition = historyStack.length - 1;
+		}
+
 		string[] files;
 		string[] dirs;
 
+		dirs ~= "$HOME";
+		dirs ~= "$PWD";
+
 		string commonPrefix;
 
+		bool matchesFilter(string name) {
+			foreach(filter; filters.globPatterns) {
+			if(
+				filter.length <= 1 ||
+				filter == "*.*" || // we always treat *.* the same as *, but it is a bit different than .*
+				(filter[0] == '*' && name.endsWith(filter[1 .. $])) ||
+				(filter[$-1] == '*' && name.startsWith(filter[0 .. $ - 1]))
+			)
+			{
+				if(name.length > 1 && name[0] == '.')
+					if(filter.length == 0 || filter[0] != '.')
+						return false;
+
+				return true;
+			}
+			}
+
+			return false;
+		}
+
+		void considerCommonPrefix(string name, bool prefiltered) {
+			if(!prefiltered && !matchesFilter(name))
+				return;
+
+			if(commonPrefix is null) {
+				commonPrefix = name;
+			} else {
+				foreach(idx, char i; name) {
+					if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
+						commonPrefix = commonPrefix[0 .. idx];
+						break;
+					}
+				}
+			}
+		}
+
+		try
 		getFiles(cwd, (string name, bool isDirectory) {
 			if(name == ".")
 				return; // skip this as unnecessary
-			if(isDirectory)
-				dirs ~= name;
-			else {
-				foreach(filter; filters)
-				if(
-					filter.length <= 1 ||
-					filter == "*.*" ||
-					(filter[0] == '*' && name.endsWith(filter[1 .. $])) ||
-					(filter[$-1] == '*' && name.startsWith(filter[0 .. $ - 1]))
-				)
-				{
-					files ~= name;
-
-					if(filter.length > 0 && filter[$-1] == '*') {
-						if(commonPrefix is null) {
-							commonPrefix = name;
-						} else {
-							foreach(idx, char i; name) {
-								if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
-									commonPrefix = commonPrefix[0 .. idx];
-									break;
-								}
-							}
+			if(isDirectory) {
+				if(name != ".." && name.length > 1 && name[0] == '.')
+					foreach(filter; filters.globPatterns) {
+						if(filter == ".*") {
+							dirs ~= name;
+							considerCommonPrefix(name, false);
+							break;
 						}
 					}
+				else {
+					dirs ~= name;
+					considerCommonPrefix(name, false);
+				}
+			} else {
+				if(matchesFilter(name)) {
+					files ~= name;
 
-					break;
+					//if(filter.length > 0 && filter[$-1] == '*') {
+						considerCommonPrefix(name, true);
+					//}
 				}
 			}
 		});
+		catch(ArsdExceptionBase e) {
+			messageBox("Unable to read requested directory");
+			// FIXME: give them a chance to create it? or at least go back?
+			/+
+			comingFromHistory = true;
+			back();
+			return null;
+			+/
+		}
 
 		extern(C) static int comparator(scope const void* a, scope const void* b) {
 			// FIXME: make it a natural sort for numbers
@@ -15970,39 +16794,108 @@ class FilePicker : Dialog {
 	ListWidget listWidget;
 	ListWidget dirWidget;
 
-	string currentDirectory;
-	string[] processedFilters;
+	FreeEntrySelection filesOfType;
+	LineEdit directoryHolder;
 
-	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\n*.png;*.jpg"]
-	this(string prefilledName, string[] filters, string initialDirectory, Window owner = null) {
+	string currentDirectory_;
+	FileNameFilter currentFilter;
+	FileNameFilterSet filterOptions;
+
+	void currentDirectory(string s) {
+		currentDirectory_ = FilePath(s).makeAbsolute(getCurrentWorkingDirectory()).toString();
+		directoryHolder.content = currentDirectory_;
+	}
+	string currentDirectory() {
+		return currentDirectory_;
+	}
+
+	private string getUserHomeDir() {
+		import core.stdc.stdlib;
+		version(Windows)
+			return (stringz(getenv("HOMEDRIVE")).borrow ~ stringz(getenv("HOMEPATH")).borrow).idup;
+		else
+			return (stringz(getenv("HOME")).borrow).idup;
+	}
+
+	private string expandTilde(string s) {
+		// FIXME: cannot look up other user dirs
+		if(s.length == 1 && s == "~")
+			return getUserHomeDir();
+		if(s.length > 1 && s[0] == '~' && s[1] == '/')
+			return getUserHomeDir() ~ s[1 .. $];
+		return s;
+	}
+
+	// FIXME: allow many files to be picked too sometimes
+
+	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\0*.png;*.jpg"]
+	this(bool isOpenDialogInsteadOfSave, string prefilledName, string[] filtersInWindowsFormat, string initialDirectory, Window owner = null) {
+		this.filterOptions = FileNameFilterSet.fromWindowsFileNameFilterDescription(filtersInWindowsFormat);
+		this.isOpenDialogInsteadOfSave = isOpenDialogInsteadOfSave;
 		super(owner, 500, 400, "Choose File..."); // owner);
 
-		foreach(filter; filters) {
-			while(filter.length && filter[0] != 0) {
-				filter = filter[1 .. $];
-			}
-			if(filter.length)
-				filter = filter[1 .. $]; // trim off the 0
+		{
+			auto navbar = new HorizontalLayout(24, this);
+			auto backButton = new ToolButton(new Action("<", 0, &this.back), navbar);
+			auto forwardButton = new ToolButton(new Action(">", 0, &this.forward), navbar);
+			auto upButton = new ToolButton(new Action("^", 0, &this.up), navbar); // hmm with .. in the dir list we don't really need an up button
 
-			while(filter.length) {
-				int idx = 0;
-				while(idx < filter.length && filter[idx] != ';') {
-					idx++;
+			directoryHolder = new LineEdit(navbar);
+
+			directoryHolder.addEventListener(delegate(scope KeyDownEvent kde) {
+				if(kde.key == Key.Enter || kde.key == Key.PadEnter) {
+					kde.stopPropagation();
+
+					currentDirectory = directoryHolder.content;
+					loadFiles(currentDirectory, currentFilter);
+
+					lineEdit.focus();
 				}
+			});
 
-				processedFilters ~= filter[0 .. idx];
-				if(idx < filter.length)
-					idx++; // skip the ;
-				filter = filter[idx .. $];
-			}
+			auto refreshButton = new ToolButton(new Action("R", 0, &this.refresh), navbar); // can live without refresh since you can cancel and reopen but still nice. it should be automatic when it can maybe.
+
+			/+
+			auto newDirectoryButton = new ToolButton(new Action("N"), navbar);
+
+			// FIXME: make sure putting `.` in the dir filter goes back to the CWD
+			// and that ~ goes back to the home dir
+			// and blanking it goes back to the suggested dir
+
+			auto homeButton = new ToolButton(new Action("H"), navbar);
+			auto cwdButton = new ToolButton(new Action("."), navbar);
+			auto suggestedDirectoryButton = new ToolButton(new Action("*"), navbar);
+			+/
+
+			filesOfType = new class FreeEntrySelection {
+				this() {
+					string[] opt;
+					foreach(option; filterOptions.filters)
+						opt ~=  option.toString;
+					super(opt, navbar);
+				}
+				override int flexBasisWidth() {
+					return scaleWithDpi(150);
+				}
+				override int widthStretchiness() {
+					return 1;//super.widthStretchiness() / 2;
+				}
+			};
+			filesOfType.setSelection(0);
+			currentFilter = filterOptions.filters[0];
 		}
 
-		currentDirectory = initialDirectory is null ? "." : initialDirectory;
-
 		{
-			auto hl = new HorizontalLayout(this);
-			dirWidget = new ListWidget(hl);
-			listWidget = new ListWidget(hl);
+			auto mainGrid = new GridLayout(4, 1, this);
+
+			dirWidget = new ListWidget(mainGrid);
+			listWidget = new ListWidget(mainGrid);
+			FileDialogDelegate.PreviewWidget previewWidget = fileDialogDelegate.makePreviewWidget(mainGrid);
+
+			mainGrid.setChildPosition(dirWidget, 0, 0, 1, 1);
+			mainGrid.setChildPosition(listWidget, 1, 0, previewWidget !is null ? 2 : 3, 1);
+			if(previewWidget)
+				mainGrid.setChildPosition(previewWidget, 2, 0, 1, 1);
 
 			// double click events normally trigger something else but
 			// here user might be clicking kinda fast and we'd rather just
@@ -16020,9 +16913,16 @@ class FilePicker : Dialog {
 						break;
 					}
 				if(v.length) {
-					currentDirectory ~= "/" ~ v;
-					loadFiles(currentDirectory, processedFilters);
+					if(v == "$HOME")
+						currentDirectory = getUserHomeDir();
+					else if(v == "$PWD")
+						currentDirectory = ".";
+					else
+						currentDirectory = currentDirectory ~ "/" ~ v;
+					loadFiles(currentDirectory, currentFilter);
 				}
+
+				dirWidget.focusOn = -1;
 			});
 
 			// double click here, on the other hand, selects the file
@@ -16032,7 +16932,7 @@ class FilePicker : Dialog {
 			});
 		}
 
-		lineEdit = new LineEdit(this);
+		lineEdit = new LabeledLineEdit("File name:", TextAlignment.Right, this);
 		lineEdit.focus();
 		lineEdit.addEventListener(delegate(CharEvent event) {
 			if(event.character == '\t' || event.character == '\n')
@@ -16045,16 +16945,31 @@ class FilePicker : Dialog {
 					lineEdit.content = o.label;
 		});
 
-		loadFiles(currentDirectory, processedFilters);
+		currentDirectory = initialDirectory is null ? "." : initialDirectory;
+		loadFiles(currentDirectory, currentFilter);
+
+		filesOfType.addEventListener(delegate (ChangeEvent!string ce) {
+			currentFilter = FileNameFilter.fromString(ce.stringValue);
+			loadFiles(currentDirectory, currentFilter);
+		});
 
 		lineEdit.addEventListener((KeyDownEvent event) {
-			if(event.key == Key.Tab) {
+			if(event.key == Key.Tab && !event.ctrlKey && !event.shiftKey) {
 
-				auto current = lineEdit.content;
-				if(current.length >= 2 && current[0 ..2] == "./")
-					current = current[2 .. $];
+				auto path = FilePath(expandTilde(lineEdit.content)).makeAbsolute(FilePath(currentDirectory));
+				currentDirectory = path.directoryName;
+				auto current = path.filename;
 
-				auto commonPrefix = loadFiles(currentDirectory, current ~ "*");
+				auto newFilter = current;
+				if(current.length && current[0] != '*' && current[$-1] != '*')
+					newFilter ~= "*";
+				else if(newFilter.length == 0)
+					newFilter = "*";
+
+				currentFilter = FileNameFilter("Custom filter", [newFilter]);
+				filesOfType.content = currentFilter.toString();
+
+				auto commonPrefix = loadFiles(currentDirectory, currentFilter);
 
 				if(commonPrefix.length)
 					lineEdit.content = commonPrefix;
@@ -16065,11 +16980,11 @@ class FilePicker : Dialog {
 			}
 		});
 
-		lineEdit.content = prefilledName;
+		lineEdit.content = expandTilde(prefilledName);
 
 		auto hl = new HorizontalLayout(60, this);
 		auto cancelButton = new Button("Cancel", hl);
-		auto okButton = new Button("OK", hl);
+		auto okButton = new Button(isOpenDialogInsteadOfSave ? "Open" : "Save"/*"OK"*/, hl);
 
 		cancelButton.addEventListener(EventType.triggered, &Cancel);
 		okButton.addEventListener(EventType.triggered, &OK);
@@ -16079,32 +16994,54 @@ class FilePicker : Dialog {
 				event.preventDefault();
 				OK();
 			}
-			if(event.key == Key.Escape)
+			else if(event.key == Key.Escape)
 				Cancel();
+			else if(event.key == Key.F5)
+				refresh();
+			else if(event.key == Key.Up && event.altKey)
+				up(); // ditto
+			else if(event.key == Key.Left && event.altKey)
+				back(); // FIXME: it sends the key to the line edit too
+			else if(event.key == Key.Right && event.altKey)
+				forward(); // ditto
+			else if(event.key == Key.Up)
+				listWidget.setSelection(listWidget.getSelection() - 1);
+			else if(event.key == Key.Down)
+				listWidget.setSelection(listWidget.getSelection() + 1);
 		});
 
+		// FIXME: set the list view's focusOn to -1 on most interactions so it doesn't keep a thing highlighted
+		// FIXME: button to create new directory
+		// FIXME: show dirs in the files list too? idk.
+
+		// FIXME: support ~ as alias for home in the input
+		// FIXME: tab complete ought to be able to change+complete dir too
 	}
 
 	override void OK() {
 		if(lineEdit.content.length) {
-			string accepted;
-			auto c = lineEdit.content;
-			if(c.length && c[0] == '/')
-				accepted = c;
-			else
-				accepted = currentDirectory ~ "/" ~ lineEdit.content;
+			auto c = expandTilde(lineEdit.content);
 
-			if(isDir(accepted)) {
-				// FIXME: would be kinda nice to support ~ and collapse these paths too
-				// FIXME: would also be nice to actually show the "Looking in..." directory and maybe the filters but later.
-				currentDirectory = accepted;
-				loadFiles(currentDirectory, processedFilters);
+			FilePath accepted = FilePath(c).makeAbsolute(FilePath(currentDirectory));
+
+			auto ft = getFileType(accepted.toString);
+
+			if(ft == FileType.error && isOpenDialogInsteadOfSave) {
+				// FIXME: tell the user why
+				messageBox("Cannot open file: " ~ accepted.toString ~ "\nTry another or cancel.");
+				return;
+
+			}
+
+			if(ft == FileType.dir) {
+				currentDirectory = accepted.toString;
+				loadFiles(currentDirectory, currentFilter);
 				lineEdit.content = "";
 				return;
 			}
 
 			if(onOK)
-				onOK(accepted);
+				onOK(accepted.toString);
 		}
 		close();
 	}
@@ -16116,21 +17053,27 @@ class FilePicker : Dialog {
 	}
 }
 
-private bool isDir(string name) {
+private enum FileType {
+	error,
+	dir,
+	other
+}
+
+private FileType getFileType(string name) {
 	version(Windows) {
 		auto ws = WCharzBuffer(name);
 		auto ret = GetFileAttributesW(ws.ptr);
 		if(ret == INVALID_FILE_ATTRIBUTES)
-			return false;
-		return (ret & FILE_ATTRIBUTE_DIRECTORY) != 0;
+			return FileType.error;
+		return ((ret & FILE_ATTRIBUTE_DIRECTORY) != 0) ? FileType.dir : FileType.other;
 	} else version(Posix) {
 		import core.sys.posix.sys.stat;
 		stat_t buf;
 		auto ret = stat((name ~ '\0').ptr, &buf);
 		if(ret == -1)
-			return false; // I could probably check more specific errors tbh
-		return (buf.st_mode & S_IFMT) == S_IFDIR;
-	} else return false;
+			return FileType.error;
+		return ((buf.st_mode & S_IFMT) == S_IFDIR) ? FileType.dir : FileType.other;
+	} else assert(0, "Not implemented");
 }
 
 /*
@@ -17155,7 +18098,7 @@ shared static this() {
 
 		button.addWhenTriggered( {
 
-		foreach(test; __traits(getUnitTests, mixin(__MODULE__))) {
+		foreach(test; __traits(getUnitTests, mixin("arsd.minigui"))) {
 			name = null;
 			static foreach(attr; __traits(getAttributes, test)) {
 				static if(is(typeof(attr) == Screenshot))
