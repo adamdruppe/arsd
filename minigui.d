@@ -16669,7 +16669,12 @@ class FilePicker : Dialog {
 	}
 
 	// returns common prefix
-	string loadFiles(string cwd, FileNameFilter filters, bool comingFromHistory = false) {
+	static struct CommonPrefixInfo {
+		string commonPrefix;
+		int fileCount;
+		string exactMatch;
+	}
+	CommonPrefixInfo loadFiles(string cwd, FileNameFilter filters, bool comingFromHistory = false) {
 
 		if(!comingFromHistory) {
 			if(historyStack.length) {
@@ -16687,6 +16692,8 @@ class FilePicker : Dialog {
 		dirs ~= "$PWD";
 
 		string commonPrefix;
+		int commonPrefixCount;
+		string exactMatch;
 
 		bool matchesFilter(string name) {
 			foreach(filter; filters.globPatterns) {
@@ -16714,14 +16721,31 @@ class FilePicker : Dialog {
 
 			if(commonPrefix is null) {
 				commonPrefix = name;
+				commonPrefixCount = 1;
+				exactMatch = commonPrefix;
 			} else {
 				foreach(idx, char i; name) {
 					if(idx >= commonPrefix.length || i != commonPrefix[idx]) {
 						commonPrefix = commonPrefix[0 .. idx];
+						commonPrefixCount ++;
+						exactMatch = null;
 						break;
 					}
 				}
 			}
+		}
+
+		bool applyFilterToDirectories = true;
+		bool showDotFiles = false;
+		foreach(filter; filters.globPatterns) {
+			if(filter == ".*")
+				showDotFiles = true;
+			else foreach(ch; filter)
+				if(ch == '.') {
+					// a filter like *.exe should not apply to the directory
+					applyFilterToDirectories = false;
+					break;
+				}
 		}
 
 		try
@@ -16729,15 +16753,17 @@ class FilePicker : Dialog {
 			if(name == ".")
 				return; // skip this as unnecessary
 			if(isDirectory) {
-				if(name != ".." && name.length > 1 && name[0] == '.')
-					foreach(filter; filters.globPatterns) {
-						if(filter == ".*") {
-							dirs ~= name;
-							considerCommonPrefix(name, false);
-							break;
-						}
+				if(applyFilterToDirectories) {
+					if(matchesFilter(name)) {
+						dirs ~= name;
+						considerCommonPrefix(name, false);
 					}
-				else {
+				} else if(name != ".." && name.length > 1 && name[0] == '.') {
+					if(showDotFiles) {
+						dirs ~= name;
+						considerCommonPrefix(name, false);
+					}
+				} else {
 					dirs ~= name;
 					considerCommonPrefix(name, false);
 				}
@@ -16788,7 +16814,7 @@ class FilePicker : Dialog {
 		foreach(name; files)
 			listWidget.addOption(name);
 
-		return commonPrefix;
+		return CommonPrefixInfo(commonPrefix, commonPrefixCount, exactMatch);
 	}
 
 	ListWidget listWidget;
@@ -16798,6 +16824,7 @@ class FilePicker : Dialog {
 	LineEdit directoryHolder;
 
 	string currentDirectory_;
+	FileNameFilter currentNonTabFilter;
 	FileNameFilter currentFilter;
 	FileNameFilterSet filterOptions;
 
@@ -16883,6 +16910,7 @@ class FilePicker : Dialog {
 			};
 			filesOfType.setSelection(0);
 			currentFilter = filterOptions.filters[0];
+			currentNonTabFilter = currentFilter;
 		}
 
 		{
@@ -16890,6 +16918,9 @@ class FilePicker : Dialog {
 
 			dirWidget = new ListWidget(mainGrid);
 			listWidget = new ListWidget(mainGrid);
+			listWidget.tabStop = false;
+			dirWidget.tabStop = false;
+
 			FileDialogDelegate.PreviewWidget previewWidget = fileDialogDelegate.makePreviewWidget(mainGrid);
 
 			mainGrid.setChildPosition(dirWidget, 0, 0, 1, 1);
@@ -16903,6 +16934,7 @@ class FilePicker : Dialog {
 			dirWidget.addEventListener((scope DoubleClickEvent dev) {
 				auto ce = new ChangeEvent!void(dirWidget, () {});
 				ce.dispatch();
+				lineEdit.focus();
 			});
 
 			dirWidget.addEventListener((scope ChangeEvent!void sce) {
@@ -16923,6 +16955,7 @@ class FilePicker : Dialog {
 				}
 
 				dirWidget.focusOn = -1;
+				lineEdit.focus();
 			});
 
 			// double click here, on the other hand, selects the file
@@ -16950,7 +16983,9 @@ class FilePicker : Dialog {
 
 		filesOfType.addEventListener(delegate (ChangeEvent!string ce) {
 			currentFilter = FileNameFilter.fromString(ce.stringValue);
+			currentNonTabFilter = currentFilter;
 			loadFiles(currentDirectory, currentFilter);
+			lineEdit.focus();
 		});
 
 		lineEdit.addEventListener((KeyDownEvent event) {
@@ -16966,13 +17001,32 @@ class FilePicker : Dialog {
 				else if(newFilter.length == 0)
 					newFilter = "*";
 
-				currentFilter = FileNameFilter("Custom filter", [newFilter]);
-				filesOfType.content = currentFilter.toString();
+				auto newFilterObj = FileNameFilter("Custom filter", [newFilter]);
 
-				auto commonPrefix = loadFiles(currentDirectory, currentFilter);
-
-				if(commonPrefix.length)
-					lineEdit.content = commonPrefix;
+				CommonPrefixInfo commonPrefix = loadFiles(currentDirectory, newFilterObj);
+				if(commonPrefix.fileCount == 1) {
+					// exactly one file, let's see what it is
+					auto specificFile = FilePath(commonPrefix.exactMatch).makeAbsolute(FilePath(currentDirectory));
+					if(getFileType(specificFile.toString) == FileType.dir) {
+						// a directory means we should change to it and keep the old filter
+						currentDirectory = specificFile.toString();
+						lineEdit.content = specificFile.toString() ~ "/";
+						loadFiles(currentDirectory, currentFilter);
+					} else {
+						// any other file should be selected in the list
+						currentDirectory = specificFile.directoryName;
+						current = specificFile.filename;
+						lineEdit.content = current;
+						loadFiles(currentDirectory, currentFilter);
+					}
+				} else if(commonPrefix.fileCount > 1) {
+					currentFilter = newFilterObj;
+					filesOfType.content = currentFilter.toString();
+					lineEdit.content = commonPrefix.commonPrefix;
+				} else {
+					// if there were no files, we don't really want to change the filter..
+					sdpyPrintDebugString("no files");
+				}
 
 				// FIXME: if that is a directory, add the slash? or even go inside?
 
@@ -17029,14 +17083,23 @@ class FilePicker : Dialog {
 			if(ft == FileType.error && isOpenDialogInsteadOfSave) {
 				// FIXME: tell the user why
 				messageBox("Cannot open file: " ~ accepted.toString ~ "\nTry another or cancel.");
+				lineEdit.focus();
 				return;
 
 			}
 
+			// FIXME: symlinks to dirs should prolly also get this behavior
 			if(ft == FileType.dir) {
 				currentDirectory = accepted.toString;
+
+				currentFilter = currentNonTabFilter;
+				filesOfType.content = currentFilter.toString();
+
 				loadFiles(currentDirectory, currentFilter);
 				lineEdit.content = "";
+
+				lineEdit.focus();
+
 				return;
 			}
 
