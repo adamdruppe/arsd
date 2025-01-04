@@ -16985,7 +16985,7 @@ class FilePicker : Dialog {
 			currentFilter = FileNameFilter.fromString(ce.stringValue);
 			currentNonTabFilter = currentFilter;
 			loadFiles(currentDirectory, currentFilter);
-			lineEdit.focus();
+			// lineEdit.focus(); // this causes a recursive crash.....
 		});
 
 		lineEdit.addEventListener((KeyDownEvent event) {
