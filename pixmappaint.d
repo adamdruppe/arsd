@@ -492,6 +492,15 @@ struct UInt32p64 {
 	assert(UInt32p64(2).castTo!uint == 2);
 	assert(UInt32p64(1_991_007).castTo!uint == 1_991_007);
 
+	assert((UInt32p64(10) + 9).castTo!uint == 19);
+	assert((UInt32p64(10) - 9).castTo!uint == 1);
+	assert((UInt32p64(10) * 9).castTo!uint == 90);
+	assert((UInt32p64(99) / 9).castTo!uint == 11);
+
+	assert((4 + UInt32p64(4)).castTo!uint == 8);
+	assert((4 - UInt32p64(4)).castTo!uint == 0);
+	assert((4 * UInt32p64(4)).castTo!uint == 16);
+
 	assert((UInt32p64(uint.max) / 2).castTo!uint == 2_147_483_647);
 	assert((UInt32p64(uint.max) / 2).round().castTo!uint == 2_147_483_648);
 
@@ -531,7 +540,7 @@ struct UInt32p64 {
 
 	// ≈ 2,769,230.8
 	assert(val.castTo!uint == 2_769_230);
-	assert(val.round.castTo!uint == 2_769_231);
+	assert(val.round().castTo!uint == 2_769_231);
 	// assert(uint(9_000_000) / uint(13) * uint(4) == 2_769_228);
 
 	val = UInt32p64(64);
