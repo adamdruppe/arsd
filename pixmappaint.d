@@ -375,6 +375,178 @@ static assert(Pixel.sizeof == uint.sizeof);
 }
 
 /++
+	Unsigned 32-bit integer type with 64-bit precision for intermediate calculations
+ +/
+struct UInt32p64 {
+	private {
+		ulong _value = 0;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(uint initialValue) {
+		_value = (long(initialValue) << 32);
+	}
+
+	private static UInt32p64 make(ulong internal) {
+		auto result = UInt32p64();
+		result._value = internal;
+		return result;
+	}
+
+	///
+	T opCast(T : uint)() const {
+		return (_value >> 32).castTo!uint;
+	}
+
+	///
+	public UInt32p64 round() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		const delta = _value - truncated;
+
+		// dfmt off
+		const rounded = (delta >= 0x8000_0000)
+			? truncated + 0x1_0000_0000
+			: truncated;
+		// dfmt on
+
+		return UInt32p64.make(rounded);
+	}
+
+	public {
+		///
+		UInt32p64 opBinary(string op : "+")(const uint rhs) const {
+			return UInt32p64.make(_value + (ulong(rhs) << 32));
+		}
+
+		/// ditto
+		UInt32p64 opBinary(string op : "-")(const uint rhs) const {
+			return UInt32p64.make(_value - (ulong(rhs) << 32));
+		}
+
+		/// ditto
+		UInt32p64 opBinary(string op : "*")(const uint rhs) const {
+			return UInt32p64.make(_value * rhs);
+		}
+
+		/// ditto
+		UInt32p64 opBinary(string op : "/")(const uint rhs) const {
+			return UInt32p64.make(_value / rhs);
+		}
+	}
+
+	public {
+		///
+		UInt32p64 opBinaryRight(string op : "+")(const uint lhs) const {
+			return UInt32p64.make((ulong(lhs) << 32) + _value);
+		}
+
+		/// ditto
+		UInt32p64 opBinaryRight(string op : "-")(const uint lhs) const {
+			return UInt32p64.make((ulong(lhs) << 32) - _value);
+		}
+
+		/// ditto
+		UInt32p64 opBinaryRight(string op : "*")(const uint lhs) const {
+			return UInt32p64.make(lhs * _value);
+		}
+
+		/// ditto
+		UInt32p64 opBinaryRight(string op : "/")(const uint) const {
+			static assert(false, "Use `int() / cast(int)(UInt32p64())` instead.");
+		}
+	}
+
+	public {
+		///
+		auto opOpAssign(string op : "+")(const uint rhs) {
+			_value += (ulong(rhs) << 32);
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : "-")(const uint rhs) {
+			_value -= (ulong(rhs) << 32);
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : "*")(const uint rhs) {
+			_value *= rhs;
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : "/")(const uint rhs) {
+			_value /= rhs;
+			return this;
+		}
+	}
+}
+
+@safe unittest {
+	assert(UInt32p64(uint.max).castTo!uint == uint.max);
+	assert(UInt32p64(uint.min).castTo!uint == uint.min);
+	assert(UInt32p64(1).castTo!uint == 1);
+	assert(UInt32p64(2).castTo!uint == 2);
+	assert(UInt32p64(1_991_007).castTo!uint == 1_991_007);
+
+	assert((UInt32p64(uint.max) / 2).castTo!uint == 2_147_483_647);
+	assert((UInt32p64(uint.max) / 2).round().castTo!uint == 2_147_483_648);
+
+}
+
+@safe unittest {
+	UInt32p64 val;
+
+	val = UInt32p64(10);
+	val += 12;
+	assert(val.castTo!uint == 22);
+
+	val = UInt32p64(1024);
+	val -= 24;
+	assert(val.castTo!uint == 1000);
+	val -= 100;
+	assert(val.castTo!uint == 900);
+	val += 5;
+	assert(val.castTo!uint == 905);
+
+	val = UInt32p64(256);
+	val *= 4;
+	assert(val.castTo!uint == (256 * 4));
+
+	val = UInt32p64(2048);
+	val /= 10;
+	val *= 10;
+	assert(val.castTo!uint == 2047);
+}
+
+@safe unittest {
+	UInt32p64 val;
+
+	val = UInt32p64(9_000_000);
+	val /= 13;
+	val *= 4;
+
+	// ≈ 2,769,230.8
+	assert(val.castTo!uint == 2_769_230);
+	assert(val.round.castTo!uint == 2_769_231);
+	// assert(uint(9_000_000) / uint(13) * uint(4) == 2_769_228);
+
+	val = UInt32p64(64);
+	val /= 31;
+	val *= 30;
+	val /= 29;
+	val *= 28;
+
+	// ≈ 59.8
+	assert(val.castTo!uint == 59);
+	assert(val.round().castTo!uint == 60);
+	// assert(((((64 / 31) * 30) / 29) * 28) == 56);
+}
+
+/++
 	$(I Advanced functionality.)
 
 	Meta data for the construction of a Pixmap.
