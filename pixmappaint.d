@@ -475,8 +475,8 @@ struct UDecimal {
 		}
 
 		/// ditto
-		UDecimal opBinaryRight(string op : "/")(const uint) const {
-			static assert(false, "Use `int() / cast(int)(UDecimal())` instead.");
+		UDecimal opBinaryRight(string op : "/")(const uint lhs) const {
+			return UDecimal.make(lhs / _value);
 		}
 	}
 
