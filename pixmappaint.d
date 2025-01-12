@@ -378,7 +378,7 @@ static assert(Pixel.sizeof == uint.sizeof);
 	Unsigned 64-bit fixed-point decimal type
 
 	Assigns 32 bits to the digits of the pre-decimal point portion
-	and the other 32 bits to the digits of the fractional part.
+	and the other 32 bits to fractional digits.
  +/
 struct UDecimal {
 	private {
@@ -434,6 +434,11 @@ struct UDecimal {
 		// dfmt on
 
 		return UDecimal.make(ceiling);
+	}
+
+	///
+	public uint fractionalDigits() const {
+		return (_value & 0x0000_0000_FFFF_FFFF);
 	}
 
 	public {
@@ -2805,28 +2810,56 @@ PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
-///
+/++
+	Interpolation methods to apply when scaling images
+
+	Each filter has its own distinctive properties.
+
+	$(TIP
+		Bilinear filtering (`linear`) is general-purpose.
+		Works well with photos.
+
+		For pixel graphics the retro look of `nearest` (as
+		in $(I nearest neighbour)) is usually the option of choice.
+	)
+
+	$(NOTE
+		When used as a parameter, it shall be understood as a hint.
+
+		Implementations are not required to support all enumerated options
+		and may pick a different filter as a substitute at their own discretion.
+	)
+ +/
 enum ScalingFilter {
 	/++
 		Nearest neighbour interpolation
 
-		Also known $(B proximal interpolation)
+		Also known as $(B proximal interpolation)
 		and $(B point sampling).
 
 		$(TIP
-			Visual impression: “blocky”, “pixel’ish”
+			Visual impression: “blocky”, “pixelated”, “slightly displaced”
 		)
 	 +/
 	nearest,
 
 	/++
-		(Bi-)linear interpolation
+		Bilinear interpolation
 
 		$(TIP
-			Visual impression: “smooth”, “blurry”
+			Visual impression: “smooth”, “blurred”
 		)
 	 +/
 	linear,
+
+	/++
+		Unweighted linear interpolation
+
+		$(TIP
+			Visual impression: “blocky”, “pixelated”
+		)
+	 +/
+	fauxLinear,
 }
 
 private enum ScalingDirection {
@@ -2845,6 +2878,7 @@ private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc
 	}
 }
 
+// TODO: Rename `method` to `filter`
 private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap target) @nogc {
 
 	enum none = ScalingDirection.none;
@@ -2875,7 +2909,7 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 		return Point(x, y);
 	}
 
-	// Nearest Neighbour
+	// ==== Nearest Neighbour ====
 	static if (method == ScalingFilter.nearest) {
 		auto dst = PixmapScannerRW(target);
 
@@ -2884,15 +2918,102 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 			foreach (x, ref pxDst; dstLine) {
 				const posDst = Point(x.castTo!int, y.castTo!int);
 				const posSrc = translate(posDst);
-				const pxSrc = source.getPixel(posSrc);
-				pxDst = pxSrc;
+				const pxInt = source.getPixel(posSrc);
+				pxDst = pxInt;
 			}
 			++y;
 		}
-	} else static if (method == ScalingFilter.linear) {
-		static assert(false, "Not implemented.");
-	} else {
-		static assert(false, "Scaling method not implemented yet.");
+	}
+
+	// ==== Bilinear ====
+	static if ((method == ScalingFilter.linear) || (method == ScalingFilter.fauxLinear)) {
+		auto dst = PixmapScannerRW(target);
+
+		size_t y = 0;
+		foreach (dstLine; dst) {
+			foreach (x, ref pxDst; dstLine) {
+				const posDst = Point(x.castTo!int, y.castTo!int);
+
+				const UDecimal[2] posSrc = [
+					(posDst.x * ratioX),
+					(posDst.y * ratioY),
+				];
+
+				const posSrcXF = (() @trusted => min(sourceMaxX, posSrc.ptr[0].floor().castTo!int))();
+				const posSrcXC = (() @trusted => min(sourceMaxX, posSrc.ptr[0].ceil().castTo!int))();
+
+				const posSrcYF = (() @trusted => min(sourceMaxY, posSrc.ptr[1].floor().castTo!int))();
+				const posSrcYC = (() @trusted => min(sourceMaxY, posSrc.ptr[1].ceil().castTo!int))();
+
+				const Point[4] posNeighs = [
+					Point(posSrcXF, posSrcYF),
+					Point(posSrcXC, posSrcYF),
+					Point(posSrcXF, posSrcYC),
+					Point(posSrcXC, posSrcYC),
+				];
+
+				const Color[4] pxNeighs = [
+					source.getPixel((() @trusted => posNeighs.ptr[0])()),
+					source.getPixel((() @trusted => posNeighs.ptr[1])()),
+					source.getPixel((() @trusted => posNeighs.ptr[2])()),
+					source.getPixel((() @trusted => posNeighs.ptr[3])()),
+				];
+
+				// TODO: Downscaling (currently equivalent to nearest neighbour but with extra steps!)
+
+				// ====== Faux bilinear ======
+				static if (method == ScalingFilter.fauxLinear) {
+					auto pxInt = Pixel(0, 0, 0, 0);
+
+					foreach (immutable ib, ref c; pxInt.components) {
+						uint sum = 0;
+						foreach (const pxNeigh; pxNeighs) {
+							sum += (() @trusted => pxNeigh.components.ptr[ib])();
+						}
+						c = (sum >> 2).castTo!ubyte;
+					}
+				}
+
+				// ====== Proper bilinear ======
+				static if (method == ScalingFilter.linear) {
+					const ulong[2] fract = [
+						(() @trusted => posSrc.ptr[0].fractionalDigits)(),
+						(() @trusted => posSrc.ptr[1].fractionalDigits)(),
+					];
+
+					const ulong[2] fractComplementary = ((ulong(uint.max) + 1) - fract[]);
+
+					alias fractC = fract;
+					alias fractF = fractComplementary;
+
+					auto pxInt = Pixel(0, 0, 0, 0);
+					foreach (immutable ib, ref c; pxInt.components) {
+						ulong[2] xSums = [0, 0];
+						xSums[0] += (() @trusted => (pxNeighs.ptr[0].components.ptr[ib] * fractF.ptr[0]))();
+						xSums[0] += (() @trusted => (pxNeighs.ptr[1].components.ptr[ib] * fractC.ptr[0]))();
+
+						xSums[1] += (() @trusted => (pxNeighs.ptr[2].components.ptr[ib] * fractF.ptr[0]))();
+						xSums[1] += (() @trusted => (pxNeighs.ptr[3].components.ptr[ib] * fractC.ptr[0]))();
+
+						foreach (ref sum; xSums) {
+							sum >>= 32;
+						}
+
+						ulong ySum = 0;
+						ySum += (() @trusted => (xSums.ptr[0] * fractF.ptr[1]))();
+						ySum += (() @trusted => (xSums.ptr[1] * fractC.ptr[1]))();
+
+						const xySum = (ySum >> 32);
+
+						c = clamp255(xySum);
+					}
+				}
+
+				pxDst = pxInt;
+			}
+
+			++y;
+		}
 	}
 }
 
