@@ -391,7 +391,7 @@ struct PresenterConfig {
 		Scaling scaling = Scaling.keepAspectRatio;
 
 		/++
-			Filter
+			Scaling filter
 		 +/
 		ScalingFilter filter = ScalingFilter.nearest;
 
@@ -634,7 +634,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;
@@ -744,7 +744,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;

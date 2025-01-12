@@ -2850,7 +2850,7 @@ enum ScalingFilter {
 			Visual impression: “smooth”, “blurred”
 		)
 	 +/
-	linear,
+	bilinear,
 
 	/++
 		Unweighted linear interpolation
@@ -2860,6 +2860,9 @@ enum ScalingFilter {
 		)
 	 +/
 	fauxLinear,
+
+	///
+	//linear = bilinear,
 }
 
 private enum ScalingDirection {
@@ -2926,7 +2929,7 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 	}
 
 	// ==== Bilinear ====
-	static if ((method == ScalingFilter.linear) || (method == ScalingFilter.fauxLinear)) {
+	static if ((method == ScalingFilter.bilinear) || (method == ScalingFilter.fauxLinear)) {
 		auto dst = PixmapScannerRW(target);
 
 		size_t y = 0;
@@ -2975,7 +2978,7 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 				}
 
 				// ====== Proper bilinear ======
-				static if (method == ScalingFilter.linear) {
+				static if (method == ScalingFilter.bilinear) {
 					const ulong[2] fract = [
 						(() @trusted => posSrc.ptr[0].fractionalDigits)(),
 						(() @trusted => posSrc.ptr[1].fractionalDigits)(),
