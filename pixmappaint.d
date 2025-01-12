@@ -375,9 +375,12 @@ static assert(Pixel.sizeof == uint.sizeof);
 }
 
 /++
-	Unsigned 32-bit integer type with 64-bit precision for intermediate calculations
+	Unsigned 64-bit fixed-point decimal type
+
+	Assigns 32 bits to the digits of the pre-decimal point portion
+	and the other 32 bits to the digits of the fractional part.
  +/
-struct UInt32p64 {
+struct UDecimal {
 	private {
 		ulong _value = 0;
 	}
@@ -389,8 +392,8 @@ struct UInt32p64 {
 		_value = (long(initialValue) << 32);
 	}
 
-	private static UInt32p64 make(ulong internal) {
-		auto result = UInt32p64();
+	private static UDecimal make(ulong internal) {
+		auto result = UDecimal();
 		result._value = internal;
 		return result;
 	}
@@ -401,7 +404,7 @@ struct UInt32p64 {
 	}
 
 	///
-	public UInt32p64 round() const {
+	public UDecimal round() const {
 		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
 		const delta = _value - truncated;
 
@@ -411,17 +414,17 @@ struct UInt32p64 {
 			: truncated;
 		// dfmt on
 
-		return UInt32p64.make(rounded);
+		return UDecimal.make(rounded);
 	}
 
 	///
-	public UInt32p64 floor() const {
+	public UDecimal floor() const {
 		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
-		return UInt32p64.make(truncated);
+		return UDecimal.make(truncated);
 	}
 
 	///
-	public UInt32p64 ceil() const {
+	public UDecimal ceil() const {
 		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
 
 		// dfmt off
@@ -430,50 +433,50 @@ struct UInt32p64 {
 			: truncated;
 		// dfmt on
 
-		return UInt32p64.make(ceiling);
+		return UDecimal.make(ceiling);
 	}
 
 	public {
 		///
-		UInt32p64 opBinary(string op : "+")(const uint rhs) const {
-			return UInt32p64.make(_value + (ulong(rhs) << 32));
+		UDecimal opBinary(string op : "+")(const uint rhs) const {
+			return UDecimal.make(_value + (ulong(rhs) << 32));
 		}
 
 		/// ditto
-		UInt32p64 opBinary(string op : "-")(const uint rhs) const {
-			return UInt32p64.make(_value - (ulong(rhs) << 32));
+		UDecimal opBinary(string op : "-")(const uint rhs) const {
+			return UDecimal.make(_value - (ulong(rhs) << 32));
 		}
 
 		/// ditto
-		UInt32p64 opBinary(string op : "*")(const uint rhs) const {
-			return UInt32p64.make(_value * rhs);
+		UDecimal opBinary(string op : "*")(const uint rhs) const {
+			return UDecimal.make(_value * rhs);
 		}
 
 		/// ditto
-		UInt32p64 opBinary(string op : "/")(const uint rhs) const {
-			return UInt32p64.make(_value / rhs);
+		UDecimal opBinary(string op : "/")(const uint rhs) const {
+			return UDecimal.make(_value / rhs);
 		}
 	}
 
 	public {
 		///
-		UInt32p64 opBinaryRight(string op : "+")(const uint lhs) const {
-			return UInt32p64.make((ulong(lhs) << 32) + _value);
+		UDecimal opBinaryRight(string op : "+")(const uint lhs) const {
+			return UDecimal.make((ulong(lhs) << 32) + _value);
 		}
 
 		/// ditto
-		UInt32p64 opBinaryRight(string op : "-")(const uint lhs) const {
-			return UInt32p64.make((ulong(lhs) << 32) - _value);
+		UDecimal opBinaryRight(string op : "-")(const uint lhs) const {
+			return UDecimal.make((ulong(lhs) << 32) - _value);
 		}
 
 		/// ditto
-		UInt32p64 opBinaryRight(string op : "*")(const uint lhs) const {
-			return UInt32p64.make(lhs * _value);
+		UDecimal opBinaryRight(string op : "*")(const uint lhs) const {
+			return UDecimal.make(lhs * _value);
 		}
 
 		/// ditto
-		UInt32p64 opBinaryRight(string op : "/")(const uint) const {
-			static assert(false, "Use `int() / cast(int)(UInt32p64())` instead.");
+		UDecimal opBinaryRight(string op : "/")(const uint) const {
+			static assert(false, "Use `int() / cast(int)(UDecimal())` instead.");
 		}
 	}
 
@@ -505,45 +508,45 @@ struct UInt32p64 {
 }
 
 @safe unittest {
-	assert(UInt32p64(uint.max).castTo!uint == uint.max);
-	assert(UInt32p64(uint.min).castTo!uint == uint.min);
-	assert(UInt32p64(1).castTo!uint == 1);
-	assert(UInt32p64(2).castTo!uint == 2);
-	assert(UInt32p64(1_991_007).castTo!uint == 1_991_007);
+	assert(UDecimal(uint.max).castTo!uint == uint.max);
+	assert(UDecimal(uint.min).castTo!uint == uint.min);
+	assert(UDecimal(1).castTo!uint == 1);
+	assert(UDecimal(2).castTo!uint == 2);
+	assert(UDecimal(1_991_007).castTo!uint == 1_991_007);
 
-	assert((UInt32p64(10) + 9).castTo!uint == 19);
-	assert((UInt32p64(10) - 9).castTo!uint == 1);
-	assert((UInt32p64(10) * 9).castTo!uint == 90);
-	assert((UInt32p64(99) / 9).castTo!uint == 11);
+	assert((UDecimal(10) + 9).castTo!uint == 19);
+	assert((UDecimal(10) - 9).castTo!uint == 1);
+	assert((UDecimal(10) * 9).castTo!uint == 90);
+	assert((UDecimal(99) / 9).castTo!uint == 11);
 
-	assert((4 + UInt32p64(4)).castTo!uint == 8);
-	assert((4 - UInt32p64(4)).castTo!uint == 0);
-	assert((4 * UInt32p64(4)).castTo!uint == 16);
+	assert((4 + UDecimal(4)).castTo!uint == 8);
+	assert((4 - UDecimal(4)).castTo!uint == 0);
+	assert((4 * UDecimal(4)).castTo!uint == 16);
 
-	assert((UInt32p64(uint.max) / 2).castTo!uint == 2_147_483_647);
-	assert((UInt32p64(uint.max) / 2).round().castTo!uint == 2_147_483_648);
+	assert((UDecimal(uint.max) / 2).castTo!uint == 2_147_483_647);
+	assert((UDecimal(uint.max) / 2).round().castTo!uint == 2_147_483_648);
 
-	assert((UInt32p64(10) / 8).round().castTo!uint == 1);
-	assert((UInt32p64(10) / 8).floor().castTo!uint == 1);
-	assert((UInt32p64(10) / 8).ceil().castTo!uint == 2);
+	assert((UDecimal(10) / 8).round().castTo!uint == 1);
+	assert((UDecimal(10) / 8).floor().castTo!uint == 1);
+	assert((UDecimal(10) / 8).ceil().castTo!uint == 2);
 
-	assert((UInt32p64(10) / 4).round().castTo!uint == 3);
-	assert((UInt32p64(10) / 4).floor().castTo!uint == 2);
-	assert((UInt32p64(10) / 4).ceil().castTo!uint == 3);
+	assert((UDecimal(10) / 4).round().castTo!uint == 3);
+	assert((UDecimal(10) / 4).floor().castTo!uint == 2);
+	assert((UDecimal(10) / 4).ceil().castTo!uint == 3);
 
-	assert((UInt32p64(10) / 5).round().castTo!uint == 2);
-	assert((UInt32p64(10) / 5).floor().castTo!uint == 2);
-	assert((UInt32p64(10) / 5).ceil().castTo!uint == 2);
+	assert((UDecimal(10) / 5).round().castTo!uint == 2);
+	assert((UDecimal(10) / 5).floor().castTo!uint == 2);
+	assert((UDecimal(10) / 5).ceil().castTo!uint == 2);
 }
 
 @safe unittest {
-	UInt32p64 val;
+	UDecimal val;
 
-	val = UInt32p64(10);
+	val = UDecimal(10);
 	val += 12;
 	assert(val.castTo!uint == 22);
 
-	val = UInt32p64(1024);
+	val = UDecimal(1024);
 	val -= 24;
 	assert(val.castTo!uint == 1000);
 	val -= 100;
@@ -551,20 +554,20 @@ struct UInt32p64 {
 	val += 5;
 	assert(val.castTo!uint == 905);
 
-	val = UInt32p64(256);
+	val = UDecimal(256);
 	val *= 4;
 	assert(val.castTo!uint == (256 * 4));
 
-	val = UInt32p64(2048);
+	val = UDecimal(2048);
 	val /= 10;
 	val *= 10;
 	assert(val.castTo!uint == 2047);
 }
 
 @safe unittest {
-	UInt32p64 val;
+	UDecimal val;
 
-	val = UInt32p64(9_000_000);
+	val = UDecimal(9_000_000);
 	val /= 13;
 	val *= 4;
 
@@ -573,7 +576,7 @@ struct UInt32p64 {
 	assert(val.round().castTo!uint == 2_769_231);
 	// assert(uint(9_000_000) / uint(13) * uint(4) == 2_769_228);
 
-	val = UInt32p64(64);
+	val = UDecimal(64);
 	val /= 31;
 	val *= 30;
 	val /= 29;
@@ -2856,8 +2859,8 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 	const ScalingDirection directionX = scalingDirectionFromDelta(delta.width);
 	const ScalingDirection directionY = scalingDirectionFromDelta(delta.height);
 
-	const ratioX = (UInt32p64(source.width) / target.width);
-	const ratioY = (UInt32p64(source.height) / target.height);
+	const ratioX = (UDecimal(source.width) / target.width);
+	const ratioY = (UDecimal(source.height) / target.height);
 
 	Point translate(const Point dstPos) {
 		pragma(inline, true);
