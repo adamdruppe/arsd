@@ -373,12 +373,6 @@ enum Scaling {
 }
 
 ///
-enum ScalingFilter {
-	nearest, /// nearest neighbor → blocky/pixel’ish
-	linear, /// (bi-)linear interpolation → smooth/blurry
-}
-
-///
 struct PresenterConfig {
 	Window window; ///
 	Renderer renderer; ///

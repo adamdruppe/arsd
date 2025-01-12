@@ -2773,16 +2773,28 @@ PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
 }
 
 ///
-enum ScalingMethod {
-	///
+enum ScalingFilter {
+	/++
+		Nearest neighbour interpolation
+
+		Also known $(B proximal interpolation)
+		and $(B point sampling).
+
+		$(TIP
+			Visual impression: “blocky”, “pixel’ish”
+		)
+	 +/
 	nearest,
 
-	///
-	linear, // TODO: Decide whether to replace this
-	//       by moving over `ScalingFilter` from `arsd.pixmappresenter`.
-}
+	/++
+		(Bi-)linear interpolation
 
-private alias Scale = ScalingMethod;
+		$(TIP
+			Visual impression: “smooth”, “blurry”
+		)
+	 +/
+	linear,
+}
 
 private enum ScalingDirection {
 	none,
@@ -2800,7 +2812,7 @@ private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc
 	}
 }
 
-private void scaleToImpl(Scale method)(const Pixmap source, Pixmap target) @nogc {
+private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap target) @nogc {
 
 	enum none = ScalingDirection.none;
 	enum up = ScalingDirection.up;
@@ -2831,7 +2843,7 @@ private void scaleToImpl(Scale method)(const Pixmap source, Pixmap target) @nogc
 	}
 
 	// Nearest Neighbour
-	static if (method == Scale.nearest) {
+	static if (method == ScalingFilter.nearest) {
 		auto dst = PixmapScannerRW(target);
 
 		size_t y = 0;
@@ -2844,22 +2856,22 @@ private void scaleToImpl(Scale method)(const Pixmap source, Pixmap target) @nogc
 			}
 			++y;
 		}
-	} else static if (method == Scale.linear) {
+	} else static if (method == ScalingFilter.linear) {
 		static assert(false, "Not implemented.");
 	} else {
 		static assert(false, "Scaling method not implemented yet.");
 	}
 }
 
-void scaleTo(const Pixmap source, Pixmap target, ScalingMethod method) @nogc {
+void scaleTo(const Pixmap source, Pixmap target, ScalingFilter method) @nogc {
 	import std.meta : NoDuplicates;
 	import std.traits : EnumMembers;
 
 	// dfmt off
 	final switch (method) {
-		static foreach (scalingMethod; NoDuplicates!(EnumMembers!ScalingMethod))
-			case scalingMethod: {
-				scaleToImpl!scalingMethod(source, target);
+		static foreach (scalingFilter; NoDuplicates!(EnumMembers!ScalingFilter))
+			case scalingFilter: {
+				scaleToImpl!scalingFilter(source, target);
 				return;
 			}
 	}
@@ -2878,14 +2890,14 @@ private alias scaleInto = scaleTo;
 	╚═══╝   ╚═╝
 	```
  +/
-Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingMethod method) @nogc {
+Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingFilter method) @nogc {
 	target.adjustTo(scaleCalcDims(scaleToSize));
 	source.scaleInto(target, method);
 	return target;
 }
 
 /// ditto
-Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingMethod method) {
+Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingFilter method) {
 	auto target = Pixmap.makeNew(scaleToSize);
 	source.scaleInto(target, method);
 	return target;
