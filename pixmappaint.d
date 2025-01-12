@@ -2772,6 +2772,130 @@ PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
 }
 
+///
+enum ScalingMethod {
+	///
+	nearest,
+
+	///
+	linear, // TODO: Decide whether to replace this
+	//       by moving over `ScalingFilter` from `arsd.pixmappresenter`.
+}
+
+private alias Scale = ScalingMethod;
+
+private enum ScalingDirection {
+	none,
+	up,
+	down,
+}
+
+private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc {
+	if (delta == 0) {
+		return ScalingDirection.none;
+	} else if (delta > 0) {
+		return ScalingDirection.up;
+	} else {
+		return ScalingDirection.down;
+	}
+}
+
+private void scaleToImpl(Scale method)(const Pixmap source, Pixmap target) @nogc {
+
+	enum none = ScalingDirection.none;
+	enum up = ScalingDirection.up;
+	enum down = ScalingDirection.down;
+
+	const sourceMaxX = (source.width - 1);
+	const sourceMaxY = (source.height - 1);
+
+	const Size delta = (target.size - source.size);
+
+	const ScalingDirection directionX = scalingDirectionFromDelta(delta.width);
+	const ScalingDirection directionY = scalingDirectionFromDelta(delta.height);
+
+	const ratioX = (UInt32p64(source.width) / target.width);
+	const ratioY = (UInt32p64(source.height) / target.height);
+
+	Point translate(const Point dstPos) {
+		pragma(inline, true);
+		const x = min(
+			(dstPos.x * ratioX).round().castTo!int,
+			sourceMaxX
+		);
+		const y = min(
+			(dstPos.y * ratioY).round().castTo!int,
+			sourceMaxY
+		);
+		return Point(x, y);
+	}
+
+	// Nearest Neighbour
+	static if (method == Scale.nearest) {
+		auto dst = PixmapScannerRW(target);
+
+		size_t y = 0;
+		foreach (dstLine; dst) {
+			foreach (x, ref pxDst; dstLine) {
+				const posDst = Point(x.castTo!int, y.castTo!int);
+				const posSrc = translate(posDst);
+				const pxSrc = source.getPixel(posSrc);
+				pxDst = pxSrc;
+			}
+			++y;
+		}
+	} else static if (method == Scale.linear) {
+		static assert(false, "Not implemented.");
+	} else {
+		static assert(false, "Scaling method not implemented yet.");
+	}
+}
+
+void scaleTo(const Pixmap source, Pixmap target, ScalingMethod method) @nogc {
+	import std.meta : NoDuplicates;
+	import std.traits : EnumMembers;
+
+	// dfmt off
+	final switch (method) {
+		static foreach (scalingMethod; NoDuplicates!(EnumMembers!ScalingMethod))
+			case scalingMethod: {
+				scaleToImpl!scalingMethod(source, target);
+				return;
+			}
+	}
+	// dfmt on
+}
+
+// consistency
+private alias scaleInto = scaleTo;
+
+/++
+	Scales an image to a new size.
+
+	```
+	╔═══╗   ╔═╗
+	║———║ → ║—║
+	╚═══╝   ╚═╝
+	```
+ +/
+Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingMethod method) @nogc {
+	target.adjustTo(scaleCalcDims(scaleToSize));
+	source.scaleInto(target, method);
+	return target;
+}
+
+/// ditto
+Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingMethod method) {
+	auto target = Pixmap.makeNew(scaleToSize);
+	source.scaleInto(target, method);
+	return target;
+}
+
+/// ditto
+PixmapBlueprint scaleCalcDims(Size scaleToSize) @nogc {
+	return PixmapBlueprint.fromSize(scaleToSize);
+}
+
 @safe pure nothrow @nogc:
 
 // ==== Blending functions ====
