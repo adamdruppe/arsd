@@ -2881,8 +2881,7 @@ private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc
 	}
 }
 
-// TODO: Rename `method` to `filter`
-private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap target) @nogc {
+private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap target) @nogc {
 
 	enum none = ScalingDirection.none;
 	enum up = ScalingDirection.up;
@@ -2913,7 +2912,7 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 	}
 
 	// ==== Nearest Neighbour ====
-	static if (method == ScalingFilter.nearest) {
+	static if (filter == ScalingFilter.nearest) {
 		auto dst = PixmapScannerRW(target);
 
 		size_t y = 0;
@@ -2929,7 +2928,7 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 	}
 
 	// ==== Bilinear ====
-	static if ((method == ScalingFilter.bilinear) || (method == ScalingFilter.fauxLinear)) {
+	static if ((filter == ScalingFilter.bilinear) || (filter == ScalingFilter.fauxLinear)) {
 		auto dst = PixmapScannerRW(target);
 
 		size_t y = 0;
@@ -3020,12 +3019,13 @@ private void scaleToImpl(ScalingFilter method)(const Pixmap source, Pixmap targe
 	}
 }
 
-void scaleTo(const Pixmap source, Pixmap target, ScalingFilter method) @nogc {
+// TODO: Document this function
+void scaleTo(const Pixmap source, Pixmap target, ScalingFilter filter) @nogc {
 	import std.meta : NoDuplicates;
 	import std.traits : EnumMembers;
 
 	// dfmt off
-	final switch (method) {
+	final switch (filter) {
 		static foreach (scalingFilter; NoDuplicates!(EnumMembers!ScalingFilter))
 			case scalingFilter: {
 				scaleToImpl!scalingFilter(source, target);
@@ -3047,16 +3047,16 @@ private alias scaleInto = scaleTo;
 	╚═══╝   ╚═╝
 	```
  +/
-Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingFilter method) @nogc {
+Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingFilter filter) @nogc {
 	target.adjustTo(scaleCalcDims(scaleToSize));
-	source.scaleInto(target, method);
+	source.scaleInto(target, filter);
 	return target;
 }
 
 /// ditto
-Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingFilter method) {
+Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingFilter filter) {
 	auto target = Pixmap.makeNew(scaleToSize);
-	source.scaleInto(target, method);
+	source.scaleInto(target, filter);
 	return target;
 }
 
