@@ -414,6 +414,25 @@ struct UInt32p64 {
 		return UInt32p64.make(rounded);
 	}
 
+	///
+	public UInt32p64 floor() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		return UInt32p64.make(truncated);
+	}
+
+	///
+	public UInt32p64 ceil() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+
+		// dfmt off
+		const ceiling = (truncated != _value)
+			? truncated + 0x1_0000_0000
+			: truncated;
+		// dfmt on
+
+		return UInt32p64.make(ceiling);
+	}
+
 	public {
 		///
 		UInt32p64 opBinary(string op : "+")(const uint rhs) const {
@@ -504,6 +523,17 @@ struct UInt32p64 {
 	assert((UInt32p64(uint.max) / 2).castTo!uint == 2_147_483_647);
 	assert((UInt32p64(uint.max) / 2).round().castTo!uint == 2_147_483_648);
 
+	assert((UInt32p64(10) / 8).round().castTo!uint == 1);
+	assert((UInt32p64(10) / 8).floor().castTo!uint == 1);
+	assert((UInt32p64(10) / 8).ceil().castTo!uint == 2);
+
+	assert((UInt32p64(10) / 4).round().castTo!uint == 3);
+	assert((UInt32p64(10) / 4).floor().castTo!uint == 2);
+	assert((UInt32p64(10) / 4).ceil().castTo!uint == 3);
+
+	assert((UInt32p64(10) / 5).round().castTo!uint == 2);
+	assert((UInt32p64(10) / 5).floor().castTo!uint == 2);
+	assert((UInt32p64(10) / 5).ceil().castTo!uint == 2);
 }
 
 @safe unittest {
