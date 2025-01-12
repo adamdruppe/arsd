@@ -248,12 +248,12 @@
 
 	Depending on the operation, implementing in-place transformations can be
 	either straightforward or a major undertaking (and topic of research).
-	This library focuses and the former and leaves out cases where the latter
-	applies.
+	This library focuses and the former case and leaves out those where the
+	latter applies.
 	In particular, algorithms that require allocating further buffers to store
 	temporary results or auxiliary data will probably not get implemented.
 
-	Furthermore, operations where to result is longer than the source cannot
+	Furthermore, operations where to result is larger than the source cannot
 	be performed in-place.
 
 	Certain in-place manipulation functions return a shallow-copy of the
@@ -2770,7 +2770,7 @@ private void flipVerticallyInto(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap flipVertically(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.flipVerticallyCalcDims());
-	flipVerticallyInto(source, target);
+	source.flipVerticallyInto(target);
 	return target;
 }
 
@@ -2862,7 +2862,7 @@ enum ScalingFilter {
 	fauxLinear,
 
 	///
-	//linear = bilinear,
+	linear = bilinear,
 }
 
 private enum ScalingDirection {
@@ -2892,22 +2892,23 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 	const Size delta = (target.size - source.size);
 
-	const ScalingDirection directionX = scalingDirectionFromDelta(delta.width);
-	const ScalingDirection directionY = scalingDirectionFromDelta(delta.height);
+	const ScalingDirection[2] directions = [
+		scalingDirectionFromDelta(delta.width),
+		scalingDirectionFromDelta(delta.height),
+	];
 
-	const ratioX = (UDecimal(source.width) / target.width);
-	const ratioY = (UDecimal(source.height) / target.height);
+	const UDecimal[2] ratios = [
+		(UDecimal(source.width) / target.width),
+		(UDecimal(source.height) / target.height),
+	];
 
+	// TODO: move
 	Point translate(const Point dstPos) {
 		pragma(inline, true);
-		const x = min(
-			(dstPos.x * ratioX).round().castTo!int,
-			sourceMaxX
-		);
-		const y = min(
-			(dstPos.y * ratioY).round().castTo!int,
-			sourceMaxY
-		);
+		const xCandidate = (() @trusted => (dstPos.x * ratios.ptr[0]).round().castTo!int)();
+		const yCandidate = (() @trusted => (dstPos.y * ratios.ptr[1]).round().castTo!int)();
+		const x = min(xCandidate, sourceMaxX);
+		const y = min(yCandidate, sourceMaxY);
 		return Point(x, y);
 	}
 
@@ -2937,8 +2938,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				const posDst = Point(x.castTo!int, y.castTo!int);
 
 				const UDecimal[2] posSrc = [
-					(posDst.x * ratioX),
-					(posDst.y * ratioY),
+					(() @trusted => posDst.x * ratios.ptr[0])(),
+					(() @trusted => posDst.y * ratios.ptr[1])(),
 				];
 
 				const posSrcXF = (() @trusted => min(sourceMaxX, posSrc.ptr[0].floor().castTo!int))();
@@ -2964,7 +2965,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				// TODO: Downscaling (currently equivalent to nearest neighbour but with extra steps!)
 
 				// ====== Faux bilinear ======
-				static if (method == ScalingFilter.fauxLinear) {
+				static if (filter == ScalingFilter.fauxLinear) {
 					auto pxInt = Pixel(0, 0, 0, 0);
 
 					foreach (immutable ib, ref c; pxInt.components) {
@@ -2977,7 +2978,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				}
 
 				// ====== Proper bilinear ======
-				static if (method == ScalingFilter.bilinear) {
+				static if (filter == ScalingFilter.bilinear) {
 					const ulong[2] fract = [
 						(() @trusted => posSrc.ptr[0].fractionalDigits)(),
 						(() @trusted => posSrc.ptr[1].fractionalDigits)(),
