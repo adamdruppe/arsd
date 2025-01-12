@@ -480,8 +480,8 @@ struct UDecimal {
 		}
 
 		/// ditto
-		UDecimal opBinaryRight(string op : "/")(const uint lhs) const {
-			return UDecimal.make(lhs / _value);
+		UDecimal opBinaryRight(string op : "/")(const uint) const {
+			static assert(false, "Use `uint(…) / cast(uint)(UDecimal(…))` instead.");
 		}
 	}
 
