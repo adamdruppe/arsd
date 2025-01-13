@@ -448,8 +448,18 @@ struct UDecimal {
 		}
 
 		/// ditto
+		UDecimal opBinary(string op : "+")(const UDecimal rhs) const {
+			return UDecimal.make(_value + rhs._value);
+		}
+
+		/// ditto
 		UDecimal opBinary(string op : "-")(const uint rhs) const {
 			return UDecimal.make(_value - (ulong(rhs) << 32));
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "-")(const UDecimal rhs) const {
+			return UDecimal.make(_value - rhs._value);
 		}
 
 		/// ditto
@@ -460,6 +470,16 @@ struct UDecimal {
 		/// ditto
 		UDecimal opBinary(string op : "/")(const uint rhs) const {
 			return UDecimal.make(_value / rhs);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "<<")(const uint rhs) const {
+			return UDecimal.make(_value << rhs);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : ">>")(const uint rhs) const {
+			return UDecimal.make(_value >> rhs);
 		}
 	}
 
@@ -493,8 +513,20 @@ struct UDecimal {
 		}
 
 		/// ditto
+		auto opOpAssign(string op : "+")(const UDecimal rhs) {
+			_value += rhs._value;
+			return this;
+		}
+
+		/// ditto
 		auto opOpAssign(string op : "-")(const uint rhs) {
 			_value -= (ulong(rhs) << 32);
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : "-")(const UDecimal rhs) {
+			_value -= rhs._value;
 			return this;
 		}
 
@@ -507,6 +539,18 @@ struct UDecimal {
 		/// ditto
 		auto opOpAssign(string op : "/")(const uint rhs) {
 			_value /= rhs;
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : "<<")(const uint rhs) const {
+			_value <<= rhs;
+			return this;
+		}
+
+		/// ditto
+		auto opOpAssign(string op : ">>")(const uint rhs) const {
+			_value >>= rhs;
 			return this;
 		}
 	}
