@@ -2869,7 +2869,7 @@ PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
 		Works well with photos.
 
 		For pixel graphics the retro look of `nearest` (as
-		in $(I nearest neighbour)) is usually the option of choice.
+		in $(I nearest neighbor)) is usually the option of choice.
 	)
 
 	$(NOTE
@@ -2881,7 +2881,7 @@ PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
  +/
 enum ScalingFilter {
 	/++
-		Nearest neighbour interpolation
+		Nearest neighbor interpolation
 
 		Also known as $(B proximal interpolation)
 		and $(B point sampling).
@@ -2944,7 +2944,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 		(UDecimal(source.height) / target.height),
 	];
 
-	// ==== Nearest Neighbour ====
+	// ==== Nearest Neighbor ====
 	static if (filter == ScalingFilter.nearest) {
 
 		Point translate(const Point dstPos) {
