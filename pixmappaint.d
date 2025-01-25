@@ -21,7 +21,12 @@
 	In the case of this library, a “width” field is used to map a specified
 	number of pixels to a row of an image.
 
-	```
+
+
+
+	### Pixel mapping
+
+	```text
 	pixels := [ 0, 1, 2, 3 ]
 	width  := 2
 
@@ -32,7 +37,7 @@
 		]
 	```
 
-	```
+	```text
 	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ]
 	width  := 3
 
@@ -45,7 +50,7 @@
 		]
 	```
 
-	```
+	```text
 	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7 ]
 	width  := 4
 
@@ -132,8 +137,8 @@
 	prone to such errors.
 
 	(Slicing of the 1D array data can actually be utilized to cut off the
-	bottom part of an image. Any other naiv cropping operations will run into
-	the aforementioned issues.)
+	top or bottom part of an image. Any other naiv cropping operations will run
+	into the aforementioned issues.)
 
 
 
