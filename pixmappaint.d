@@ -408,6 +408,16 @@ struct UDecimal {
 	}
 
 	///
+	T opCast(T : double)() const {
+		return (_value / double(0xFFFF_FFFF));
+	}
+
+	///
+	T opCast(T : float)() const {
+		return (_value / float(0xFFFF_FFFF));
+	}
+
+	///
 	public UDecimal round() const {
 		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
 		const delta = _value - truncated;
@@ -534,49 +544,49 @@ struct UDecimal {
 
 	public {
 		///
-		auto opOpAssign(string op : "+")(const uint rhs) {
+		UDecimal opOpAssign(string op : "+")(const uint rhs) {
 			_value += (ulong(rhs) << 32);
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "+")(const UDecimal rhs) {
+		UDecimal opOpAssign(string op : "+")(const UDecimal rhs) {
 			_value += rhs._value;
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "-")(const uint rhs) {
+		UDecimal opOpAssign(string op : "-")(const uint rhs) {
 			_value -= (ulong(rhs) << 32);
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "-")(const UDecimal rhs) {
+		UDecimal opOpAssign(string op : "-")(const UDecimal rhs) {
 			_value -= rhs._value;
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "*")(const uint rhs) {
+		UDecimal opOpAssign(string op : "*")(const uint rhs) {
 			_value *= rhs;
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "/")(const uint rhs) {
+		UDecimal opOpAssign(string op : "/")(const uint rhs) {
 			_value /= rhs;
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : "<<")(const uint rhs) const {
+		UDecimal opOpAssign(string op : "<<")(const uint rhs) const {
 			_value <<= rhs;
 			return this;
 		}
 
 		/// ditto
-		auto opOpAssign(string op : ">>")(const uint rhs) const {
+		UDecimal opOpAssign(string op : ">>")(const uint rhs) const {
 			_value >>= rhs;
 			return this;
 		}
