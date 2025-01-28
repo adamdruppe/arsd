@@ -1068,7 +1068,8 @@ struct SubPixmap {
 			Allocates a new Pixmap cropped to the pixel data of the subimage.
 
 			See_also:
-				Use [extractToPixmap] for a non-allocating variant with an .
+				Use [extractToPixmap] for a non-allocating variant with a
+				target parameter.
 		 +/
 		Pixmap extractToNewPixmap() const {
 			auto pm = Pixmap.makeNew(size);
