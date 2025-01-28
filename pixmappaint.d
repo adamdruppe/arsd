@@ -628,6 +628,20 @@ struct UDecimal {
 @safe unittest {
 	UDecimal val;
 
+	val = (UDecimal(1) / 2);
+	assert(val.roundEven().castTo!uint == 0);
+	assert(val.castTo!double > 0.49);
+	assert(val.castTo!double < 0.51);
+
+	val = (UDecimal(3) / 2);
+	assert(val.roundEven().castTo!uint == 2);
+	assert(val.castTo!double > 1.49);
+	assert(val.castTo!double < 1.51);
+}
+
+@safe unittest {
+	UDecimal val;
+
 	val = UDecimal(10);
 	val += 12;
 	assert(val.castTo!uint == 22);
