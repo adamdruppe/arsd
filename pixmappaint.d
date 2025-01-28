@@ -2973,10 +2973,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 		Point translate(const Point dstPos) {
 			pragma(inline, true);
-			const xCandidate = (() @trusted => (dstPos.x * ratios.ptr[0]).round().castTo!int)();
-			const yCandidate = (() @trusted => (dstPos.y * ratios.ptr[1]).round().castTo!int)();
-			const x = min(xCandidate, sourceMaxX);
-			const y = min(yCandidate, sourceMaxY);
+			const x = (dstPos.x * ratios[0]).floor().castTo!int;
+			const y = (dstPos.y * ratios[1]).floor().castTo!int;
 			return Point(x, y);
 		}
 
