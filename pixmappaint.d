@@ -334,8 +334,7 @@ private float round(float f) pure @nogc nothrow @trusted {
 	## TODO:
 
 	- Refactoring the template-mess of blendPixel() & co.
-	- Scaling
-	- Rotating
+	- Rotating (by arbitrary angles)
 	- Skewing
 	- HSL
 	- Advanced blend modes (maybe)
@@ -418,6 +417,29 @@ struct UDecimal {
 			? truncated + 0x1_0000_0000
 			: truncated;
 		// dfmt on
+
+		return UDecimal.make(rounded);
+	}
+
+	///
+	public UDecimal roundEven() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		const delta = _value - truncated;
+
+		ulong rounded;
+
+		if (delta == 0x8000_0000) {
+			const bool floorIsOdd = ((truncated & 0x1_0000_0000) != 0);
+			// dfmt off
+			rounded = (floorIsOdd)
+				? truncated + 0x1_0000_0000 // ceil
+				: truncated;                // floor
+			// dfmt on
+		} else if (delta > 0x8000_0000) {
+			rounded = truncated + 0x1_0000_0000;
+		} else {
+			rounded = truncated;
+		}
 
 		return UDecimal.make(rounded);
 	}
@@ -2895,6 +2917,8 @@ enum ScalingFilter {
 	/++
 		Bilinear interpolation
 
+		(Uses arithmetic mean for downscaling.)
+
 		$(TIP
 			Visual impression: “smooth”, “blurred”
 		)
@@ -2931,7 +2955,6 @@ private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc
 }
 
 private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap target) @nogc {
-
 	enum none = ScalingDirection.none;
 	enum up = ScalingDirection.up;
 	enum down = ScalingDirection.down;
@@ -2943,6 +2966,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 		(UDecimal(source.width) / target.width),
 		(UDecimal(source.height) / target.height),
 	];
+	enum idxX = 0, idxY = 1;
 
 	// ==== Nearest Neighbor ====
 	static if (filter == ScalingFilter.nearest) {
@@ -2987,27 +3011,27 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				const posDst = Point(x.castTo!int, y.castTo!int);
 
 				const UDecimal[2] posSrc = [
-					(() @trusted => posDst.x * ratios.ptr[0])(),
-					(() @trusted => posDst.y * ratios.ptr[1])(),
+					posDst.x * ratios[idxX],
+					posDst.y * ratios[idxY],
 				];
 
 				const int[2] posSrcX = () {
 					int[2] result;
-					if (directions[0] == none) {
+					if (directions[idxX] == none) {
 						result = [
-							posSrc[0].castTo!int,
-							posSrc[0].castTo!int,
+							posSrc[idxX].castTo!int,
+							posSrc[idxX].castTo!int,
 						];
-					} else if (directions[0] == up) {
+					} else if (directions[idxX] == up) {
 						result = [
-							min(sourceMaxX, posSrc[0].floor().castTo!int),
-							min(sourceMaxX, posSrc[0].ceil().castTo!int),
+							min(sourceMaxX, posSrc[idxX].floor().castTo!int),
+							min(sourceMaxX, posSrc[idxX].ceil().castTo!int),
 						];
-					} else {
-						const ratioXHalf = (ratios[0] >> 1);
+					} else /* if (directions[0] == down) */ {
+						const ratioXHalf = (ratios[idxX] >> 1);
 						result = [
-							max((posSrc[0] - ratioXHalf).round().castTo!int, 0),
-							min((posSrc[0] + ratioXHalf).round().castTo!int, sourceMaxX),
+							max((posSrc[idxX] - ratioXHalf).roundEven().castTo!int, 0),
+							min((posSrc[idxX] + ratioXHalf).roundEven().castTo!int, sourceMaxX),
 						];
 					}
 					return result;
@@ -3015,31 +3039,34 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 				const int[2] posSrcY = () {
 					int[2] result;
-					if (directions[1] == none) {
+					if (directions[idxY] == none) {
 						result = [
-							posSrc[1].castTo!int,
-							posSrc[1].castTo!int,
+							posSrc[idxY].castTo!int,
+							posSrc[idxY].castTo!int,
 						];
-					} else if (directions[1] == up) {
+					} else if (directions[idxY] == up) {
 						result = [
-							min(sourceMaxY, posSrc[1].floor().castTo!int),
-							min(sourceMaxY, posSrc[1].ceil().castTo!int),
+							min(sourceMaxY, posSrc[idxY].floor().castTo!int),
+							min(sourceMaxY, posSrc[idxY].ceil().castTo!int),
 						];
-					} else {
-						const ratioHalf = (ratios[1] >> 1);
+					} else /* if (directions[idxY] == down) */ {
+						const ratioHalf = (ratios[idxY] >> 1);
 						result = [
-							max((posSrc[1] - ratioHalf).round().castTo!int, 0),
-							min((posSrc[1] + ratioHalf).round().castTo!int, sourceMaxY),
+							max((posSrc[idxY] - ratioHalf).roundEven().castTo!int, 0),
+							min((posSrc[idxY] + ratioHalf).roundEven().castTo!int, sourceMaxY),
 						];
 					}
 					return result;
 				}();
 
+				enum idxL = 0, idxR = 1;
+				enum idxT = 0, idxB = 1;
+
 				const Point[4] posNeighs = [
-					Point(posSrcX[0], posSrcY[0]),
-					Point(posSrcX[1], posSrcY[0]),
-					Point(posSrcX[0], posSrcY[1]),
-					Point(posSrcX[1], posSrcY[1]),
+					Point(posSrcX[idxL], posSrcY[idxT]),
+					Point(posSrcX[idxR], posSrcY[idxT]),
+					Point(posSrcX[idxL], posSrcY[idxB]),
+					Point(posSrcX[idxR], posSrcY[idxB]),
 				];
 
 				const Color[4] pxNeighs = [
@@ -3048,6 +3075,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					source.getPixel(posNeighs[2]),
 					source.getPixel(posNeighs[3]),
 				];
+
+				enum idxTL = 0, idxTR = 1, idxBL = 2, idxBR = 3;
 
 				// ====== Faux bilinear ======
 				static if (filter == ScalingFilter.fauxLinear) {
@@ -3062,96 +3091,206 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					}
 				}
 
-				// ====== Proper bilinear ======
+				// ====== Proper bilinear (up) + Avg (down) ======
 				static if (filter == ScalingFilter.bilinear) {
-					// TODO: Downscaling looks bad as-is.
 					auto pxInt = Pixel(0, 0, 0, 0);
 					foreach (immutable ib, ref c; pxInt.components) {
-						ulong[2] xSums;
+						ulong sampleX() {
+							pragma(inline, true);
 
-						// ======== X ========
-						if (directions[0] == none) {
-							xSums = () @trusted {
-								ulong[2] result = [
-									pxNeighs[0].components.ptr[ib],
-									pxNeighs[2].components.ptr[ib],
-								];
-								return result;
-							}();
-						} else if (directions[1] == down) {
-							xSums = [0, 0];
+							if (directions[0] == none) {
+								return (() @trusted => pxNeighs[idxTL].components.ptr[ib])();
+							} else if (directions[0] == down) {
+								const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
+								const posSampling = Point(posSrcX[idxL], posSrcY[idxT]);
+								const samplingOffset = source.scanTo(posSampling);
+								const srcSamples = () @trusted {
+									return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
+								}();
 
-							const UDecimal[2] deltasX = [
-								posSrc[0] - posSrcX[0],
-								posSrcX[1] - posSrc[0],
-							];
+								ulong xSum = 0;
 
-							const deltasXSum = (deltasX[0] + deltasX[1]).round().castTo!uint;
-							const UDecimal[2] weightsX = [
-								deltasX[0] / deltasXSum,
-								deltasX[1] / deltasXSum,
-							];
+								foreach (srcSample; srcSamples) {
+									xSum += (() @trusted => srcSample.components.ptr[ib])();
+								}
 
-							() @trusted {
-								xSums[0] += (pxNeighs[0].components.ptr[ib] * weightsX[0]).round().castTo!uint;
-								xSums[0] += (pxNeighs[1].components.ptr[ib] * weightsX[1]).round().castTo!uint;
+								return (xSum / nSamples);
+							} else /* if (directions[0] == up) */ {
+								ulong xSum = 0;
 
-								xSums[1] += (pxNeighs[2].components.ptr[ib] * weightsX[0]).round().castTo!uint;
-								xSums[1] += (pxNeighs[3].components.ptr[ib] * weightsX[1]).round().castTo!uint;
-							}();
-						} else {
-							xSums = [0, 0];
+								const ulong[2] weightsX = () {
+									ulong[2] result;
+									result[1] = posSrc[0].fractionalDigits;
+									result[0] = ulong(uint.max) + 1 - result[1];
+									return result;
+								}();
 
-							const ulong[2] weightsX = () {
-								ulong[2] result;
-								result[1] = posSrc[0].fractionalDigits;
-								result[0] = ulong(uint.max) + 1 - result[1];
-								return result;
-							}();
+								() @trusted {
+									xSum += (pxNeighs[idxTL].components.ptr[ib] * weightsX[0]);
+									xSum += (pxNeighs[idxTR].components.ptr[ib] * weightsX[1]);
+								}();
 
-							() @trusted {
-								xSums[0] += (pxNeighs[0].components.ptr[ib] * weightsX[0]);
-								xSums[0] += (pxNeighs[1].components.ptr[ib] * weightsX[1]);
-
-								xSums[1] += (pxNeighs[2].components.ptr[ib] * weightsX[0]);
-								xSums[1] += (pxNeighs[3].components.ptr[ib] * weightsX[1]);
-							}();
-							foreach (ref sum; xSums) {
-								sum >>= 32;
+								return (xSum >> 32);
 							}
 						}
 
-						// ======== Y ========
-						if (directions[1] == none) {
-							c = clamp255(xSums[0]);
-						} else if (directions[1] == down) {
-							const UDecimal[2] deltasY = [
-								posSrc[1] - posSrcY[0],
-								posSrcY[1] - posSrc[1],
-							];
+						ulong[2] sampleXDual() {
+							pragma(inline, true);
 
-							const deltasYSum = (deltasY[0] + deltasY[1]).round().castTo!uint;
-							const UDecimal[2] weightsY = [
-								deltasY[0] / deltasYSum,
-								deltasY[1] / deltasYSum,
-							];
+							if (directions[0] == none) {
+								return () @trusted {
+									ulong[2] result = [
+										pxNeighs[idxTL].components.ptr[ib],
+										pxNeighs[idxBL].components.ptr[ib],
+									];
+									return result;
+								}();
+							} else if (directions[0] == down) {
+								const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
+								const Point[2] posSampling = [
+									Point(posSrcX[idxL], posSrcY[idxT]),
+									Point(posSrcX[idxL], posSrcY[idxB]),
+								];
 
-							auto ySum = UDecimal(0);
-							ySum += ((xSums[0] & 0xFFFF_FFFF) * weightsY[0]);
-							ySum += ((xSums[1] & 0xFFFF_FFFF) * weightsY[1]);
+								const int[2] samplingOffsets = [
+									source.scanTo(posSampling[0]),
+									source.scanTo(posSampling[1]),
+								];
 
-							c = clamp255(ySum.round().castTo!uint);
-						} else {
+								const srcSamples2 = () @trusted {
+									const(const(Pixel)[])[2] result = [
+										source.data.ptr[samplingOffsets[0] .. (samplingOffsets[0] + nSamples)],
+										source.data.ptr[samplingOffsets[1] .. (samplingOffsets[1] + nSamples)],
+									];
+									return result;
+								}();
+
+								ulong[2] xSums = [0, 0];
+
+								foreach (idx, srcSamples; srcSamples2) {
+									foreach (srcSample; srcSamples) {
+										() @trusted { xSums.ptr[idx] += srcSample.components.ptr[ib]; }();
+									}
+								}
+
+								xSums[] /= nSamples;
+								return xSums;
+							} else /* if (directions[0] == up) */ {
+								ulong[2] xSums = [0, 0];
+
+								const ulong[2] weightsX = () {
+									ulong[2] result;
+									result[1] = posSrc[0].fractionalDigits;
+									result[0] = ulong(uint.max) + 1 - result[1];
+									return result;
+								}();
+
+								() @trusted {
+									xSums[0] += (pxNeighs[idxTL].components.ptr[ib] * weightsX[0]);
+									xSums[0] += (pxNeighs[idxTR].components.ptr[ib] * weightsX[1]);
+
+									xSums[1] += (pxNeighs[idxBL].components.ptr[ib] * weightsX[0]);
+									xSums[1] += (pxNeighs[idxBR].components.ptr[ib] * weightsX[1]);
+								}();
+
+								foreach (ref sum; xSums) {
+									sum >>= 32;
+								}
+
+								return xSums;
+							}
+						}
+
+						ulong sampleXMulti() {
+							pragma(inline, true);
+
+							const nLines = 1 + posSrcY[idxB] - posSrcY[idxT];
+							ulong ySum = 0;
+
+							alias ForeachLineCallback = ulong delegate(const Point posLine) @safe pure nothrow @nogc;
+							ulong foreachLine(scope ForeachLineCallback apply) {
+								ulong linesSum = 0;
+								foreach (lineY; posSrcY[idxT] .. (1 + posSrcY[idxB])) {
+									const posLine = Point(posSrcX[idxL], lineY);
+									linesSum += apply(posLine);
+								}
+								return linesSum;
+							}
+
+							if (directions[0] == none) {
+								ySum = foreachLine(delegate(const Point posLine) {
+									const pxSrc = source.getPixel(posLine);
+									return ulong((() @trusted => pxSrc.components.ptr[ib])());
+								});
+							} else if (directions[0] == down) {
+								const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
+
+								ySum = foreachLine(delegate(const Point posLine) {
+									const samplingOffset = source.scanTo(posLine);
+									const srcSamples = () @trusted {
+										return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
+									}();
+
+									ulong xSum = 0;
+
+									foreach (srcSample; srcSamples) {
+										xSum += (() @trusted => srcSample.components.ptr[ib])();
+									}
+
+									return xSum;
+								});
+
+								ySum /= nSamples;
+							} else /* if (directions[0] == up) */ {
+								const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
+
+								ySum = foreachLine(delegate(const Point posLine) {
+									ulong xSum = 0;
+
+									const ulong[2] weightsX = () {
+										ulong[2] result;
+										result[1] = posSrc[0].fractionalDigits;
+										result[0] = ulong(uint.max) + 1 - result[1];
+										return result;
+									}();
+
+									const samplingOffset = source.scanTo(posLine);
+									ubyte[2] pxcLR = () @trusted {
+										ubyte[2] result = [
+											source.data.ptr[samplingOffset].components.ptr[ib],
+											source.data.ptr[samplingOffset + nSamples].components.ptr[ib],
+										];
+										return result;
+									}();
+
+									xSum += (pxcLR[idxL] * weightsX[idxL]);
+									xSum += (pxcLR[idxR] * weightsX[idxR]);
+
+									return (xSum >> 32);
+								});
+							}
+
+							return (ySum / nLines);
+						}
+
+						if (directions[idxY] == none) {
+							c = clamp255(sampleX());
+						} else if (directions[idxY] == down) {
+							c = clamp255(sampleXMulti());
+						} else /* if (directions[idxY] == up) */ {
+							// looks ass
 							const ulong[2] weightsY = () {
 								ulong[2] result;
-								result[1] = posSrc[1].fractionalDigits;
-								result[0] = ulong(uint.max) + 1 - result[1];
+								result[idxB] = posSrc[1].fractionalDigits;
+								result[idxT] = ulong(uint.max) + 1 - result[idxB];
 								return result;
 							}();
 
+							const xSums = sampleXDual();
+
 							ulong ySum = 0;
-							ySum += (xSums[0] * weightsY[0]);
-							ySum += (xSums[1] * weightsY[1]);
+							ySum += (xSums[idxT] * weightsY[idxT]);
+							ySum += (xSums[idxB] * weightsY[idxB]);
 
 							const xySum = (ySum >> 32);
 
