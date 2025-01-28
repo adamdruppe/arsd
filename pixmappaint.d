@@ -3361,7 +3361,21 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 	}
 }
 
-// TODO: Document this function
+/++
+	Scales a pixmap and stores the result in the provided target Pixmap.
+
+	The size to scale the image to
+	is derived from the size of the target.
+
+	---
+	// This function can be used to omit a redundant size parameter
+	// in cases like this:
+	target = scale(source, target, target.size, ScalingFilter.bilinear);
+
+	// → Instead do:
+	scaleTo(source, target, ScalingFilter.bilinear);
+	---
+ +/
 void scaleTo(const Pixmap source, Pixmap target, ScalingFilter filter) @nogc {
 	import std.meta : NoDuplicates;
 	import std.traits : EnumMembers;
