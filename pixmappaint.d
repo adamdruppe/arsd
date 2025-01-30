@@ -393,7 +393,7 @@ struct UDecimal {
 
 	///
 	public this(uint initialValue) {
-		_value = (long(initialValue) << 32);
+		_value = (ulong(initialValue) << 32);
 	}
 
 	private static UDecimal make(ulong internal) {
@@ -3332,10 +3332,11 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 		if (directions[0] == none) {
 			if (directions[1] == none) {
-				version (none)
+				version (none) {
 					scaleToLinearImpl!(none, none)();
-				else
-					return;
+				} else {
+					target.data[] = source.data[];
+				}
 			} else if (directions[1] == up) {
 				scaleToLinearImpl!(none, up)();
 			} else /* if (directions[1] == down) */ {
