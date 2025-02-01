@@ -3125,11 +3125,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 					const posSrcCenterX = posDst[idxX] * ratios[idxX] + ratiosHalf[idxX];
 
-					const UDecimal[2] posSrcCenter = [
-						posSrcCenterX,
-						posSrcCenterY,
-					];
-
 					const int[2] posSrcX = posSrcCenterToInterpolationTargets!(directionX)(
 						posSrcCenterX,
 						ratiosHalf[idxX],
@@ -3324,7 +3319,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 									const ulong[2] weightsX = () {
 										ulong[2] result;
-										result[0] = (udecimalHalf + posSrcX[1] - posSrcCenter[idxX]).fractionalDigits;
+										result[0] = (udecimalHalf + posSrcX[1] - posSrcCenterX).fractionalDigits;
 										result[1] = ulong(uint.max) + 1 - result[0];
 										return result;
 									}();
