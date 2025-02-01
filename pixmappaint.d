@@ -3041,6 +3041,29 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 	static if ((filter == ScalingFilter.bilinear) || (filter == ScalingFilter.fauxLinear)) {
 		void scaleToLinearImpl(ScalingDirection directionX, ScalingDirection directionY)() {
 
+			alias InterPixel = ulong[4];
+
+			static Pixel toPixel(const InterPixel ipx) @safe pure nothrow @nogc {
+				pragma(inline, true);
+				return Pixel(
+					clamp255(ipx[0]),
+					clamp255(ipx[1]),
+					clamp255(ipx[2]),
+					clamp255(ipx[3]),
+				);
+			}
+
+			static InterPixel toInterPixel(const Pixel ipx) @safe pure nothrow @nogc {
+				pragma(inline, true);
+				InterPixel result = [
+					ipx.r,
+					ipx.g,
+					ipx.b,
+					ipx.a,
+				];
+				return result;
+			}
+
 			int[2] posSrcCenterToInterpolationTargets(
 				ScalingDirection direction,
 			)(
@@ -3048,6 +3071,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				UDecimal ratioHalf,
 				int sourceMax,
 			) {
+				pragma(inline, true);
+
 				int[2] result;
 				static if (direction == none) {
 					const value = posSrcCenter.castTo!int;
@@ -3171,18 +3196,19 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 						}
 
 						// ======== Interpolate X ========
-						auto sampleX(SamplingMode mode)(const size_t ib) {
+						auto sampleX(SamplingMode mode)() {
 							pragma(inline, true);
 
 							static if (mode == SamplingMode.multi) {
 								const nLines = 1 + posSrcY[idxB] - posSrcY[idxT];
 
-								alias ForeachLineCallback = ulong delegate(const Point posLine) @safe pure nothrow @nogc;
-								ulong foreachLine(scope ForeachLineCallback apply) {
-									ulong linesSum = 0;
+								alias ForeachLineCallback = InterPixel delegate(const Point posLine) @safe pure nothrow @nogc;
+								InterPixel foreachLine(scope ForeachLineCallback apply) {
+									InterPixel linesSum = 0;
 									foreach (lineY; posSrcY[idxT] .. (1 + posSrcY[idxB])) {
 										const posLine = Point(posSrcX[idxL], lineY);
-										linesSum += apply(posLine);
+										const lineValues = apply(posLine);
+										linesSum[] += lineValues[];
 									}
 									return linesSum;
 								}
@@ -3191,25 +3217,26 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 							// ========== None ==========
 							static if (directionX == none) {
 								static if (mode == SamplingMode.single) {
-									return (() @trusted => pxNeighs[idxTL].components.ptr[ib])();
+									return pxNeighs[idxTL];
 								}
 
 								static if (mode == SamplingMode.dual) {
 									return () @trusted {
-										ulong[2] result = [
-											pxNeighs[idxTL].components.ptr[ib],
-											pxNeighs[idxBL].components.ptr[ib],
+										InterPixel[2] result = [
+											toInterPixel(pxNeighs[idxTL]),
+											toInterPixel(pxNeighs[idxBL]),
 										];
 										return result;
 									}();
 								}
 
 								static if (mode == SamplingMode.multi) {
-									const ySum = foreachLine(delegate(const Point posLine) {
+									auto ySum = foreachLine(delegate(const Point posLine) {
 										const pxSrc = source.getPixel(posLine);
-										return ulong((() @trusted => pxSrc.components.ptr[ib])());
+										return toInterPixel(pxSrc);
 									});
-									return (ySum / nLines);
+									ySum[] /= nLines;
+									return ySum;
 								}
 							}
 
@@ -3223,13 +3250,16 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 										return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
 									}();
 
-									ulong xSum = 0;
+									InterPixel xSum = [0, 0, 0, 0];
 
 									foreach (srcSample; srcSamples) {
-										xSum += (() @trusted => srcSample.components.ptr[ib])();
+										foreach (immutable ib, c; srcSample.components) {
+											() @trusted { xSum.ptr[ib] += c; }();
+										}
 									}
 
-									return (xSum / nSamples);
+									xSum[] /= nSamples;
+									return toPixel(xSum);
 								}
 
 								static if (mode == SamplingMode.dual) {
@@ -3252,15 +3282,19 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 										return result;
 									}();
 
-									ulong[2] xSums = [0, 0];
+									InterPixel[2] xSums = [[0, 0, 0, 0], [0, 0, 0, 0]];
 
 									foreach (idx, srcSamples; srcSamples2) {
 										foreach (srcSample; srcSamples) {
-											() @trusted { xSums.ptr[idx] += srcSample.components.ptr[ib]; }();
+											foreach (immutable ib, c; srcSample.components)
+												() @trusted { xSums.ptr[idx].ptr[ib] += c; }();
 										}
 									}
 
-									xSums[] /= nSamples;
+									foreach (xSum; xSums) {
+										xSum[] /= nSamples;
+									}
+
 									return xSums;
 								}
 
@@ -3273,17 +3307,20 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 											return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
 										}();
 
-										ulong xSum = 0;
+										InterPixel xSum = 0;
 
 										foreach (srcSample; srcSamples) {
-											xSum += (() @trusted => srcSample.components.ptr[ib])();
+											foreach (immutable ib, c; srcSample.components) {
+												() @trusted { xSum.ptr[ib] += c; }();
+											}
 										}
 
 										return xSum;
 									});
 
-									ySum /= nSamples;
-									return (ySum / nLines);
+									ySum[] /= nSamples;
+									ySum[] /= nLines;
+									return ySum;
 								}
 							}
 
@@ -3292,26 +3329,26 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 								if (posSrcX[0] == posSrcX[1]) {
 									static if (mode == SamplingMode.single) {
-										return (() @trusted => pxNeighs[idxTL].components.ptr[ib])();
+										return pxNeighs[idxTL];
 									}
 									static if (mode == SamplingMode.dual) {
 										return () @trusted {
-											ulong[2] result = [
-												pxNeighs[idxTL].components.ptr[ib],
-												pxNeighs[idxBL].components.ptr[ib],
+											InterPixel[2] result = [
+												toInterPixel(pxNeighs[idxTL]),
+												toInterPixel(pxNeighs[idxBL]),
 											];
 											return result;
 										}();
 									}
 									static if (mode == SamplingMode.multi) {
-										const ySum = foreachLine(delegate(const Point posLine) {
-											ulong xSum = 0;
+										auto ySum = foreachLine(delegate(const Point posLine) {
 											const samplingOffset = source.scanTo(posLine);
-											return (() @trusted
-												=> source.data.ptr[samplingOffset].components.ptr[ib]
-											)();
+											return toInterPixel(
+												(() @trusted => source.data.ptr[samplingOffset])()
+											);
 										});
-										return (ySum / nLines);
+										ySum[] /= nLines;
+										return ySum;
 									}
 								}
 
@@ -3323,80 +3360,90 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 								}();
 
 								static if (mode == SamplingMode.single) {
-									ulong xSum = 0;
+									InterPixel xSum = [0, 0, 0, 0];
 
-									() @trusted {
-										xSum += (pxNeighs[idxTL].components.ptr[ib] * weightsX[0]);
-										xSum += (pxNeighs[idxTR].components.ptr[ib] * weightsX[1]);
-									}();
+									foreach (immutable ib, ref c; xSum) {
+										c += ((() @trusted => pxNeighs[idxTL].components.ptr[ib])() * weightsX[0]);
+										c += ((() @trusted => pxNeighs[idxTR].components.ptr[ib])() * weightsX[1]);
+									}
 
-									xSum >>= 32;
-									return xSum;
+									foreach (ref c; xSum) {
+										c >>= 32;
+									}
+									return toPixel(xSum);
 								}
 
 								static if (mode == SamplingMode.dual) {
-									ulong[2] xSums = [0, 0];
+									InterPixel[2] xSums = [[0, 0, 0, 0], [0, 0, 0, 0]];
 
 									() @trusted {
-										xSums[0] += (pxNeighs[idxTL].components.ptr[ib] * weightsX[0]);
-										xSums[0] += (pxNeighs[idxTR].components.ptr[ib] * weightsX[1]);
+										foreach (immutable ib, ref c; xSums[0]) {
+											c += (pxNeighs[idxTL].components.ptr[ib] * weightsX[idxL]);
+											c += (pxNeighs[idxTR].components.ptr[ib] * weightsX[idxR]);
+										}
 
-										xSums[1] += (pxNeighs[idxBL].components.ptr[ib] * weightsX[0]);
-										xSums[1] += (pxNeighs[idxBR].components.ptr[ib] * weightsX[1]);
+										foreach (immutable ib, ref c; xSums[1]) {
+											c += (pxNeighs[idxBL].components.ptr[ib] * weightsX[idxL]);
+											c += (pxNeighs[idxBR].components.ptr[ib] * weightsX[idxR]);
+										}
 									}();
 
 									foreach (ref sum; xSums) {
-										sum >>= 32;
+										foreach (ref c; sum) {
+											c >>= 32;
+										}
 									}
 
 									return xSums;
 								}
 
 								static if (mode == SamplingMode.multi) {
-									const ySum = foreachLine(delegate(const Point posLine) {
-										ulong xSum = 0;
+									auto ySum = foreachLine(delegate(const Point posLine) {
+										InterPixel xSum = [0, 0, 0, 0];
 
 										const samplingOffset = source.scanTo(posLine);
-										ubyte[2] pxcLR = () @trusted {
-											ubyte[2] result = [
-												source.data.ptr[samplingOffset].components.ptr[ib],
-												source.data.ptr[samplingOffset + 1].components.ptr[ib],
+										Pixel[2] pxcLR = () @trusted {
+											Pixel[2] result = [
+												source.data.ptr[samplingOffset],
+												source.data.ptr[samplingOffset + 1],
 											];
 											return result;
 										}();
 
-										xSum += (pxcLR[idxL] * weightsX[idxL]);
-										xSum += (pxcLR[idxR] * weightsX[idxR]);
+										foreach (immutable ib, ref c; xSum) {
+											c += ((() @trusted => pxcLR[idxL].components.ptr[ib])() * weightsX[idxL]);
+											c += ((() @trusted => pxcLR[idxR].components.ptr[ib])() * weightsX[idxR]);
+										}
 
-										return (xSum >> 32);
+										foreach (ref c; xSum) {
+											c >>= 32;
+										}
+										return xSum;
 									});
 
-									return (ySum / nLines);
+									ySum[] /= nLines;
+									return ySum;
 								}
 							}
 						}
 
 						// ======== Interpolate Y ========
 						static if (directionY == none) {
-							foreach (immutable ib, ref c; pxInt.components) {
-								c = clamp255(sampleX!(SamplingMode.single)(ib));
-							}
+							const Pixel tmp = sampleX!(SamplingMode.single)();
+							pxInt = tmp;
 						}
 						static if (directionY == down) {
-							foreach (immutable ib, ref c; pxInt.components) {
-								c = clamp255(sampleX!(SamplingMode.multi)(ib));
-							}
+							const InterPixel tmp = sampleX!(SamplingMode.multi)();
+							pxInt = toPixel(tmp);
 						}
 						static if (directionY == up) {
+							const InterPixel[2] xSums = sampleX!(SamplingMode.dual)();
 							foreach (immutable ib, ref c; pxInt.components) {
-								const xSums = sampleX!(SamplingMode.dual)(ib);
-
 								ulong ySum = 0;
-								ySum += (xSums[idxT] * weightsY[idxT]);
-								ySum += (xSums[idxB] * weightsY[idxB]);
+								ySum += ((() @trusted => xSums[idxT].ptr[ib])() * weightsY[idxT]);
+								ySum += ((() @trusted => xSums[idxB].ptr[ib])() * weightsY[idxB]);
 
 								const xySum = (ySum >> 32);
-
 								c = clamp255(xySum);
 							}
 						}
