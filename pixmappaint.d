@@ -2995,6 +2995,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 	enum uint udecimalHalfFD = udecimalHalf.fractionalDigits;
 
 	enum idxX = 0, idxY = 1;
+	enum idxL = 0, idxR = 1;
+	enum idxT = 0, idxB = 1;
 
 	const int[2] sourceMax = [
 		(source.width - 1),
@@ -3038,110 +3040,92 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 	// ==== Bilinear ====
 	static if ((filter == ScalingFilter.bilinear) || (filter == ScalingFilter.fauxLinear)) {
 		void scaleToLinearImpl(ScalingDirection directionX, ScalingDirection directionY)() {
+
+			int[2] posSrcCenterToInterpolationTargets(
+				ScalingDirection direction,
+			)(
+				UDecimal posSrcCenter,
+				UDecimal ratioHalf,
+				int sourceMax,
+			) {
+				int[2] result;
+				static if (direction == none) {
+					const value = posSrcCenter.castTo!int;
+					result = [
+						value,
+						value,
+					];
+				}
+
+				static if (direction == up) {
+					if (posSrcCenter < udecimalHalf) {
+						result = [
+							0,
+							0,
+						];
+					} else {
+						const floor = posSrcCenter.castTo!uint;
+						if (posSrcCenter.fractionalDigits == udecimalHalfFD) {
+							result = [
+								floor,
+								floor,
+							];
+						} else if (posSrcCenter.fractionalDigits > udecimalHalfFD) {
+							const upper = min((floor + 1), sourceMax);
+							result = [
+								floor,
+								upper,
+							];
+						} else {
+							result = [
+								floor - 1,
+								floor,
+							];
+						}
+					}
+				}
+
+				static if (direction == down) {
+					result = [
+						max((posSrcCenter - ratioHalf).roundEven().castTo!uint, 0),
+						min((posSrcCenter + ratioHalf).roundEven().castTo!uint, sourceMax),
+					];
+				}
+				return result;
+			};
+
 			auto dst = PixmapScannerRW(target);
 
 			size_t y = 0;
 			foreach (dstLine; dst) {
+				const posDstY = y.castTo!uint;
+				const UDecimal posSrcCenterY = posDstY * ratios[idxY] + ratiosHalf[idxY];
+
+				const int[2] posSrcY = posSrcCenterToInterpolationTargets!(directionY)(
+					posSrcCenterY,
+					ratiosHalf[idxY],
+					sourceMax[idxY],
+				);
+
 				foreach (x, ref pxDst; dstLine) {
+					const posDstX = x.castTo!uint;
 					const int[2] posDst = [
-						x.castTo!uint,
-						y.castTo!uint,
+						posDstX,
+						posDstY,
 					];
 
-					const UDecimal[2] posSrc = [
-						posDst[idxX] * ratios[idxX] + ratiosHalf[idxX],
-						posDst[idxY] * ratios[idxY] + ratiosHalf[idxY],
+					const posSrcCenterX = posDst[idxX] * ratios[idxX] + ratiosHalf[idxX];
+
+					const UDecimal[2] posSrcCenter = [
+						posSrcCenterX,
+						posSrcCenterY,
 					];
 
-					const int[2] posSrcX = () {
-						int[2] result;
-						static if (directionX == none) {
-							const value = posSrc[idxX].castTo!int;
-							result = [
-								value,
-								value,
-							];
-						} else static if (directionX == up) {
-							if (posSrc[idxX] < udecimalHalf) {
-								result = [
-									0,
-									0,
-								];
-							} else {
-								const floor = posSrc[idxX].castTo!uint;
-								if (posSrc[idxX].fractionalDigits == udecimalHalfFD) {
-									result = [
-										floor,
-										floor,
-									];
-								} else if (posSrc[idxX].fractionalDigits > udecimalHalfFD) {
-									const upper = min((floor + 1), sourceMax[idxX]);
-									result = [
-										floor,
-										upper,
-									];
-								} else {
-									result = [
-										floor - 1,
-										floor,
-									];
-								}
-							}
-						} else /* if (directionX == down) */ {
-							const ratioXHalf = (ratios[idxX] >> 1);
-							result = [
-								max((posSrc[idxX] - ratioXHalf).roundEven().castTo!uint, 0),
-								min((posSrc[idxX] + ratioXHalf).roundEven().castTo!uint, sourceMax[idxX]),
-							];
-						}
-						return result;
-					}();
-
-					const int[2] posSrcY = () {
-						int[2] result;
-						static if (directionY == none) {
-							result = [
-								posSrc[idxY].castTo!int,
-								posSrc[idxY].castTo!int,
-							];
-						} else static if (directionY == up) {
-							if (posSrc[idxY] < udecimalHalf) {
-								result = [
-									0,
-									0,
-								];
-							} else {
-								const floor = posSrc[idxY].castTo!uint;
-								if (posSrc[idxY].fractionalDigits == udecimalHalfFD) {
-									result = [
-										floor,
-										floor,
-									];
-								} else if (posSrc[idxY].fractionalDigits > udecimalHalfFD) {
-									const upper = min((floor + 1), sourceMax[idxY]);
-									result = [
-										floor,
-										upper,
-									];
-								} else {
-									result = [
-										floor - 1,
-										floor,
-									];
-								}
-							}
-						} else /* if (directionY == down) */ {
-							const ratioHalf = (ratios[idxY] >> 1);
-							result = [
-								max((posSrc[idxY] - ratioHalf).roundEven().castTo!int, 0),
-								min((posSrc[idxY] + ratioHalf).roundEven().castTo!int, sourceMax[idxY]),
-							];
-						}
-						return result;
-					}();
-
-					enum idxL = 0, idxR = 1;
-					enum idxT = 0, idxB = 1;
+					const int[2] posSrcX = posSrcCenterToInterpolationTargets!(directionX)(
+						posSrcCenterX,
+						ratiosHalf[idxX],
+						sourceMax[idxX],
+					);
 
 					const Point[4] posNeighs = [
 						Point(posSrcX[idxL], posSrcY[idxT]),
@@ -3330,7 +3314,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 									const ulong[2] weightsX = () {
 										ulong[2] result;
-										result[0] = (udecimalHalf + posSrcX[1] - posSrc[idxX]).fractionalDigits;
+										result[0] = (udecimalHalf + posSrcX[1] - posSrcCenter[idxX]).fractionalDigits;
 										result[1] = ulong(uint.max) + 1 - result[0];
 										return result;
 									}();
@@ -3396,7 +3380,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 							} else /* if (directionY == up) */ {
 								const ulong[2] weightsY = () {
 									ulong[2] result;
-									result[0] = (udecimalHalf + posSrcY[1] - posSrc[idxY]).fractionalDigits;
+									result[0] = (udecimalHalf + posSrcY[1] - posSrcCenter[idxY]).fractionalDigits;
 									result[1] = ulong(uint.max) + 1 - result[0];
 									return result;
 								}();
