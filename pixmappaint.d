@@ -3107,6 +3107,15 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					sourceMax[idxY],
 				);
 
+				static if (directionY == up) {
+					const ulong[2] weightsY = () {
+						ulong[2] result;
+						result[0] = (udecimalHalf + posSrcY[1] - posSrcCenterY).fractionalDigits;
+						result[1] = ulong(uint.max) + 1 - result[0];
+						return result;
+					}();
+				}
+
 				foreach (x, ref pxDst; dstLine) {
 					const posDstX = x.castTo!uint;
 					const int[2] posDst = [
@@ -3382,13 +3391,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 								c = clamp255(sampleX!(SamplingMode.multi)());
 							}
 							static if (directionY == up) {
-								const ulong[2] weightsY = () {
-									ulong[2] result;
-									result[0] = (udecimalHalf + posSrcY[1] - posSrcCenter[idxY]).fractionalDigits;
-									result[1] = ulong(uint.max) + 1 - result[0];
-									return result;
-								}();
-
 								const xSums = sampleX!(SamplingMode.dual)();
 
 								ulong ySum = 0;
