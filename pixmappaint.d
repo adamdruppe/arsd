@@ -3168,6 +3168,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 						foreach (immutable ib, ref c; pxInt.components) {
 
+							// ======== Interpolate X ========
 							auto sampleX(SamplingMode mode)() {
 								pragma(inline, true);
 
@@ -3185,7 +3186,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 									}
 								}
 
-								// ======== None ========
+								// ========== None ==========
 								static if (directionX == none) {
 									static if (mode == SamplingMode.single) {
 										return (() @trusted => pxNeighs[idxTL].components.ptr[ib])();
@@ -3210,7 +3211,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 									}
 								}
 
-								// ======== Down ========
+								// ========== Down ==========
 								static if (directionX == down) {
 									static if (mode == SamplingMode.single) {
 										const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
@@ -3284,7 +3285,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 									}
 								}
 
-								// ======== Up ========
+								// ========== Up ==========
 								static if (directionX == up) {
 
 									if (posSrcX[0] == posSrcX[1]) {
@@ -3373,11 +3374,14 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 								}
 							}
 
+							// ======== Interpolate Y ========
 							static if (directionY == none) {
 								c = clamp255(sampleX!(SamplingMode.single)());
-							} else static if (directionY == down) {
+							}
+							static if (directionY == down) {
 								c = clamp255(sampleX!(SamplingMode.multi)());
-							} else /* if (directionY == up) */ {
+							}
+							static if (directionY == up) {
 								const ulong[2] weightsY = () {
 									ulong[2] result;
 									result[0] = (udecimalHalf + posSrcY[1] - posSrcCenter[idxY]).fractionalDigits;
