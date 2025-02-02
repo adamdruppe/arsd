@@ -3068,7 +3068,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 				ScalingDirection direction,
 			)(
 				UDecimal posSrcCenter,
-				UDecimal ratioHalf,
 				int sourceMax,
 			) {
 				pragma(inline, true);
@@ -3082,7 +3081,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					];
 				}
 
-				static if (direction == up) {
+				static if (direction == up || direction == down) {
 					if (posSrcCenter < udecimalHalf) {
 						result = [
 							0,
@@ -3110,12 +3109,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					}
 				}
 
-				static if (direction == down) {
-					result = [
-						max((posSrcCenter - ratioHalf).roundEven().castTo!uint, 0),
-						min((posSrcCenter + ratioHalf).roundEven().castTo!uint, sourceMax),
-					];
-				}
 				return result;
 			}
 
@@ -3128,7 +3121,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 				const int[2] posSrcY = posSrcCenterToInterpolationTargets!(directionY)(
 					posSrcCenterY,
-					ratiosHalf[idxY],
 					sourceMax[idxY],
 				);
 
@@ -3156,7 +3148,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 					const int[2] posSrcX = posSrcCenterToInterpolationTargets!(directionX)(
 						posSrcCenterX,
-						ratiosHalf[idxX],
 						sourceMax[idxX],
 					);
 
@@ -3252,7 +3243,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 							// ========== Down ==========
 							static if (directionX == down) {
 								static if (mode == SamplingMode.single) {
-									const posSampling = Point(posSrcX[idxL], posSrcY[idxT]);
+									const posSampling = posNeighs[idxTL];
 									const samplingOffset = source.scanTo(posSampling);
 									const srcSamples = () @trusted {
 										return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
