@@ -3128,7 +3128,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					}();
 				}
 
-				foreach (x, ref pxDst; dstLine) {
+				foreach (const x, ref pxDst; dstLine) {
 					const posDstX = x.castTo!uint;
 					const int[2] posDst = [
 						posDstX,
