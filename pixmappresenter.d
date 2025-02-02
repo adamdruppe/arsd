@@ -838,6 +838,40 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 	}
 }
 
+/+
+/++
+	Purely software renderer
+ +/
+final class SoftwarePixmapRenderer : PixmapRenderer {
+
+	private {
+		PresenterObjectsContainer* _poc;
+	}
+
+	public WantsOpenGl wantsOpenGl() @safe pure nothrow @nogc {
+		return WantsOpenGl(0);
+	}
+
+	public void setup(PresenterObjectsContainer* container) {
+	}
+
+	public void reconfigure() {
+	}
+
+	/++
+		Schedules a redraw
+	 +/
+	public void redrawSchedule() {
+	}
+
+	/++
+		Triggers a redraw
+	 +/
+	public void redrawNow() {
+	}
+}
++/
+
 ///
 struct LoopCtrl {
 	int interval; /// in milliseconds
