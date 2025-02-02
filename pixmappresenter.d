@@ -630,7 +630,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
 			case nearest:
-			case fauxLinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
@@ -740,7 +739,6 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 			final switch (_poc.config.renderer.filter) with (ScalingFilter) {
 			case nearest:
-			case fauxLinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;

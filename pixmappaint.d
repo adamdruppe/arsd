@@ -2957,15 +2957,6 @@ enum ScalingFilter {
 	 +/
 	bilinear,
 
-	/++
-		Unweighted linear interpolation
-
-		$(TIP
-			Visual impression: “blocky”, “pixelated”
-		)
-	 +/
-	fauxLinear,
-
 	///
 	linear = bilinear,
 }
@@ -3038,7 +3029,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 	}
 
 	// ==== Bilinear ====
-	static if ((filter == ScalingFilter.bilinear) || (filter == ScalingFilter.fauxLinear)) {
+	static if (filter == ScalingFilter.bilinear) {
 		void scaleToLinearImpl(ScalingDirection directionX, ScalingDirection directionY)() {
 
 			alias InterPixel = ulong[4];
@@ -3170,19 +3161,6 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 					];
 
 					enum idxTL = 0, idxTR = 1, idxBL = 2, idxBR = 3;
-
-					// ====== Faux bilinear ======
-					static if (filter == ScalingFilter.fauxLinear) {
-						auto pxInt = Pixel(0, 0, 0, 0);
-
-						foreach (immutable ib, ref c; pxInt.components) {
-							uint sum = 0;
-							foreach (const pxNeigh; pxNeighs) {
-								sum += (() @trusted => pxNeigh.components.ptr[ib])();
-							}
-							c = (sum >> 2).castTo!ubyte;
-						}
-					}
 
 					// ====== Proper bilinear (up) + Avg (down) ======
 					static if (filter == ScalingFilter.bilinear) {
