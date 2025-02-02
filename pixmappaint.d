@@ -3199,7 +3199,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 								InterPixel foreachLine(scope ForeachLineCallback apply) {
 									pragma(inline, true);
 									InterPixel linesSum = 0;
-									foreach (lineY; posSrcY[idxT] .. (1 + posSrcY[idxB])) {
+									foreach (const lineY; posSrcY[idxT] .. (1 + posSrcY[idxB])) {
 										const posLine = Point(posSrcX[idxL], lineY);
 										const lineValues = apply(posLine);
 										linesSum[] += lineValues[];
@@ -3245,8 +3245,8 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 									InterPixel xSum = [0, 0, 0, 0];
 
-									foreach (srcSample; srcSamples) {
-										foreach (immutable ib, c; srcSample.components) {
+									foreach (const srcSample; srcSamples) {
+										foreach (immutable ib, const c; srcSample.components) {
 											() @trusted { xSum.ptr[ib] += c; }();
 										}
 									}
@@ -3276,14 +3276,14 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 
 									InterPixel[2] xSums = [[0, 0, 0, 0], [0, 0, 0, 0]];
 
-									foreach (idx, srcSamples; srcSamples2) {
-										foreach (srcSample; srcSamples) {
-											foreach (immutable ib, c; srcSample.components)
+									foreach (immutable idx, const srcSamples; srcSamples2) {
+										foreach (const srcSample; srcSamples) {
+											foreach (immutable ib, const c; srcSample.components)
 												() @trusted { xSums.ptr[idx].ptr[ib] += c; }();
 										}
 									}
 
-									foreach (xSum; xSums) {
+									foreach (ref xSum; xSums) {
 										xSum[] /= nSamples;
 									}
 
@@ -3300,7 +3300,7 @@ private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap targe
 										InterPixel xSum = 0;
 
 										foreach (srcSample; srcSamples) {
-											foreach (immutable ib, c; srcSample.components) {
+											foreach (immutable ib, const c; srcSample.components) {
 												() @trusted { xSum.ptr[ib] += c; }();
 											}
 										}
