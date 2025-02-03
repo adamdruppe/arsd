@@ -373,12 +373,6 @@ enum Scaling {
 }
 
 ///
-enum ScalingFilter {
-	nearest, /// nearest neighbor → blocky/pixel’ish
-	linear, /// (bi-)linear interpolation → smooth/blurry
-}
-
-///
 struct PresenterConfig {
 	Window window; ///
 	Renderer renderer; ///
@@ -397,7 +391,7 @@ struct PresenterConfig {
 		Scaling scaling = Scaling.keepAspectRatio;
 
 		/++
-			Filter
+			Scaling filter
 		 +/
 		ScalingFilter filter = ScalingFilter.nearest;
 
@@ -639,7 +633,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;
@@ -748,7 +742,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;
@@ -841,6 +835,40 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 		_poc.window.redrawOpenGlSceneNow();
 	}
 }
+
+/+
+/++
+	Purely software renderer
+ +/
+final class SoftwarePixmapRenderer : PixmapRenderer {
+
+	private {
+		PresenterObjectsContainer* _poc;
+	}
+
+	public WantsOpenGl wantsOpenGl() @safe pure nothrow @nogc {
+		return WantsOpenGl(0);
+	}
+
+	public void setup(PresenterObjectsContainer* container) {
+	}
+
+	public void reconfigure() {
+	}
+
+	/++
+		Schedules a redraw
+	 +/
+	public void redrawSchedule() {
+	}
+
+	/++
+		Triggers a redraw
+	 +/
+	public void redrawNow() {
+	}
+}
++/
 
 ///
 struct LoopCtrl {

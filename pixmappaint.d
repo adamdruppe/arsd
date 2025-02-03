@@ -21,7 +21,12 @@
 	In the case of this library, a “width” field is used to map a specified
 	number of pixels to a row of an image.
 
-	```
+
+
+
+	### Pixel mapping
+
+	```text
 	pixels := [ 0, 1, 2, 3 ]
 	width  := 2
 
@@ -32,7 +37,7 @@
 		]
 	```
 
-	```
+	```text
 	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ]
 	width  := 3
 
@@ -45,7 +50,7 @@
 		]
 	```
 
-	```
+	```text
 	pixels := [ 0, 1, 2, 3, 4, 5, 6, 7 ]
 	width  := 4
 
@@ -132,8 +137,8 @@
 	prone to such errors.
 
 	(Slicing of the 1D array data can actually be utilized to cut off the
-	bottom part of an image. Any other naiv cropping operations will run into
-	the aforementioned issues.)
+	top or bottom part of an image. Any other naiv cropping operations will run
+	into the aforementioned issues.)
 
 
 
@@ -248,12 +253,12 @@
 
 	Depending on the operation, implementing in-place transformations can be
 	either straightforward or a major undertaking (and topic of research).
-	This library focuses and the former and leaves out cases where the latter
-	applies.
+	This library focuses and the former case and leaves out those where the
+	latter applies.
 	In particular, algorithms that require allocating further buffers to store
 	temporary results or auxiliary data will probably not get implemented.
 
-	Furthermore, operations where to result is longer than the source cannot
+	Furthermore, operations where to result is larger than the source cannot
 	be performed in-place.
 
 	Certain in-place manipulation functions return a shallow-copy of the
@@ -329,8 +334,7 @@ private float round(float f) pure @nogc nothrow @trusted {
 	## TODO:
 
 	- Refactoring the template-mess of blendPixel() & co.
-	- Scaling
-	- Rotating
+	- Rotating (by arbitrary angles)
 	- Skewing
 	- HSL
 	- Advanced blend modes (maybe)
@@ -372,6 +376,323 @@ static assert(Pixel.sizeof == uint.sizeof);
 	Pixel rgb(ubyte r, ubyte g, ubyte b) {
 		return rgba(r, g, b, 0xFF);
 	}
+}
+
+/++
+	Unsigned 64-bit fixed-point decimal type
+
+	Assigns 32 bits to the digits of the pre-decimal point portion
+	and the other 32 bits to fractional digits.
+ +/
+struct UDecimal {
+	private {
+		ulong _value = 0;
+	}
+
+@safe pure nothrow @nogc:
+
+	///
+	public this(uint initialValue) {
+		_value = (ulong(initialValue) << 32);
+	}
+
+	private static UDecimal make(ulong internal) {
+		auto result = UDecimal();
+		result._value = internal;
+		return result;
+	}
+
+	///
+	T opCast(T : uint)() const {
+		return (_value >> 32).castTo!uint;
+	}
+
+	///
+	T opCast(T : double)() const {
+		return (_value / double(0xFFFF_FFFF));
+	}
+
+	///
+	T opCast(T : float)() const {
+		return (_value / float(0xFFFF_FFFF));
+	}
+
+	///
+	public UDecimal round() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		const delta = _value - truncated;
+
+		// dfmt off
+		const rounded = (delta >= 0x8000_0000)
+			? truncated + 0x1_0000_0000
+			: truncated;
+		// dfmt on
+
+		return UDecimal.make(rounded);
+	}
+
+	///
+	public UDecimal roundEven() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		const delta = _value - truncated;
+
+		ulong rounded;
+
+		if (delta == 0x8000_0000) {
+			const bool floorIsOdd = ((truncated & 0x1_0000_0000) != 0);
+			// dfmt off
+			rounded = (floorIsOdd)
+				? truncated + 0x1_0000_0000 // ceil
+				: truncated;                // floor
+			// dfmt on
+		} else if (delta > 0x8000_0000) {
+			rounded = truncated + 0x1_0000_0000;
+		} else {
+			rounded = truncated;
+		}
+
+		return UDecimal.make(rounded);
+	}
+
+	///
+	public UDecimal floor() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+		return UDecimal.make(truncated);
+	}
+
+	///
+	public UDecimal ceil() const {
+		const truncated = (_value & 0xFFFF_FFFF_0000_0000);
+
+		// dfmt off
+		const ceiling = (truncated != _value)
+			? truncated + 0x1_0000_0000
+			: truncated;
+		// dfmt on
+
+		return UDecimal.make(ceiling);
+	}
+
+	///
+	public uint fractionalDigits() const {
+		return (_value & 0x0000_0000_FFFF_FFFF);
+	}
+
+	public {
+		///
+		int opCmp(const UDecimal that) const {
+			return ((this._value > that._value) - (this._value < that._value));
+		}
+	}
+
+	public {
+		///
+		UDecimal opBinary(string op : "+")(const uint rhs) const {
+			return UDecimal.make(_value + (ulong(rhs) << 32));
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "+")(const UDecimal rhs) const {
+			return UDecimal.make(_value + rhs._value);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "-")(const uint rhs) const {
+			return UDecimal.make(_value - (ulong(rhs) << 32));
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "-")(const UDecimal rhs) const {
+			return UDecimal.make(_value - rhs._value);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "*")(const uint rhs) const {
+			return UDecimal.make(_value * rhs);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "/")(const uint rhs) const {
+			return UDecimal.make(_value / rhs);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : "<<")(const uint rhs) const {
+			return UDecimal.make(_value << rhs);
+		}
+
+		/// ditto
+		UDecimal opBinary(string op : ">>")(const uint rhs) const {
+			return UDecimal.make(_value >> rhs);
+		}
+	}
+
+	public {
+		///
+		UDecimal opBinaryRight(string op : "+")(const uint lhs) const {
+			return UDecimal.make((ulong(lhs) << 32) + _value);
+		}
+
+		/// ditto
+		UDecimal opBinaryRight(string op : "-")(const uint lhs) const {
+			return UDecimal.make((ulong(lhs) << 32) - _value);
+		}
+
+		/// ditto
+		UDecimal opBinaryRight(string op : "*")(const uint lhs) const {
+			return UDecimal.make(lhs * _value);
+		}
+
+		/// ditto
+		UDecimal opBinaryRight(string op : "/")(const uint) const {
+			static assert(false, "Use `uint(…) / cast(uint)(UDecimal(…))` instead.");
+		}
+	}
+
+	public {
+		///
+		UDecimal opOpAssign(string op : "+")(const uint rhs) {
+			_value += (ulong(rhs) << 32);
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "+")(const UDecimal rhs) {
+			_value += rhs._value;
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "-")(const uint rhs) {
+			_value -= (ulong(rhs) << 32);
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "-")(const UDecimal rhs) {
+			_value -= rhs._value;
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "*")(const uint rhs) {
+			_value *= rhs;
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "/")(const uint rhs) {
+			_value /= rhs;
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : "<<")(const uint rhs) const {
+			_value <<= rhs;
+			return this;
+		}
+
+		/// ditto
+		UDecimal opOpAssign(string op : ">>")(const uint rhs) const {
+			_value >>= rhs;
+			return this;
+		}
+	}
+}
+
+@safe unittest {
+	assert(UDecimal(uint.max).castTo!uint == uint.max);
+	assert(UDecimal(uint.min).castTo!uint == uint.min);
+	assert(UDecimal(1).castTo!uint == 1);
+	assert(UDecimal(2).castTo!uint == 2);
+	assert(UDecimal(1_991_007).castTo!uint == 1_991_007);
+
+	assert((UDecimal(10) + 9).castTo!uint == 19);
+	assert((UDecimal(10) - 9).castTo!uint == 1);
+	assert((UDecimal(10) * 9).castTo!uint == 90);
+	assert((UDecimal(99) / 9).castTo!uint == 11);
+
+	assert((4 + UDecimal(4)).castTo!uint == 8);
+	assert((4 - UDecimal(4)).castTo!uint == 0);
+	assert((4 * UDecimal(4)).castTo!uint == 16);
+
+	assert((UDecimal(uint.max) / 2).castTo!uint == 2_147_483_647);
+	assert((UDecimal(uint.max) / 2).round().castTo!uint == 2_147_483_648);
+
+	assert((UDecimal(10) / 8).round().castTo!uint == 1);
+	assert((UDecimal(10) / 8).floor().castTo!uint == 1);
+	assert((UDecimal(10) / 8).ceil().castTo!uint == 2);
+
+	assert((UDecimal(10) / 4).round().castTo!uint == 3);
+	assert((UDecimal(10) / 4).floor().castTo!uint == 2);
+	assert((UDecimal(10) / 4).ceil().castTo!uint == 3);
+
+	assert((UDecimal(10) / 5).round().castTo!uint == 2);
+	assert((UDecimal(10) / 5).floor().castTo!uint == 2);
+	assert((UDecimal(10) / 5).ceil().castTo!uint == 2);
+}
+
+@safe unittest {
+	UDecimal val;
+
+	val = (UDecimal(1) / 2);
+	assert(val.roundEven().castTo!uint == 0);
+	assert(val.castTo!double > 0.49);
+	assert(val.castTo!double < 0.51);
+
+	val = (UDecimal(3) / 2);
+	assert(val.roundEven().castTo!uint == 2);
+	assert(val.castTo!double > 1.49);
+	assert(val.castTo!double < 1.51);
+}
+
+@safe unittest {
+	UDecimal val;
+
+	val = UDecimal(10);
+	val += 12;
+	assert(val.castTo!uint == 22);
+
+	val = UDecimal(1024);
+	val -= 24;
+	assert(val.castTo!uint == 1000);
+	val -= 100;
+	assert(val.castTo!uint == 900);
+	val += 5;
+	assert(val.castTo!uint == 905);
+
+	val = UDecimal(256);
+	val *= 4;
+	assert(val.castTo!uint == (256 * 4));
+
+	val = UDecimal(2048);
+	val /= 10;
+	val *= 10;
+	assert(val.castTo!uint == 2047);
+}
+
+@safe unittest {
+	UDecimal val;
+
+	val = UDecimal(9_000_000);
+	val /= 13;
+	val *= 4;
+
+	// ≈ 2,769,230.8
+	assert(val.castTo!uint == 2_769_230);
+	assert(val.round().castTo!uint == 2_769_231);
+	// assert(uint(9_000_000) / uint(13) * uint(4) == 2_769_228);
+
+	val = UDecimal(64);
+	val /= 31;
+	val *= 30;
+	val /= 29;
+	val *= 28;
+
+	// ≈ 59.8
+	assert(val.castTo!uint == 59);
+	assert(val.round().castTo!uint == 60);
+	// assert(((((64 / 31) * 30) / 29) * 28) == 56);
 }
 
 /++
@@ -768,7 +1089,8 @@ struct SubPixmap {
 			Allocates a new Pixmap cropped to the pixel data of the subimage.
 
 			See_also:
-				Use [extractToPixmap] for a non-allocating variant with an .
+				Use [extractToPixmap] for a non-allocating variant with a
+				target parameter.
 		 +/
 		Pixmap extractToNewPixmap() const {
 			auto pm = Pixmap.makeNew(size);
@@ -2551,7 +2873,7 @@ private void flipVerticallyInto(const Pixmap source, Pixmap target) @nogc {
  +/
 Pixmap flipVertically(const Pixmap source, Pixmap target) @nogc {
 	target.adjustTo(source.flipVerticallyCalcDims());
-	flipVerticallyInto(source, target);
+	source.flipVerticallyInto(target);
 	return target;
 }
 
@@ -2589,6 +2911,616 @@ void flipVerticallyInPlace(Pixmap source) @nogc {
 /// ditto
 PixmapBlueprint flipVerticallyCalcDims(const Pixmap source) @nogc {
 	return PixmapBlueprint.fromPixmap(source);
+}
+
+/++
+	Interpolation methods to apply when scaling images
+
+	Each filter has its own distinctive properties.
+
+	$(TIP
+		Bilinear filtering (`linear`) is general-purpose.
+		Works well with photos.
+
+		For pixel graphics the retro look of `nearest` (as
+		in $(I nearest neighbor)) is usually the option of choice.
+	)
+
+	$(NOTE
+		When used as a parameter, it shall be understood as a hint.
+
+		Implementations are not required to support all enumerated options
+		and may pick a different filter as a substitute at their own discretion.
+	)
+ +/
+enum ScalingFilter {
+	/++
+		Nearest neighbor interpolation
+
+		Also known as $(B proximal interpolation)
+		and $(B point sampling).
+
+		$(TIP
+			Visual impression: “blocky”, “pixelated”, “slightly displaced”
+		)
+	 +/
+	nearest,
+
+	/++
+		Bilinear interpolation
+
+		(Uses arithmetic mean for downscaling.)
+
+		$(TIP
+			Visual impression: “smooth”, “blurred”
+		)
+	 +/
+	bilinear,
+
+	///
+	linear = bilinear,
+}
+
+private enum ScalingDirection {
+	none,
+	up,
+	down,
+}
+
+private static ScalingDirection scalingDirectionFromDelta(const int delta) @nogc {
+	if (delta == 0) {
+		return ScalingDirection.none;
+	} else if (delta > 0) {
+		return ScalingDirection.up;
+	} else {
+		return ScalingDirection.down;
+	}
+}
+
+private void scaleToImpl(ScalingFilter filter)(const Pixmap source, Pixmap target) @nogc {
+	enum none = ScalingDirection.none;
+	enum up = ScalingDirection.up;
+	enum down = ScalingDirection.down;
+
+	enum udecimalHalf = UDecimal.make(0x8000_0000);
+	enum uint udecimalHalfFD = udecimalHalf.fractionalDigits;
+
+	enum idxX = 0, idxY = 1;
+	enum idxL = 0, idxR = 1;
+	enum idxT = 0, idxB = 1;
+
+	const int[2] sourceMax = [
+		(source.width - 1),
+		(source.height - 1),
+	];
+
+	const UDecimal[2] ratios = [
+		(UDecimal(source.width) / target.width),
+		(UDecimal(source.height) / target.height),
+	];
+
+	const UDecimal[2] ratiosHalf = [
+		(ratios[idxX] >> 1),
+		(ratios[idxY] >> 1),
+	];
+
+	// ==== Nearest Neighbor ====
+	static if (filter == ScalingFilter.nearest) {
+
+		Point translate(const Point dstPos) {
+			pragma(inline, true);
+			const x = (dstPos.x * ratios[idxX]).castTo!int;
+			const y = (dstPos.y * ratios[idxY]).castTo!int;
+			return Point(x, y);
+		}
+
+		auto dst = PixmapScannerRW(target);
+
+		size_t y = 0;
+		foreach (dstLine; dst) {
+			foreach (x, ref pxDst; dstLine) {
+				const posDst = Point(x.castTo!int, y.castTo!int);
+				const posSrc = translate(posDst);
+				const pxInt = source.getPixel(posSrc);
+				pxDst = pxInt;
+			}
+			++y;
+		}
+	}
+
+	// ==== Bilinear ====
+	static if (filter == ScalingFilter.bilinear) {
+		void scaleToLinearImpl(ScalingDirection directionX, ScalingDirection directionY)() {
+
+			alias InterPixel = ulong[4];
+
+			static Pixel toPixel(const InterPixel ipx) @safe pure nothrow @nogc {
+				pragma(inline, true);
+				return Pixel(
+					clamp255(ipx[0]),
+					clamp255(ipx[1]),
+					clamp255(ipx[2]),
+					clamp255(ipx[3]),
+				);
+			}
+
+			static InterPixel toInterPixel(const Pixel ipx) @safe pure nothrow @nogc {
+				pragma(inline, true);
+				InterPixel result = [
+					ipx.r,
+					ipx.g,
+					ipx.b,
+					ipx.a,
+				];
+				return result;
+			}
+
+			int[2] posSrcCenterToInterpolationTargets(
+				ScalingDirection direction,
+			)(
+				UDecimal posSrcCenter,
+				int sourceMax,
+			) {
+				pragma(inline, true);
+
+				int[2] result;
+				static if (direction == none) {
+					const value = posSrcCenter.castTo!int;
+					result = [
+						value,
+						value,
+					];
+				}
+
+				static if (direction == up || direction == down) {
+					if (posSrcCenter < udecimalHalf) {
+						result = [
+							0,
+							0,
+						];
+					} else {
+						const floor = posSrcCenter.castTo!uint;
+						if (posSrcCenter.fractionalDigits == udecimalHalfFD) {
+							result = [
+								floor,
+								floor,
+							];
+						} else if (posSrcCenter.fractionalDigits > udecimalHalfFD) {
+							const upper = min((floor + 1), sourceMax);
+							result = [
+								floor,
+								upper,
+							];
+						} else {
+							result = [
+								floor - 1,
+								floor,
+							];
+						}
+					}
+				}
+
+				return result;
+			}
+
+			auto dst = PixmapScannerRW(target);
+
+			size_t y = 0;
+			foreach (dstLine; dst) {
+				const posDstY = y.castTo!uint;
+				const UDecimal posSrcCenterY = posDstY * ratios[idxY] + ratiosHalf[idxY];
+
+				const int[2] posSrcY = posSrcCenterToInterpolationTargets!(directionY)(
+					posSrcCenterY,
+					sourceMax[idxY],
+				);
+
+				static if (directionY == down) {
+					const nLines = 1 + posSrcY[idxB] - posSrcY[idxT];
+				}
+
+				static if (directionY == up) {
+					const ulong[2] weightsY = () {
+						ulong[2] result;
+						result[0] = (udecimalHalf + posSrcY[1] - posSrcCenterY).fractionalDigits;
+						result[1] = ulong(uint.max) + 1 - result[0];
+						return result;
+					}();
+				}
+
+				foreach (const x, ref pxDst; dstLine) {
+					const posDstX = x.castTo!uint;
+					const int[2] posDst = [
+						posDstX,
+						posDstY,
+					];
+
+					const posSrcCenterX = posDst[idxX] * ratios[idxX] + ratiosHalf[idxX];
+
+					const int[2] posSrcX = posSrcCenterToInterpolationTargets!(directionX)(
+						posSrcCenterX,
+						sourceMax[idxX],
+					);
+
+					static if (directionX == down) {
+						const nSamples = 1 + posSrcX[idxR] - posSrcX[idxL];
+					}
+
+					const Point[4] posNeighs = [
+						Point(posSrcX[idxL], posSrcY[idxT]),
+						Point(posSrcX[idxR], posSrcY[idxT]),
+						Point(posSrcX[idxL], posSrcY[idxB]),
+						Point(posSrcX[idxR], posSrcY[idxB]),
+					];
+
+					const Color[4] pxNeighs = [
+						source.getPixel(posNeighs[0]),
+						source.getPixel(posNeighs[1]),
+						source.getPixel(posNeighs[2]),
+						source.getPixel(posNeighs[3]),
+					];
+
+					enum idxTL = 0, idxTR = 1, idxBL = 2, idxBR = 3;
+
+					// ====== Proper bilinear (up) + Avg (down) ======
+					static if (filter == ScalingFilter.bilinear) {
+						auto pxInt = Pixel(0, 0, 0, 0);
+
+						// ======== Interpolate X ========
+						auto sampleX() {
+							pragma(inline, true);
+
+							static if (directionY == down) {
+								alias ForeachLineCallback =
+									InterPixel delegate(const Point posLine) @safe pure nothrow @nogc;
+
+								InterPixel foreachLine(scope ForeachLineCallback apply) {
+									pragma(inline, true);
+									InterPixel linesSum = 0;
+									foreach (const lineY; posSrcY[idxT] .. (1 + posSrcY[idxB])) {
+										const posLine = Point(posSrcX[idxL], lineY);
+										const lineValues = apply(posLine);
+										linesSum[] += lineValues[];
+									}
+									return linesSum;
+								}
+							}
+
+							// ========== None ==========
+							static if (directionX == none) {
+								static if (directionY == none) {
+									return pxNeighs[idxTL];
+								}
+
+								static if (directionY == up) {
+									return () @trusted {
+										InterPixel[2] result = [
+											toInterPixel(pxNeighs[idxTL]),
+											toInterPixel(pxNeighs[idxBL]),
+										];
+										return result;
+									}();
+								}
+
+								static if (directionY == down) {
+									auto ySum = foreachLine(delegate(const Point posLine) {
+										const pxSrc = source.getPixel(posLine);
+										return toInterPixel(pxSrc);
+									});
+									ySum[] /= nLines;
+									return ySum;
+								}
+							}
+
+							// ========== Down ==========
+							static if (directionX == down) {
+								static if (directionY == none) {
+									const posSampling = posNeighs[idxTL];
+									const samplingOffset = source.scanTo(posSampling);
+									const srcSamples = () @trusted {
+										return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
+									}();
+
+									InterPixel xSum = [0, 0, 0, 0];
+
+									foreach (const srcSample; srcSamples) {
+										foreach (immutable ib, const c; srcSample.components) {
+											() @trusted { xSum.ptr[ib] += c; }();
+										}
+									}
+
+									xSum[] /= nSamples;
+									return toPixel(xSum);
+								}
+
+								static if (directionY == up) {
+									const Point[2] posSampling = [
+										posNeighs[idxTL],
+										posNeighs[idxBL],
+									];
+
+									const int[2] samplingOffsets = [
+										source.scanTo(posSampling[idxT]),
+										source.scanTo(posSampling[idxB]),
+									];
+
+									const srcSamples2 = () @trusted {
+										const(const(Pixel)[])[2] result = [
+											source.data.ptr[samplingOffsets[idxT] .. (samplingOffsets[idxT] + nSamples)],
+											source.data.ptr[samplingOffsets[idxB] .. (samplingOffsets[idxB] + nSamples)],
+										];
+										return result;
+									}();
+
+									InterPixel[2] xSums = [[0, 0, 0, 0], [0, 0, 0, 0]];
+
+									foreach (immutable idx, const srcSamples; srcSamples2) {
+										foreach (const srcSample; srcSamples) {
+											foreach (immutable ib, const c; srcSample.components)
+												() @trusted { xSums.ptr[idx].ptr[ib] += c; }();
+										}
+									}
+
+									foreach (ref xSum; xSums) {
+										xSum[] /= nSamples;
+									}
+
+									return xSums;
+								}
+
+								static if (directionY == down) {
+									auto ySum = foreachLine(delegate(const Point posLine) {
+										const samplingOffset = source.scanTo(posLine);
+										const srcSamples = () @trusted {
+											return source.data.ptr[samplingOffset .. (samplingOffset + nSamples)];
+										}();
+
+										InterPixel xSum = 0;
+
+										foreach (srcSample; srcSamples) {
+											foreach (immutable ib, const c; srcSample.components) {
+												() @trusted { xSum.ptr[ib] += c; }();
+											}
+										}
+
+										return xSum;
+									});
+
+									ySum[] /= nSamples;
+									ySum[] /= nLines;
+									return ySum;
+								}
+							}
+
+							// ========== Up ==========
+							static if (directionX == up) {
+
+								if (posSrcX[0] == posSrcX[1]) {
+									static if (directionY == none) {
+										return pxNeighs[idxTL];
+									}
+									static if (directionY == up) {
+										return () @trusted {
+											InterPixel[2] result = [
+												toInterPixel(pxNeighs[idxTL]),
+												toInterPixel(pxNeighs[idxBL]),
+											];
+											return result;
+										}();
+									}
+									static if (directionY == down) {
+										auto ySum = foreachLine(delegate(const Point posLine) {
+											const samplingOffset = source.scanTo(posLine);
+											return toInterPixel(
+												(() @trusted => source.data.ptr[samplingOffset])()
+											);
+										});
+										ySum[] /= nLines;
+										return ySum;
+									}
+								}
+
+								const ulong[2] weightsX = () {
+									ulong[2] result;
+									result[0] = (udecimalHalf + posSrcX[1] - posSrcCenterX).fractionalDigits;
+									result[1] = ulong(uint.max) + 1 - result[0];
+									return result;
+								}();
+
+								static if (directionY == none) {
+									InterPixel xSum = [0, 0, 0, 0];
+
+									foreach (immutable ib, ref c; xSum) {
+										c += ((() @trusted => pxNeighs[idxTL].components.ptr[ib])() * weightsX[0]);
+										c += ((() @trusted => pxNeighs[idxTR].components.ptr[ib])() * weightsX[1]);
+									}
+
+									foreach (ref c; xSum) {
+										c >>= 32;
+									}
+									return toPixel(xSum);
+								}
+
+								static if (directionY == up) {
+									InterPixel[2] xSums = [[0, 0, 0, 0], [0, 0, 0, 0]];
+
+									() @trusted {
+										foreach (immutable ib, ref c; xSums[0]) {
+											c += (pxNeighs[idxTL].components.ptr[ib] * weightsX[idxL]);
+											c += (pxNeighs[idxTR].components.ptr[ib] * weightsX[idxR]);
+										}
+
+										foreach (immutable ib, ref c; xSums[1]) {
+											c += (pxNeighs[idxBL].components.ptr[ib] * weightsX[idxL]);
+											c += (pxNeighs[idxBR].components.ptr[ib] * weightsX[idxR]);
+										}
+									}();
+
+									foreach (ref sum; xSums) {
+										foreach (ref c; sum) {
+											c >>= 32;
+										}
+									}
+
+									return xSums;
+								}
+
+								static if (directionY == down) {
+									auto ySum = foreachLine(delegate(const Point posLine) {
+										InterPixel xSum = [0, 0, 0, 0];
+
+										const samplingOffset = source.scanTo(posLine);
+										Pixel[2] pxcLR = () @trusted {
+											Pixel[2] result = [
+												source.data.ptr[samplingOffset],
+												source.data.ptr[samplingOffset + 1],
+											];
+											return result;
+										}();
+
+										foreach (immutable ib, ref c; xSum) {
+											c += ((() @trusted => pxcLR[idxL].components.ptr[ib])() * weightsX[idxL]);
+											c += ((() @trusted => pxcLR[idxR].components.ptr[ib])() * weightsX[idxR]);
+										}
+
+										foreach (ref c; xSum) {
+											c >>= 32;
+										}
+										return xSum;
+									});
+
+									ySum[] /= nLines;
+									return ySum;
+								}
+							}
+						}
+
+						// ======== Interpolate Y ========
+						static if (directionY == none) {
+							const Pixel tmp = sampleX();
+							pxInt = tmp;
+						}
+						static if (directionY == down) {
+							const InterPixel tmp = sampleX();
+							pxInt = toPixel(tmp);
+						}
+						static if (directionY == up) {
+							const InterPixel[2] xSums = sampleX();
+							foreach (immutable ib, ref c; pxInt.components) {
+								ulong ySum = 0;
+								ySum += ((() @trusted => xSums[idxT].ptr[ib])() * weightsY[idxT]);
+								ySum += ((() @trusted => xSums[idxB].ptr[ib])() * weightsY[idxB]);
+
+								const xySum = (ySum >> 32);
+								c = clamp255(xySum);
+							}
+						}
+					}
+
+					pxDst = pxInt;
+				}
+
+				++y;
+			}
+		}
+
+		const Size delta = (target.size - source.size);
+
+		const ScalingDirection[2] directions = [
+			scalingDirectionFromDelta(delta.width),
+			scalingDirectionFromDelta(delta.height),
+		];
+
+		if (directions[0] == none) {
+			if (directions[1] == none) {
+				version (none) {
+					scaleToLinearImpl!(none, none)();
+				} else {
+					target.data[] = source.data[];
+				}
+			} else if (directions[1] == up) {
+				scaleToLinearImpl!(none, up)();
+			} else /* if (directions[1] == down) */ {
+				scaleToLinearImpl!(none, down)();
+			}
+		} else if (directions[0] == up) {
+			if (directions[1] == none) {
+				scaleToLinearImpl!(up, none)();
+			} else if (directions[1] == up) {
+				scaleToLinearImpl!(up, up)();
+			} else /* if (directions[1] == down) */ {
+				scaleToLinearImpl!(up, down)();
+			}
+		} else /* if (directions[0] == down) */ {
+			if (directions[1] == none) {
+				scaleToLinearImpl!(down, none)();
+			} else if (directions[1] == up) {
+				scaleToLinearImpl!(down, up)();
+			} else /* if (directions[1] == down) */ {
+				scaleToLinearImpl!(down, down)();
+			}
+		}
+	}
+}
+
+/++
+	Scales a pixmap and stores the result in the provided target Pixmap.
+
+	The size to scale the image to
+	is derived from the size of the target.
+
+	---
+	// This function can be used to omit a redundant size parameter
+	// in cases like this:
+	target = scale(source, target, target.size, ScalingFilter.bilinear);
+
+	// → Instead do:
+	scaleTo(source, target, ScalingFilter.bilinear);
+	---
+ +/
+void scaleTo(const Pixmap source, Pixmap target, ScalingFilter filter) @nogc {
+	import std.meta : NoDuplicates;
+	import std.traits : EnumMembers;
+
+	// dfmt off
+	final switch (filter) {
+		static foreach (scalingFilter; NoDuplicates!(EnumMembers!ScalingFilter))
+			case scalingFilter: {
+				scaleToImpl!scalingFilter(source, target);
+				return;
+			}
+	}
+	// dfmt on
+}
+
+// consistency
+private alias scaleInto = scaleTo;
+
+/++
+	Scales an image to a new size.
+
+	```
+	╔═══╗   ╔═╗
+	║———║ → ║—║
+	╚═══╝   ╚═╝
+	```
+ +/
+Pixmap scale(const Pixmap source, Pixmap target, Size scaleToSize, ScalingFilter filter) @nogc {
+	target.adjustTo(scaleCalcDims(scaleToSize));
+	source.scaleInto(target, filter);
+	return target;
+}
+
+/// ditto
+Pixmap scaleNew(const Pixmap source, Size scaleToSize, ScalingFilter filter) {
+	auto target = Pixmap.makeNew(scaleToSize);
+	source.scaleInto(target, filter);
+	return target;
+}
+
+/// ditto
+PixmapBlueprint scaleCalcDims(Size scaleToSize) @nogc {
+	return PixmapBlueprint.fromSize(scaleToSize);
 }
 
 @safe pure nothrow @nogc:
