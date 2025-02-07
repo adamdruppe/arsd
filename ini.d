@@ -73,6 +73,11 @@ private enum LocationState {
 
 /++
 	Low-level INI parser
+
+	See_also:
+		$(LIST
+			* [parseIniDocument]
+		)
  +/
 struct IniParser(
 	IniDialect dialect = IniDialect.defaults,
@@ -126,7 +131,7 @@ struct IniParser(
 		}
 
 		///
-		typeof(this) save() inout {
+		inout(typeof(this)) save() inout {
 			return this;
 		}
 	}
@@ -442,9 +447,50 @@ struct IniParser(
 	}
 }
 
+///
 @safe unittest {
+	// INI document (demo data)
+	static immutable string rawIniDocument = `; This is a comment.
+[section1]
+foo = bar ;another comment
+oachkatzl = schwoaf ;try pronouncing that
+`;
 
-	static immutable document = `; This is a comment.
+	// Combine feature flags to build the required dialect.
+	const myDialect = (Dialect.defaults | Dialect.inlineComments);
+
+	// Instantiate a new parser and supply our document string.
+	auto parser = IniParser!(myDialect)(rawIniDocument);
+
+	int comments = 0;
+	int sections = 0;
+	int keys = 0;
+	int values = 0;
+
+	// Process token by token.
+	foreach (const parser.Token token; parser) {
+		if (token.type == IniTokenType.comment) {
+			++comments;
+		}
+		if (token.type == IniTokenType.sectionHeader) {
+			++sections;
+		}
+		if (token.type == IniTokenType.key) {
+			++keys;
+		}
+		if (token.type == IniTokenType.value) {
+			++values;
+		}
+	}
+
+	assert(comments == 3);
+	assert(sections == 1);
+	assert(keys == 2);
+	assert(values == 2);
+}
+
+@safe unittest {
+	static immutable string rawIniDocument = `; This is a comment.
 [section1]
 s1key1 = value1
 s1key2 = value2
@@ -456,7 +502,7 @@ s2key1  = "value3"
 s2key2	 =	 value no.4
 `;
 
-	auto parser = IniParser!()(document);
+	auto parser = IniParser!()(rawIniDocument);
 	alias Token = typeof(parser).Token;
 
 	{
@@ -560,4 +606,173 @@ s2key2	 =	 value no.4
 	parser.popFront();
 	assert(parser.skipIrrelevant());
 	assert(parser.empty());
+}
+
+/++
+	Data entry of an INI document
+ +/
+struct IniKeyValuePair(string) if (isCompatibleString!string) {
+	///
+	string key;
+
+	///
+	string value;
+}
+
+/++
+	Section of an INI document
+
+	$(NOTE
+		Data entries from the document’s root – i.e. those with no designated section –
+		are stored in a section with its `name` set to `null`.
+	)
+ +/
+struct IniSection(string) if (isCompatibleString!string) {
+	///
+	alias KeyValuePair = IniKeyValuePair!string;
+
+	/++
+		Name of the section
+
+		Also known as “key”.
+	 +/
+	string name;
+
+	/++
+		Data entries of the section
+	 +/
+	KeyValuePair[] items;
+}
+
+/++
+	DOM representation of an INI document
+ +/
+struct IniDocument(string) if (isCompatibleString!string) {
+	///
+	alias Section = IniSection!string;
+
+	/++
+		Sections of the document
+
+		$(NOTE
+			Data entries from the document’s root – i.e. those with no designated section –
+			are stored in a section with its `name` set to `null`.
+
+			If there are no named sections in a document, there will be only a single section with no name (`null`).
+		)
+	 +/
+	Section[] sections;
+}
+
+/++
+	Parses an INI string into a document ("DOM").
+ +/
+IniDocument!string parseIniDocument(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow
+if (isCompatibleString!string) {
+	alias Document = IniDocument!string;
+	alias Section = IniSection!string;
+	alias KeyValuePair = IniKeyValuePair!string;
+
+	auto parser = IniParser!(dialect)(rawIni);
+
+	auto document = Document(null);
+	auto section = Section(null, null);
+	auto kvp = KeyValuePair(null, null);
+
+	void commitKeyValuePair(string nextKey = null) {
+		if (kvp.key !is null) {
+			section.items ~= kvp;
+		}
+		kvp = KeyValuePair(nextKey, null);
+	}
+
+	void commitSection(string nextSectionName) {
+		commitKeyValuePair(null);
+
+		const isNamelessAndEmpty = (
+			(section.name is null)
+				&& (section.items.length == 0)
+		);
+
+		if (!isNamelessAndEmpty) {
+			document.sections ~= section;
+		}
+
+		if (nextSectionName !is null) {
+			section = Section(nextSectionName, null);
+		}
+	}
+
+	while (!parser.skipIrrelevant()) {
+		switch (parser.front.type) with (TokenType) {
+
+		case key:
+			commitKeyValuePair(parser.front.data);
+			break;
+
+		case value:
+			kvp.value = parser.front.data;
+			break;
+
+		case sectionHeader:
+			commitSection(parser.front.data);
+			break;
+
+		default:
+			assert(false, "Unexpected parsing error.");
+		}
+
+		parser.popFront();
+	}
+
+	commitSection(null);
+
+	return document;
+}
+
+///
+@safe unittest {
+	// INI document (demo data)
+	static immutable string iniString = `; This is a comment.
+
+Oachkatzlschwoaf = Seriously, try pronouncing this :P
+
+[Section #1]
+foo = bar
+d = rocks
+
+; Another comment
+
+[Section No.2]
+name    = Walter Bright
+company = "Digital Mars"
+`;
+
+	// Parse the document
+	auto doc = parseIniDocument(iniString);
+
+	version (none) // exclude from docs
+	// …is equivalent to:
+	auto doc = parseIniDocument!(IniDialect.defaults)(iniString);
+
+	assert(doc.sections.length == 3);
+
+	// "Root" section (no name):
+	assert(doc.sections[0].name is null);
+	assert(doc.sections[0].items == [
+		IniKeyValuePair!string("Oachkatzlschwoaf", "Seriously, try pronouncing this :P"),
+	]);
+
+	// A section with a name:
+	assert(doc.sections[1].name == "Section #1");
+	assert(doc.sections[1].items.length == 2);
+	assert(doc.sections[1].items[0] == IniKeyValuePair!string("foo", "bar"));
+	assert(doc.sections[1].items[1] == IniKeyValuePair!string("d", "rocks"));
+
+	// Another section:
+	assert(doc.sections[2].name == "Section No.2");
+	assert(doc.sections[2].items == [
+		IniKeyValuePair!string("name", "Walter Bright"),
+		IniKeyValuePair!string("company", "Digital Mars"),
+	]);
 }
