@@ -34,30 +34,45 @@ private bool hasFeature(ulong dialect, ulong feature) @safe pure nothrow @nogc {
 	return ((dialect & feature) > 0);
 }
 
-///
+/++
+	Type of a token (as output by the parser)
+ +/
 public enum IniTokenType {
+	/// indicates an error
 	invalid = 0,
 
+	/// insignificant whitespace
 	whitespace,
+	/// section header opening bracket
 	bracketOpen,
+	/// section header closing bracket
 	bracketClose,
+	/// key/value separator, e.g. '='
 	keyValueSeparator,
+	/// line break, i.e. LF, CRLF or CR
 	lineBreak,
 
+	/// text comment
 	comment,
 
+	/// item key data
 	key,
+	/// item value data
 	value,
+	/// section name data
 	sectionHeader,
 }
 
-///
+/++
+	Token of INI data (as output by the parser)
+ +/
 struct IniToken(string) if (isCompatibleString!string) {
-
 	///
 	IniTokenType type;
 
-	///
+	/++
+		Content
+	 +/
 	string data;
 }
 
