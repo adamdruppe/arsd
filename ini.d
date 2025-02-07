@@ -116,7 +116,7 @@ struct IniParser(
 		}
 
 		///
-		Token front() inout {
+		inout(Token) front() inout {
 			return _front;
 		}
 
@@ -673,7 +673,7 @@ if (isCompatibleString!string) {
 	alias Section = IniSection!string;
 	alias KeyValuePair = IniKeyValuePair!string;
 
-	auto parser = IniParser!(dialect)(rawIni);
+	auto parser = IniParser!(dialect, string)(rawIni);
 
 	auto document = Document(null);
 	auto section = Section(null, null);
@@ -775,4 +775,23 @@ company = "Digital Mars"
 		IniKeyValuePair!string("name", "Walter Bright"),
 		IniKeyValuePair!string("company", "Digital Mars"),
 	]);
+}
+
+@safe unittest {
+	auto doc = parseIniDocument("");
+	assert(doc.sections == []);
+
+	doc = parseIniDocument(";Comment\n;Comment2\n");
+	assert(doc.sections == []);
+}
+
+@safe unittest {
+	char[] mutable = ['f', 'o', 'o', '=', 'b', 'a', 'r', '\n'];
+
+	auto doc = parseIniDocument(mutable);
+	assert(doc.sections[0].items[0].key == "foo");
+	assert(doc.sections[0].items[0].value == "bar");
+
+	// is mutable
+	static assert(is(typeof(doc.sections[0].items[0].value) == char[]));
 }
