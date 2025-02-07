@@ -77,6 +77,7 @@ private enum LocationState {
 	See_also:
 		$(LIST
 			* [parseIniDocument]
+			* [parseIniAA]
 		)
  +/
 struct IniParser(
@@ -666,6 +667,9 @@ struct IniDocument(string) if (isCompatibleString!string) {
 
 /++
 	Parses an INI string into a document ("DOM").
+
+	See_also:
+		[parseIniAA]
  +/
 IniDocument!string parseIniDocument(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow
 if (isCompatibleString!string) {
@@ -719,7 +723,7 @@ if (isCompatibleString!string) {
 			break;
 
 		default:
-			assert(false, "Unexpected parsing error.");
+			assert(false, "Unexpected parsing error."); // TODO
 		}
 
 		parser.popFront();
@@ -748,7 +752,7 @@ name    = Walter Bright
 company = "Digital Mars"
 `;
 
-	// Parse the document
+	// Parse the document.
 	auto doc = parseIniDocument(iniString);
 
 	version (none) // exclude from docs
@@ -794,4 +798,99 @@ company = "Digital Mars"
 
 	// is mutable
 	static assert(is(typeof(doc.sections[0].items[0].value) == char[]));
+}
+
+/++
+	Parses an INI string into an associate array.
+
+	See_also:
+		[parseIniDocument]
+ +/
+string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow {
+	// TODO: duplicate handling
+	auto parser = IniParser!(dialect, string)(rawIni);
+
+	string[string][string] document;
+	string[string] section;
+
+	string sectionName = null;
+	string keyName = null;
+
+	void commitSection() {
+		sectionName = null;
+	}
+
+	while (!parser.skipIrrelevant()) {
+		switch (parser.front.type) with (TokenType) {
+
+		case key:
+			keyName = parser.front.data;
+			break;
+
+		case value:
+			section[keyName] = parser.front.data;
+			break;
+
+		case sectionHeader:
+			if ((sectionName !is null) || (section.length > 0)) {
+				document[sectionName] = section;
+				section = null;
+			}
+			sectionName = parser.front.data;
+			break;
+
+		default:
+			assert(false, "Unexpected parsing error."); // TODO
+		}
+
+		parser.popFront();
+	}
+
+	if ((sectionName !is null) || (section.length > 0)) {
+		document[sectionName] = section;
+	}
+
+	return document;
+}
+
+///
+@safe unittest {
+	// INI document
+	static immutable string demoData = `; This is a comment.
+
+Oachkatzlschwoaf = Seriously, try pronouncing this :P
+
+[Section #1]
+foo = bar
+d = rocks
+
+; Another comment
+
+[Section No.2]
+name    = Walter Bright
+company = "Digital Mars"
+website = <https://digitalmars.com/>
+;email  = "noreply@example.org"
+`;
+
+	// Parse the document into an associative array.
+	auto aa = parseIniAA(demoData);
+
+	assert(aa.length == 3);
+
+	assert(aa[null].length == 1);
+	assert(aa[null]["Oachkatzlschwoaf"] == "Seriously, try pronouncing this :P");
+
+	assert(aa["Section #1"].length == 2);
+	assert(aa["Section #1"]["foo"] == "bar");
+	assert(aa["Section #1"]["d"] == "rocks");
+
+	string[string] section2 = aa["Section No.2"];
+	assert(section2.length == 3);
+	assert(section2["name"] == "Walter Bright");
+	assert(section2["company"] == "Digital Mars");
+	assert(section2["website"] == "<https://digitalmars.com/>");
+
+	// "email" is commented out
+	assert(!("email" in section2));
 }
