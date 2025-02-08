@@ -22,11 +22,23 @@ This only lists changes that broke things and got a major version bump. I didn't
 
 Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
 
-## 12.0
+## 13.0
 
-Future release, likely May 2024 or later.
+Future release, likely May 2026 or later.
 
 Nothing is planned for it at this time.
+
+## 12.0
+
+Released: January 2025
+
+minigui's `defaultEventHandler_*` functions take more specific objects. So if you see errors like:
+
+```
+Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusin(Event foe)` does not override any function, did you mean to override `void arsd.minigui.Widget.defaultEventHandler_focusin(arsd.minigui.FocusInEvent event)`?
+```
+
+Go to the file+line number from the error message and change `Event` to `FocusInEvent` (or whatever one it tells you in the "did you mean" part of the error) and recompile. No other changes should be necessary, however if you constructed your own `Event` object and dispatched it with the loosely typed `"focus"`, etc., strings, it may not trigger the default handlers anymore. To fix this, change any `new Event` to use the appropriate subclass, when available, like old `new Event("focus", widget);` changes to `new FocusEvent(widget)`. This only applies to ones that trigger default handlers present in `Widget` base class; your custom events still work the same way.
 
 arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
