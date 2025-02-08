@@ -28,8 +28,8 @@ enum IniDialect : ulong {
 	quotedStrings                           = 0b_0000_0000_0100_0000,
 	singleQuoteQuotedStrings                = 0b_0000_0000_1000_0000,
 
-	arrays                                  = 0b_0000_0001_0000_0000,
-	colonKeys                               = 0b_0000_0010_0000_0000,
+	colonKeys                               = 0b_0000_0001_0000_0000,
+
 	defaults                                = (lineComments | quotedStrings),
 }
 //dfmt on
