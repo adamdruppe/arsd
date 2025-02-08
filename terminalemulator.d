@@ -3544,7 +3544,7 @@ version(use_libssh2) {
 			throw new Exception("fingerprint");
 
 		import std.string : toStringz;
-		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, username.ptr, username.length, toStringz(keyFile ~ ".pub"), toStringz(keyFile), null))
+		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, username.ptr, cast(int) username.length, toStringz(keyFile ~ ".pub"), toStringz(keyFile), null))
 			throw new Exception("auth");
 
 
