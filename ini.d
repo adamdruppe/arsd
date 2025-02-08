@@ -624,6 +624,143 @@ s2key2	 =	 value no.4
 	assert(parser.empty());
 }
 
+@safe unittest {
+	static immutable rawIni = "#not-a = comment";
+	auto parser = makeIniParser(rawIni);
+
+	assert(!parser.empty);
+	assert(parser.front == parser.Token(TokenType.key, "#not-a"));
+
+	parser.popFront();
+	assert(!parser.skipIrrelevant());
+	assert(parser.front == parser.Token(TokenType.value, "comment"));
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	static immutable rawIni = "#actually_a = comment\r\n\t#another one\r\n\t\t ; oh, and a third one";
+	enum dialect = (Dialect.hashLineComments | Dialect.lineComments);
+	auto parser = makeIniParser!dialect(rawIni);
+
+	assert(!parser.empty);
+	assert(parser.front == parser.Token(TokenType.comment, "actually_a = comment"));
+
+	parser.popFront();
+	assert(!parser.skipIrrelevant(false));
+	assert(parser.front == parser.Token(TokenType.comment, "another one"));
+
+	parser.popFront();
+	assert(!parser.skipIrrelevant(false));
+	assert(parser.front == parser.Token(TokenType.comment, " oh, and a third one"));
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	static immutable rawIni = "key = value ;not-a-comment \nfoo = bar # not a comment\t";
+	enum dialect = Dialect.lite;
+	auto parser = makeIniParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.type == TokenType.key);
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "value ;not-a-comment"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front.type == TokenType.key);
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "bar # not a comment"));
+	}
+}
+
+@safe unittest {
+	static immutable rawIni = "key = value ; comment-1\nfoo = bar #comment 2\n";
+	enum dialect = (Dialect.inlineComments | Dialect.hashInlineComments);
+	auto parser = makeIniParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.type == TokenType.key);
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
+		assert(parser.front == parser.Token(TokenType.value, "value"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
+		assert(parser.front == parser.Token(TokenType.comment, " comment-1"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
+		assert(parser.front.type == TokenType.key);
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
+		assert(parser.front == parser.Token(TokenType.value, "bar"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
+		assert(parser.front == parser.Token(TokenType.comment, "comment 2"));
+	}
+
+	parser.popFront();
+	assert(parser.skipIrrelevant(false));
+}
+
+/++
+	Convenience function to create a low-level parser
+
+	$(TIP
+		Unlike with the constructor of [IniParser],
+		the compiler is able to infer the `string` template parameter.
+	)
+ +/
+IniParser!(dialect, string) makeIniParser(
+	IniDialect dialect = IniDialect.defaults,
+	string = immutable(char)[],
+)(
+	string rawIni,
+) @safe pure nothrow @nogc if (isCompatibleString!string) {
+	return IniParser!(dialect, string)(rawIni);
+}
+
+///
+@safe unittest {
+	string regular;
+	auto parser1 = makeIniParser(regular);
+	assert(parser1.empty); // exclude from docs
+
+	char[] mutable;
+	auto parser2 = makeIniParser(mutable);
+	assert(parser2.empty); // exclude from docs
+
+	const(char)[] constChars;
+	auto parser3 = makeIniParser(constChars);
+	assert(parser3.empty); // exclude from docs
+}
+
+// undocumented
+debug void writelnTokens(IniDialect dialect, string)(IniParser!(dialect, string) parser) @safe {
+	import std.stdio : writeln;
+
+	foreach (token; parser) {
+		writeln(token);
+	}
+}
+
 /++
 	Data entry of an INI document
  +/
