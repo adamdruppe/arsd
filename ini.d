@@ -473,7 +473,7 @@ oachkatzl = schwoaf ;try pronouncing that
 `;
 
 	// Combine feature flags to build the required dialect.
-	const myDialect = (Dialect.defaults | Dialect.inlineComments);
+	const myDialect = (IniDialect.defaults | IniDialect.inlineComments);
 
 	// Instantiate a new parser and supply our document string.
 	auto parser = IniParser!(myDialect)(rawIniDocument);
