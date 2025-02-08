@@ -2308,6 +2308,7 @@ class Element : DomParent {
 	// do nothing, this is primarily a virtual hook
 	// for links and forms
 	void setValue(string field, string value) { }
+	void setValue(string field, string[] value) { }
 
 
 	// this is a thing so i can remove observer support if it gets slow
@@ -3351,6 +3352,15 @@ class Element : DomParent {
 		return stealChildren(d.root);
 	}
 
+	/++
+		Returns `this` for use inside `with` expressions.
+
+		History:
+			Added December 20, 2024
+	+/
+	inout(Element) self() inout pure @nogc nothrow @safe scope return {
+		return this;
+	}
 
 	/++
 		Inserts a child under this element after the element `where`.
@@ -5750,6 +5760,10 @@ class Link : Element {
 		updateQueryString(vars);
 	}
 
+	override void setValue(string name, string[] variable) {
+		assert(0, "not implemented FIXME");
+	}
+
 	/// Removes the given variable from the query string
 	void removeValue(string name) {
 		auto vars = variablesHash();
@@ -5819,6 +5833,10 @@ class Form : Element {
 	/// ditto
 	override void setValue(string field, string value) {
 		setValue(field, value, true);
+	}
+
+	override void setValue(string name, string[] variable) {
+		assert(0, "not implemented FIXME");
 	}
 
 	// FIXME: doesn't handle arrays; multiple fields can have the same name
