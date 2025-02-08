@@ -710,9 +710,9 @@ struct Terminal {
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
-		private int[] delegate() getSizeOverride;
 		void delegate(in void[]) _writeDelegate; // used to override the unix write() system call, set it magically
 	}
+	private int[] delegate() getSizeOverride;
 
 	bool terminalInFamily(string[] terms...) {
 		version(Win32Console) if(UseWin32Console)
