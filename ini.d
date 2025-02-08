@@ -20,13 +20,13 @@ enum IniDialect : ulong {
 	lineComments                            = 0b_0000_0000_0000_0001,
 	inlineComments                          = 0b_0000_0000_0000_0011,
 	hashLineComments                        = 0b_0000_0000_0000_0100,
-	hashInLineComments                      = 0b_0000_0000_0000_1100,
+	hashInlineComments                      = 0b_0000_0000_0000_1100,
 	escapeSequences                         = 0b_0000_0000_0001_0000,
 	lineFolding                             = 0b_0000_0000_0010_0000,
 	quotedStrings                           = 0b_0000_0000_0100_0000,
 	arrays                                  = 0b_0000_0000_1000_0000,
 	colonKeys                               = 0b_0000_0001_0000_0000,
-	defaults                                = (lineComments | quotedStrings), 
+	defaults                                = (lineComments | quotedStrings),
 }
 //dfmt on
 
@@ -97,7 +97,7 @@ private enum LocationState {
  +/
 struct IniParser(
 	IniDialect dialect = IniDialect.defaults,
-	string = immutable(char)[]
+	string = immutable(char)[],
 ) if (isCompatibleString!string) {
 
 	public {
@@ -300,7 +300,7 @@ struct IniParser(
 						? Result.end : Result.regular;
 
 				case '#':
-					if (dialect.hasFeature(Dialect.hashInLineComments)) {
+					if (dialect.hasFeature(Dialect.hashInlineComments)) {
 						return (inQuotedString)
 							? Result.regular : Result.end;
 					} else {
@@ -447,7 +447,7 @@ struct IniParser(
 				}
 
 			case '#': {
-					static if (dialect.hasFeature(Dialect.hashInLineComments)) {
+					static if (dialect.hasFeature(Dialect.hashInlineComments)) {
 						return this.lexComment();
 					} else static if (dialect.hasFeature(Dialect.hashLineComments)) {
 						if (this.isAtStartOfLineOrEquivalent) {
