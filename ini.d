@@ -660,12 +660,22 @@ s2key2	 =	 value no.4
 }
 
 @safe unittest {
-	static immutable rawIni = "key = value ;not-a-comment \nfoo = bar # not a comment\t";
+	static immutable rawIni = ";not a = line comment\nkey = value ;not-a-comment \nfoo = bar # not a comment\t";
 	enum dialect = Dialect.lite;
 	auto parser = makeIniParser!dialect(rawIni);
 
 	{
 		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, ";not a"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "line comment"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
 		assert(parser.front.type == TokenType.key);
 
 		parser.popFront();
@@ -685,12 +695,18 @@ s2key2	 =	 value no.4
 }
 
 @safe unittest {
-	static immutable rawIni = "key = value ; comment-1\nfoo = bar #comment 2\n";
+	static immutable rawIni = "; line comment 0\t\n\nkey = value ; comment-1\nfoo = bar #comment 2\n";
 	enum dialect = (Dialect.inlineComments | Dialect.hashInlineComments);
 	auto parser = makeIniParser!dialect(rawIni);
 
 	{
 		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.comment, " line comment 0\t"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant(false));
 		assert(parser.front.type == TokenType.key);
 
 		parser.popFront();
@@ -718,6 +734,69 @@ s2key2	 =	 value no.4
 
 	parser.popFront();
 	assert(parser.skipIrrelevant(false));
+}
+
+@safe unittest {
+	static immutable rawIni = "key: value\n"
+		~ "foo= bar\n"
+		~ "lol :rofl\n"
+		~ "Oachkatzl : -Schwoaf\n"
+		~ `"Schüler:innen": 10`;
+	enum dialect = (Dialect.colonKeys | Dialect.quotedStrings);
+	auto parser = makeIniParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "key"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "value"));
+
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.key, "foo"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "bar"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.key, "lol"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "rofl"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.key, "Oachkatzl"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "-Schwoaf"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.key, "Schüler:innen"));
+
+		parser.popFront();
+		assert(!parser.skipIrrelevant());
+		assert(parser.front == parser.Token(TokenType.value, "10"));
+	}
+
+	parser.popFront();
+	assert(parser.skipIrrelevant());
 }
 
 /++
