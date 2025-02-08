@@ -2219,7 +2219,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			return [cols, rows];
 		} else {
 			winsize w;
-			ioctl(0, TIOCGWINSZ, &w);
+			ioctl(1, TIOCGWINSZ, &w);
 			return [w.ws_col, w.ws_row];
 		}
 	}
