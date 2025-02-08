@@ -17,15 +17,19 @@ enum isCompatibleString(T) = (is(T == string) || is(T == const(char)[]) || is(T 
 ///
 enum IniDialect : ulong {
 	lite                                    = 0,
+
 	lineComments                            = 0b_0000_0000_0000_0001,
 	inlineComments                          = 0b_0000_0000_0000_0011,
 	hashLineComments                        = 0b_0000_0000_0000_0100,
 	hashInlineComments                      = 0b_0000_0000_0000_1100,
+
 	escapeSequences                         = 0b_0000_0000_0001_0000,
 	lineFolding                             = 0b_0000_0000_0010_0000,
 	quotedStrings                           = 0b_0000_0000_0100_0000,
-	arrays                                  = 0b_0000_0000_1000_0000,
-	colonKeys                               = 0b_0000_0001_0000_0000,
+	singleQuoteQuotedStrings                = 0b_0000_0000_1000_0000,
+
+	arrays                                  = 0b_0000_0001_0000_0000,
+	colonKeys                               = 0b_0000_0010_0000_0000,
 	defaults                                = (lineComments | quotedStrings),
 }
 //dfmt on
@@ -265,17 +269,40 @@ struct IniParser(
 				whitespace,
 			}
 
-			static if (dialect.hasFeature(Dialect.quotedStrings)) {
-				bool inQuotedString = false;
+			enum QuotedString : ubyte {
+				none = 0,
+				regular,
+				single,
+			}
 
+			// dfmt off
+			enum hasAnyQuotedString = (
+				dialect.hasFeature(Dialect.quotedStrings) ||
+				dialect.hasFeature(Dialect.singleQuoteQuotedStrings)
+			);
+			// dfmt on
+
+			static if (hasAnyQuotedString) {
+				auto inQuotedString = QuotedString.none;
+			}
+			static if (dialect.hasFeature(Dialect.quotedStrings)) {
 				if (_source[0] == '"') {
-					inQuotedString = true;
+					inQuotedString = QuotedString.regular;
 
 					// chomp quote initiator
 					_source = _source[1 .. $];
 				}
-			} else {
-				enum inQuotedString = false;
+			}
+			static if (dialect.hasFeature(Dialect.singleQuoteQuotedStrings)) {
+				if (_source[0] == '\'') {
+					inQuotedString = QuotedString.single;
+
+					// chomp quote initiator
+					_source = _source[1 .. $];
+				}
+			}
+			static if (!hasAnyQuotedString) {
+				enum inQuotedString = QuotedString.none;
 			}
 
 			Result nextChar(const char c) @safe pure nothrow @nogc {
@@ -289,20 +316,32 @@ struct IniParser(
 				case '\x0B':
 				case '\x0C':
 				case ' ':
-					return (inQuotedString) ? Result.regular : Result.whitespace;
+					return (inQuotedString != QuotedString.none) ? Result.regular : Result.whitespace;
 
 				case '\x0A':
 				case '\x0D':
-					return (inQuotedString)
+					return (inQuotedString != QuotedString.none)
 						? Result.regular : Result.end;
 
 				case '"':
-					return (inQuotedString)
-						? Result.end : Result.regular;
+					static if (dialect.hasFeature(Dialect.quotedStrings)) {
+						return (inQuotedString == QuotedString.regular)
+							? Result.end : Result.regular;
+					} else {
+						return Result.regular;
+					}
+
+				case '\'':
+					static if (dialect.hasFeature(Dialect.singleQuoteQuotedStrings)) {
+						return (inQuotedString == QuotedString.single)
+							? Result.end : Result.regular;
+					} else {
+						return Result.regular;
+					}
 
 				case '#':
 					if (dialect.hasFeature(Dialect.hashInlineComments)) {
-						return (inQuotedString)
+						return (inQuotedString != QuotedString.none)
 							? Result.regular : Result.end;
 					} else {
 						return Result.regular;
@@ -310,7 +349,7 @@ struct IniParser(
 
 				case ';':
 					if (dialect.hasFeature(Dialect.inlineComments)) {
-						return (inQuotedString)
+						return (inQuotedString != QuotedString.none)
 							? Result.regular : Result.end;
 					} else {
 						return Result.regular;
@@ -325,7 +364,7 @@ struct IniParser(
 
 				case '=':
 					static if (tokenType == TokenType.key) {
-						return (inQuotedString)
+						return (inQuotedString != QuotedString.none)
 							? Result.regular : Result.end;
 					} else {
 						return Result.regular;
@@ -333,7 +372,7 @@ struct IniParser(
 
 				case ']':
 					static if (tokenType == TokenType.sectionHeader) {
-						return (inQuotedString)
+						return (inQuotedString != QuotedString.none)
 							? Result.regular : Result.end;
 					} else {
 						return Result.regular;
@@ -360,9 +399,11 @@ struct IniParser(
 			auto token = Token(tokenType, _source[0 .. idxEOT]);
 			_source = _source[idxEOT .. $];
 
-			if (inQuotedString) {
-				// chomp quote terminator
-				_source = _source[1 .. $];
+			if (inQuotedString != QuotedString.none) {
+				if (_source.length > 0) {
+					// chomp quote terminator
+					_source = _source[1 .. $];
+				}
 			}
 
 			return token;
@@ -854,6 +895,81 @@ s2key2	 =	 value no.4
 
 	parser.popFront();
 	assert(parser.skipIrrelevant());
+}
+
+@safe unittest {
+	static immutable rawIni =
+		"\"foo=bar\"=foobar\n"
+		~ "'foo = bar' = foo_bar\n"
+		~ "foo = \"bar\"\n"
+		~ "foo = 'bar'\n"
+		~ "multi_line = 'line1\nline2'\n"
+		~ "syntax = \"error";
+	enum dialect = (Dialect.quotedStrings | Dialect.singleQuoteQuotedStrings);
+	auto parser = makeIniFilteredParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo=bar"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "foobar"));
+
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo = bar"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "foo_bar"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "bar"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "bar"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "multi_line"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "line1\nline2"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "syntax"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, "error"));
+	}
+
+	parser.popFront();
+	assert(parser.empty);
 }
 
 /++
