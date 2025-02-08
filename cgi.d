@@ -6929,12 +6929,14 @@ version(cgi_with_websocket) {
 				return true;
 			}
 
-			if(bfr.sourceClosed)
+			if(bfr.sourceClosed) {
 				return false;
+			}
 
 			bfr.popFront(0);
-			if(bfr.sourceClosed)
+			if(bfr.sourceClosed) {
 				return false;
+			}
 			goto top;
 		}
 
