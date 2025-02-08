@@ -91,6 +91,7 @@ private enum LocationState {
 
 	See_also:
 		$(LIST
+			* [IniFilteredParser]
 			* [parseIniDocument]
 			* [parseIniAA]
 		)
@@ -463,6 +464,62 @@ struct IniParser(
 	}
 }
 
+/++
+	Low-level INI parser with filtered output
+
+	This wrapper will only supply tokens of these types:
+
+	$(LIST
+		* IniTokenType.key
+		* IniTokenType.value
+		* IniTokenType.sectionHeader
+		* IniTokenType.invalid
+	)
+
+	See_also:
+		$(LIST
+			* [IniParser]
+			* [parseIniDocument]
+			* [parseIniAA]
+		)
+ +/
+struct IniFilteredParser(
+	IniDialect dialect = IniDialect.defaults,
+	string = immutable(char)[],
+) {
+	///
+	public alias Token = IniToken!string;
+
+	private IniParser!(dialect, string) _parser;
+
+public @safe pure nothrow @nogc:
+
+	///
+	public this(IniParser!(dialect, string) parser) {
+		_parser = parser;
+	}
+
+	///
+	public this(string rawIni) {
+		auto parser = IniParser!(dialect, string)(rawIni);
+		this(parser);
+	}
+
+	///
+	bool empty() => _parser.skipIrrelevant(true);
+
+	///
+	inout(Token) front() inout => _parser.front;
+
+	///
+	void popFront() => _parser.popFront();
+
+	///
+	inout(typeof(this)) save() inout {
+		return this;
+	}
+}
+
 ///
 @safe unittest {
 	// INI document (demo data)
@@ -806,6 +863,9 @@ s2key2	 =	 value no.4
 		Unlike with the constructor of [IniParser],
 		the compiler is able to infer the `string` template parameter.
 	)
+
+	See_also:
+		[makeIniFilteredParser]
  +/
 IniParser!(dialect, string) makeIniParser(
 	IniDialect dialect = IniDialect.defaults,
@@ -831,12 +891,57 @@ IniParser!(dialect, string) makeIniParser(
 	assert(parser3.empty); // exclude from docs
 }
 
-// undocumented
-debug void writelnTokens(IniDialect dialect, string)(IniParser!(dialect, string) parser) @safe {
-	import std.stdio : writeln;
+/++
+	Convenience function to create a low-level filtered parser
 
-	foreach (token; parser) {
-		writeln(token);
+	$(TIP
+		Unlike with the constructor of [IniFilteredParser],
+		the compiler is able to infer the `string` template parameter.
+	)
+
+	See_also:
+		[makeIniParser]
+ +/
+IniFilteredParser!(dialect, string) makeIniFilteredParser(
+	IniDialect dialect = IniDialect.defaults,
+	string = immutable(char)[],
+)(
+	string rawIni,
+) @safe pure nothrow @nogc if (isCompatibleString!string) {
+	return IniFilteredParser!(dialect, string)(rawIni);
+}
+
+///
+@safe unittest {
+	string regular;
+	auto parser1 = makeIniFilteredParser(regular);
+	assert(parser1.empty); // exclude from docs
+
+	char[] mutable;
+	auto parser2 = makeIniFilteredParser(mutable);
+	assert(parser2.empty); // exclude from docs
+
+	const(char)[] constChars;
+	auto parser3 = makeIniFilteredParser(constChars);
+	assert(parser3.empty); // exclude from docs
+}
+
+// undocumented
+debug {
+	void writelnTokens(IniDialect dialect, string)(IniParser!(dialect, string) parser) @safe {
+		import std.stdio : writeln;
+
+		foreach (token; parser) {
+			writeln(token);
+		}
+	}
+
+	void writelnTokens(IniDialect dialect, string)(IniFilteredParser!(dialect, string) parser) @safe {
+		import std.stdio : writeln;
+
+		foreach (token; parser) {
+			writeln(token);
+		}
 	}
 }
 
