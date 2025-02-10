@@ -5,8 +5,38 @@
 +/
 /++
 	INI configuration file support
+
+	This module provides a configurable INI parser with support for multiple
+	“dialects” of the format.
+
+	---
+	import arsd.ini;
+
+	IniDocument!string parseIniFile(string filePath) {
+		import std.file : readText;
+		return parseIniDocument(readText(filePath));
+	}
+	---
  +/
 module arsd.ini;
+
+///
+@safe unittest {
+	// INI example data (e.g. from an `autorun.inf` file)
+	static immutable string rawIniData =
+		"[autorun]\n"
+		~ "open=setup.exe\n"
+		~ "icon=setup.exe,0\n";
+
+	// Parse the document into an associative array:
+	string[string][string] data = parseIniAA(rawIniData);
+
+	string open = data["autorun"]["open"];
+	string icon = data["autorun"]["icon"];
+
+	assert(open == "setup.exe");
+	assert(icon == "setup.exe,0");
+}
 
 /++
 	Determines whether a type `T` is a string type compatible with this library. 
@@ -14,23 +44,212 @@ module arsd.ini;
 enum isCompatibleString(T) = (is(T == string) || is(T == const(char)[]) || is(T == char[]));
 
 //dfmt off
-///
+/++
+	Feature set to be understood by the parser.
+
+	---
+	enum myDialect = (IniDialect.defaults | IniDialect.inlineComments);
+	---
+ +/
 enum IniDialect : ulong {
+	/++
+		Minimum feature set.
+
+		No comments, no extras, no nothing.
+		Only sections, keys and values.
+		Everything fits into these categories from a certain point of view.
+	 +/
 	lite                                    = 0,
 
+	/++
+		Parse line comments (starting with `;`).
+
+		```ini
+		; This is a line comment.
+		;This one too.
+
+		key = value ;But this isn't one.
+		```
+	 +/
 	lineComments                            = 0b_0000_0000_0000_0001,
+
+	/++
+		Parse inline comments (starting with `;`).
+
+		```ini
+		key1 = value2 ; Inline comment.
+		key2 = value2 ;Inline comment.
+		key3 = value3; Inline comment.
+		;Not a true inline comment (but technically equivalent).
+		```
+	 +/
 	inlineComments                          = 0b_0000_0000_0000_0011,
+
+	/++
+		Parse line comments starting with `#`.
+
+		```ini
+		# This is a comment.
+		#Too.
+		key = value # Not a line comment.
+		```
+	 +/
 	hashLineComments                        = 0b_0000_0000_0000_0100,
+
+	/++
+		Parse inline comments starting with `#`.
+
+		```ini
+		key1 = value2 # Inline comment.
+		key2 = value2 #Inline comment.
+		key3 = value3# Inline comment.
+		#Not a true inline comment (but technically equivalent).
+		```
+	 +/
 	hashInlineComments                      = 0b_0000_0000_0000_1100,
 
-	escapeSequences                         = 0b_0000_0000_0001_0000,
-	lineFolding                             = 0b_0000_0000_0010_0000,
-	quotedStrings                           = 0b_0000_0000_0100_0000,
-	singleQuoteQuotedStrings                = 0b_0000_0000_1000_0000,
+	/++
+		Parse quoted strings.
 
-	colonKeys                               = 0b_0000_0001_0000_0000,
+		```ini
+		key1 = non-quoted value
+		key2 = "quoted value"
 
-	defaults                                = (lineComments | quotedStrings),
+		"quoted key" = value
+		non-quoted key = value
+
+		"another key" = "another value"
+
+		multi line = "line 1
+		line 2"
+		```
+	 +/
+	quotedStrings                           = 0b_0000_0000_0001_0000,
+
+	/++
+		Parse quoted strings using single-quotes.
+
+		```ini
+		key1 = non-quoted value
+		key2 = 'quoted value'
+
+		'quoted key' = value
+		non-quoted key = value
+
+		'another key' = 'another value'
+
+		multi line = 'line 1
+		line 2'
+		```
+	 +/
+	singleQuoteQuotedStrings                = 0b_0000_0000_0010_0000,
+
+	/++
+		Parse key/value pairs separated with a colon (`:`).
+
+		```ini
+		key: value
+		key= value
+		```
+	 +/
+	colonKeys                               = 0b_0000_0000_0100_0000,
+
+	/++
+		Concats substrings and emits them as a single token.
+
+		$(LIST
+			* For a mutable `char[]` input,
+			  this will rewrite the data in the input array.
+			* For a non-mutable `immutable(char)[]` (=`string`) or `const(char)[]` input,
+			  this will allocate a new array with the GC.
+		)
+
+		```ini
+		key = "Value1" "Value2"
+		; → Value1Value2
+		```
+	 +/
+	concatSubstrings                        = 0b_0000_0001_0000_0000,
+
+	/++
+		Evaluates escape sequences in the input string.
+
+		$(LIST
+			* For a mutable `char[]` input,
+			  this will rewrite the data in the input array.
+			* For a non-mutable `immutable(char)[]` (=`string`) or `const(char)[]` input,
+			  this will allocate a new array with the GC.
+		)
+
+		$(SMALL_TABLE
+			Special escape sequences
+			`\\` | Backslash
+			`\0` | Null character
+			`\n` | Line feed
+			`\r` | Carriage return
+			`\t` | Tabulator
+		)
+
+		```ini
+		key1 = Line 1\nLine 2
+		; → Line 1
+		;   Line 2
+
+		key2 = One \\ and one \;
+		; → One \ and one ;
+		```
+	 +/
+	escapeSequences                         = 0b_0000_0010_0000_0000,
+
+	/++
+		Folds lines on escaped linebreaks.
+
+		$(LIST
+			* For a mutable `char[]` input,
+			  this will rewrite the data in the input array.
+			* For a non-mutable `immutable(char)[]` (=`string`) or `const(char)[]` input,
+			  this will allocate a new array with the GC.
+		)
+
+		```ini
+		key1 = word1\
+		word2
+		; → word1word2
+
+		key2 = foo \
+		bar
+		; → foo bar
+		```
+	 +/
+	lineFolding                             = 0b_0000_0100_0000_0000,
+
+	/++
+		Imitates the behavior of the INI parser implementation found in PHP.
+
+		$(WARNING
+			This preset may be adjusted without further notice in the future
+			in cases where it increases alignment with PHP’s implementation.
+		)
+	 +/
+	presetPhp                               = (
+	                                              lineComments
+	                                            | inlineComments
+	                                            | hashLineComments
+	                                            | hashInlineComments
+	                                            | quotedStrings
+	                                            | singleQuoteQuotedStrings
+	                                            | concatSubstrings
+	                                        ),
+
+	///
+	presetDefaults                          = (
+	                                              lineComments
+	                                            | quotedStrings
+	                                            | singleQuoteQuotedStrings
+	                                        ),
+
+	///
+	defaults = presetDefaults,
 }
 //dfmt on
 
@@ -208,27 +427,27 @@ struct IniParser(
 
 	private {
 
-		bool isOnFinalChar() const {
+		bool isOnFinalChar() const @nogc {
 			pragma(inline, true);
 			return (_source.length == 1);
 		}
 
-		bool isAtStartOfLineOrEquivalent() {
+		bool isAtStartOfLineOrEquivalent() @nogc {
 			return (_locationState == LocationState.newLine);
 		}
 
-		Token makeToken(TokenType type, size_t length) {
+		Token makeToken(TokenType type, size_t length) @nogc {
 			auto token = Token(type, _source[0 .. length]);
 			_source = _source[length .. $];
 			return token;
 		}
 
-		Token makeToken(TokenType type, size_t length, size_t skip) {
+		Token makeToken(TokenType type, size_t length, size_t skip) @nogc {
 			_source = _source[skip .. $];
 			return this.makeToken(type, length);
 		}
 
-		Token lexWhitespace() {
+		Token lexWhitespace() @nogc {
 			foreach (immutable idxM1, const c; _source[1 .. $]) {
 				switch (c) {
 				case '\x09':
@@ -246,7 +465,7 @@ struct IniParser(
 			return this.makeToken(TokenType.whitespace, _source.length);
 		}
 
-		Token lexComment() {
+		Token lexComment() @nogc {
 			foreach (immutable idxM1, const c; _source[1 .. $]) {
 				switch (c) {
 				default:
@@ -832,6 +1051,26 @@ s2key2	 =	 value no.4
 
 	parser.popFront();
 	assert(parser.skipIrrelevant(false));
+}
+
+@safe unittest {
+	static immutable rawIni = "key = value;inline";
+	enum dialect = Dialect.inlineComments;
+	auto parser = makeIniParser!dialect(rawIni);
+
+	assert(!parser.empty);
+	parser.front == parser.Token(TokenType.key, "key");
+
+	parser.popFront();
+	assert(!parser.skipIrrelevant(false));
+	parser.front == parser.Token(TokenType.value, "value");
+
+	parser.popFront();
+	assert(!parser.skipIrrelevant(false));
+	parser.front == parser.Token(TokenType.comment, "inline");
+
+	parser.popFront();
+	assert(parser.empty);
 }
 
 @safe unittest {
