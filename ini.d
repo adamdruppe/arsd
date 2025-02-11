@@ -1582,6 +1582,12 @@ company = "Digital Mars"
 		[parseIniDocument]
  +/
 string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow {
+	static if (is(string == immutable(char)[])) {
+		immutable(char)[] toString(string key) => key;
+	} else {
+		immutable(char)[] toString(string key) => key.idup;
+	}
+
 	auto parser = IniParser!(dialect, string)(rawIni);
 
 	string[string][string] document;
@@ -1593,7 +1599,7 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 
 	void commitKeyValuePair(string nextKey) {
 		if (keyName !is null) {
-			section[keyName] = value;
+			section[toString(keyName)] = value;
 		}
 
 		keyName = nextKey;
@@ -1612,10 +1618,12 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 						if (nextValue.ptr <= &value[$ - 1]) {
 							assert(false, "Memory corruption bug.");
 						}
+
 						const size_t end = (value.length + nextValue.length);
 						foreach (immutable idx, ref c; value.ptr[value.length .. end]) {
-							nextValue.ptr[idx];
+							c = nextValue.ptr[idx];
 						}
+						value = value.ptr[0 .. end];
 					}();
 				}
 			} else {
@@ -1629,7 +1637,7 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 	void commitSection(string nextSection) {
 		commitKeyValuePair(null);
 		if ((sectionName !is null) || (section.length > 0)) {
-			document[sectionName] = section;
+			document[toString(sectionName)] = section;
 			section = null;
 		}
 
@@ -1713,6 +1721,40 @@ website = <https://digitalmars.com/>
 }
 
 @safe unittest {
+	char[] demoData = `[1]
+key = "value1" "value2"
+[2]
+0 = a b
+1 = 'a' b
+2 = a 'b'
+3 = a "b"
+4 = "a" 'b'
+5 = 'a' "b"
+6 = "a" "b"
+7 = 'a' 'b'
+8 = 'a' "b" 'c'
+`.dup;
+
+	enum dialect = (Dialect.concatSubstrings | Dialect.quotedStrings | Dialect.singleQuoteQuotedStrings);
+	auto aa = parseIniAA!dialect(demoData);
+
+	assert(aa.length == 2);
+	assert(!(null in aa));
+	assert("1" in aa);
+	assert("2" in aa);
+	assert(aa["1"]["key"] == "value1value2");
+	assert(aa["2"]["0"] == "a b");
+	assert(aa["2"]["1"] == "a b");
+	assert(aa["2"]["2"] == "a b");
+	assert(aa["2"]["3"] == "ab");
+	assert(aa["2"]["4"] == "ab");
+	assert(aa["2"]["5"] == "ab");
+	assert(aa["2"]["6"] == "ab");
+	assert(aa["2"]["7"] == "a b");
+	assert(aa["2"]["8"] == "abc");
+}
+
+@safe unittest {
 	static immutable string demoData = `[1]
 key = "value1" "value2"
 [2]
@@ -1765,7 +1807,7 @@ key = "value1" "value2"
 }
 
 @safe unittest {
-	static immutable string demoData = `[1]
+	static immutable const(char)[] demoData = `[1]
 key = original
 no2 = kept
 [2]
