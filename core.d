@@ -284,6 +284,7 @@ bool isSliceOf(T1, T2)(scope const(T1)[] needle, scope const(T2)[] haystack) @tr
 	);
 }
 
+///
 @safe unittest {
 	string        s0 = "01234";
 	const(char)[] s1 = s0[1 .. $];
