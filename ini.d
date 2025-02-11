@@ -305,9 +305,18 @@ private alias Dialect = IniDialect;
 private enum LocationState {
 	newLine,
 	key,
-	value,
+	preValue,
+	inValue,
 	sectionHeader,
 }
+
+private enum OperatingMode {
+	mut,
+	dup,
+}
+
+private enum OperatingMode operatingMode(string) = (is(string == char[]))
+	? OperatingMode.mut : OperatingMode.dup;
 
 /++
 	Low-level INI parser
@@ -337,7 +346,7 @@ struct IniParser(
 		LocationState _locationState = LocationState.newLine;
 	}
 
-@safe pure nothrow @nogc:
+@safe pure nothrow:
 
 	///
 	public this(string rawIni) {
@@ -484,6 +493,7 @@ struct IniParser(
 
 			enum Result {
 				end,
+				endChomp,
 				regular,
 				whitespace,
 			}
@@ -535,24 +545,30 @@ struct IniParser(
 				case '\x0B':
 				case '\x0C':
 				case ' ':
-					return (inQuotedString != QuotedString.none) ? Result.regular : Result.whitespace;
+					return (inQuotedString != QuotedString.none)
+						? Result.regular : Result.whitespace;
 
 				case '\x0A':
 				case '\x0D':
 					return (inQuotedString != QuotedString.none)
-						? Result.regular : Result.end;
+						? Result.regular : Result.endChomp;
 
 				case '"':
 					static if (dialect.hasFeature(Dialect.quotedStrings)) {
+						// dfmt off
 						return (inQuotedString == QuotedString.regular)
-							? Result.end : Result.regular;
+							? Result.end
+							: (inQuotedString == QuotedString.single)
+								? Result.regular
+								: Result.endChomp;
+						// dfmt on
 					} else {
 						return Result.regular;
 					}
 
 				case '\'':
 					static if (dialect.hasFeature(Dialect.singleQuoteQuotedStrings)) {
-						return (inQuotedString == QuotedString.single)
+						return (inQuotedString != QuotedString.regular)
 							? Result.end : Result.regular;
 					} else {
 						return Result.regular;
@@ -561,7 +577,7 @@ struct IniParser(
 				case '#':
 					if (dialect.hasFeature(Dialect.hashInlineComments)) {
 						return (inQuotedString != QuotedString.none)
-							? Result.regular : Result.end;
+							? Result.regular : Result.endChomp;
 					} else {
 						return Result.regular;
 					}
@@ -569,7 +585,7 @@ struct IniParser(
 				case ';':
 					if (dialect.hasFeature(Dialect.inlineComments)) {
 						return (inQuotedString != QuotedString.none)
-							? Result.regular : Result.end;
+							? Result.regular : Result.endChomp;
 					} else {
 						return Result.regular;
 					}
@@ -601,11 +617,18 @@ struct IniParser(
 				assert(false, "Bug: This should have been unreachable.");
 			}
 
-			size_t idxLastText = 0;
+			ptrdiff_t idxLastText = -1;
+			ptrdiff_t idxCutoff = -1;
 			foreach (immutable idx, const c; _source) {
 				const status = nextChar(c);
 
 				if (status == Result.end) {
+					if (idxLastText < 0) {
+						idxLastText = (idx - 1);
+					}
+					break;
+				} else if (status == Result.endChomp) {
+					idxCutoff = idx;
 					break;
 				} else if (status == Result.whitespace) {
 					continue;
@@ -616,7 +639,31 @@ struct IniParser(
 
 			const idxEOT = (idxLastText + 1);
 			auto token = Token(tokenType, _source[0 .. idxEOT]);
-			_source = _source[idxEOT .. $];
+
+			// "double-quote quoted": cut off any whitespace afterwards
+			if (inQuotedString == QuotedString.regular) {
+				const idxEOQ = (idxEOT + 1);
+				if (_source.length > idxEOQ) {
+					foreach (immutable idx, c; _source[idxEOQ .. $]) {
+						switch (c) {
+						case '\x09':
+						case '\x0B':
+						case '\x0C':
+						case ' ':
+							continue;
+
+						default:
+							// EOT because Q is cut off later
+							idxCutoff = idxEOT + idx;
+							break;
+						}
+						break;
+					}
+				}
+			}
+
+			const idxNextToken = (idxCutoff >= 0) ? idxCutoff : idxEOT;
+			_source = _source[idxNextToken .. $];
 
 			if (inQuotedString != QuotedString.none) {
 				if (_source.length > 0) {
@@ -634,7 +681,11 @@ struct IniParser(
 			case LocationState.key:
 				return this.lexTextImpl!(TokenType.key);
 
-			case LocationState.value:
+			case LocationState.preValue:
+				_locationState = LocationState.inValue;
+				goto case LocationState.inValue;
+
+			case LocationState.inValue:
 				return this.lexTextImpl!(TokenType.value);
 
 			case LocationState.sectionHeader:
@@ -674,6 +725,9 @@ struct IniParser(
 			case '\x0B':
 			case '\x0C':
 			case ' ':
+				if (_locationState == LocationState.inValue) {
+					return this.lexText();
+				}
 				return this.lexWhitespace();
 
 			case ':':
@@ -683,7 +737,7 @@ struct IniParser(
 				return this.lexText();
 
 			case '=':
-				_locationState = LocationState.value;
+				_locationState = LocationState.preValue;
 				return this.makeToken(TokenType.keyValueSeparator, 1);
 
 			case '[':
@@ -752,7 +806,7 @@ struct IniFilteredParser(
 
 	private IniParser!(dialect, string) _parser;
 
-public @safe pure nothrow @nogc:
+public @safe pure nothrow:
 
 	///
 	public this(IniParser!(dialect, string) parser) {
@@ -766,13 +820,16 @@ public @safe pure nothrow @nogc:
 	}
 
 	///
-	bool empty() => _parser.skipIrrelevant(true);
+	bool empty() const => _parser.empty;
 
 	///
 	inout(Token) front() inout => _parser.front;
 
 	///
-	void popFront() => _parser.popFront();
+	void popFront() {
+		_parser.popFront();
+		_parser.skipIrrelevant(true);
+	}
 
 	///
 	inout(typeof(this)) save() inout {
@@ -1142,6 +1199,8 @@ s2key2	 =	 value no.4
 		~ "'foo = bar' = foo_bar\n"
 		~ "foo = \"bar\"\n"
 		~ "foo = 'bar'\n"
+		~ "foo = ' bar '\n"
+		~ "foo = \" bar \"\n"
 		~ "multi_line = 'line1\nline2'\n"
 		~ "syntax = \"error";
 	enum dialect = (Dialect.quotedStrings | Dialect.singleQuoteQuotedStrings);
@@ -1185,6 +1244,26 @@ s2key2	 =	 value no.4
 		parser.popFront();
 		assert(!parser.empty);
 		assert(parser.front == parser.Token(TokenType.value, "bar"));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, " bar "));
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.key, "foo"));
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front == parser.Token(TokenType.value, " bar "));
 	}
 
 	{
@@ -1494,11 +1573,15 @@ company = "Digital Mars"
 /++
 	Parses an INI string into an associate array.
 
+	$(LIST
+		* Duplicate keys cause values to get overwritten.
+		* Sections with the same name are merged.
+	)
+
 	See_also:
 		[parseIniDocument]
  +/
 string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow {
-	// TODO: duplicate handling
 	auto parser = IniParser!(dialect, string)(rawIni);
 
 	string[string][string] document;
@@ -1506,28 +1589,73 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 
 	string sectionName = null;
 	string keyName = null;
+	string value = null;
 
-	void commitSection() {
-		sectionName = null;
+	void commitKeyValuePair(string nextKey) {
+		if (keyName !is null) {
+			section[keyName] = value;
+		}
+
+		keyName = nextKey;
+		value = null;
+	}
+
+	void addValue(string nextValue) {
+		static if (dialect.hasFeature(Dialect.concatSubstrings)) {
+			if (value !is null) {
+				static if (operatingMode!string == OperatingMode.dup) {
+					value ~= nextValue;
+				}
+				static if (operatingMode!string == OperatingMode.mut) {
+					// Insane assumptions ahead:
+					() @trusted {
+						if (nextValue.ptr <= &value[$ - 1]) {
+							assert(false, "Memory corruption bug.");
+						}
+						const size_t end = (value.length + nextValue.length);
+						foreach (immutable idx, ref c; value.ptr[value.length .. end]) {
+							nextValue.ptr[idx];
+						}
+					}();
+				}
+			} else {
+				value = nextValue;
+			}
+		} else {
+			value = nextValue;
+		}
+	}
+
+	void commitSection(string nextSection) {
+		commitKeyValuePair(null);
+		if ((sectionName !is null) || (section.length > 0)) {
+			document[sectionName] = section;
+			section = null;
+		}
+
+		if (nextSection !is null) {
+			auto existingSection = nextSection in document;
+			if (existingSection !is null) {
+				section = *existingSection;
+			}
+
+			sectionName = nextSection;
+		}
 	}
 
 	while (!parser.skipIrrelevant()) {
 		switch (parser.front.type) with (TokenType) {
 
 		case key:
-			keyName = parser.front.data;
+			commitKeyValuePair(parser.front.data);
 			break;
 
 		case value:
-			section[keyName] = parser.front.data;
+			addValue(parser.front.data);
 			break;
 
 		case sectionHeader:
-			if ((sectionName !is null) || (section.length > 0)) {
-				document[sectionName] = section;
-				section = null;
-			}
-			sectionName = parser.front.data;
+			commitSection(parser.front.data);
 			break;
 
 		default:
@@ -1537,9 +1665,7 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 		parser.popFront();
 	}
 
-	if ((sectionName !is null) || (section.length > 0)) {
-		document[sectionName] = section;
-	}
+	commitSection(null);
 
 	return document;
 }
@@ -1584,4 +1710,79 @@ website = <https://digitalmars.com/>
 
 	// "email" is commented out
 	assert(!("email" in section2));
+}
+
+@safe unittest {
+	static immutable string demoData = `[1]
+key = "value1" "value2"
+[2]
+0 = a b
+1 = 'a' b
+2 = a 'b'
+3 = a "b"
+4 = "a" 'b'
+5 = 'a' "b"
+6 = "a" "b"
+7 = 'a' 'b'
+8 = 'a' "b" 'c'
+`;
+
+	enum dialect = (Dialect.concatSubstrings | Dialect.quotedStrings | Dialect.singleQuoteQuotedStrings);
+	auto aa = parseIniAA!dialect(demoData);
+
+	assert(aa.length == 2);
+	assert(!(null in aa));
+	assert("1" in aa);
+	assert("2" in aa);
+	assert(aa["1"]["key"] == "value1value2");
+	assert(aa["2"]["0"] == "a b");
+	assert(aa["2"]["1"] == "a b");
+	assert(aa["2"]["2"] == "a b");
+	assert(aa["2"]["3"] == "ab");
+	assert(aa["2"]["4"] == "ab");
+	assert(aa["2"]["5"] == "ab");
+	assert(aa["2"]["6"] == "ab");
+	assert(aa["2"]["7"] == "a b");
+	assert(aa["2"]["8"] == "abc");
+}
+
+@safe unittest {
+	static immutable string demoData = `
+0 = "a" b
+1 = "a" 'b'
+2 = a "b"
+3 = 'a' "b"
+`;
+
+	enum dialect = (Dialect.concatSubstrings | Dialect.singleQuoteQuotedStrings);
+	auto aa = parseIniAA!dialect(demoData);
+
+	assert(aa.length == 1);
+	assert(aa[null]["0"] == `"a" b`);
+	assert(aa[null]["1"] == `"a" b`);
+	assert(aa[null]["2"] == `a "b"`);
+	assert(aa[null]["3"] == `a "b"`);
+}
+
+@safe unittest {
+	static immutable string demoData = `[1]
+key = original
+no2 = kept
+[2]
+key = original
+key = overwritten
+[1]
+key = merged and overwritten
+`;
+
+	enum dialect = Dialect.concatSubstrings;
+	auto aa = parseIniAA!dialect(demoData);
+
+	assert(aa.length == 2);
+	assert(!(null in aa));
+	assert("1" in aa);
+	assert("2" in aa);
+	assert(aa["1"]["key"] == "merged and overwritten");
+	assert(aa["1"]["no2"] == "kept");
+	assert(aa["2"]["key"] == "overwritten");
 }
