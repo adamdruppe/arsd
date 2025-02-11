@@ -1303,7 +1303,7 @@ s2key2	 =	 value no.4
  +/
 IniParser!(dialect, string) makeIniParser(
 	IniDialect dialect = IniDialect.defaults,
-	string = immutable(char)[],
+	string,
 )(
 	string rawIni,
 ) @safe pure nothrow @nogc if (isCompatibleString!string) {
@@ -1338,7 +1338,7 @@ IniParser!(dialect, string) makeIniParser(
  +/
 IniFilteredParser!(dialect, string) makeIniFilteredParser(
 	IniDialect dialect = IniDialect.defaults,
-	string = immutable(char)[],
+	string,
 )(
 	string rawIni,
 ) @safe pure nothrow @nogc if (isCompatibleString!string) {
