@@ -17,6 +17,51 @@
 		return parseIniDocument(readText(filePath));
 	}
 	---
+
+
+	### On destructiveness and GC usage
+
+	Depending on the dialect and string type,
+	[IniParser] can operate in one of these three modes:
+
+	$(LIST
+		* Non-destructive with no heap alloc (incl. `@nogc`)
+		* Non-destructive (uses the GC)
+		* Destructive with no heap alloc (incl. `@nogc`)
+	)
+
+	a) If a given dialect requests no mutation of the input data
+	(i.e. no escape sequences, no concaternation of substrings etc.)
+	and is therefore possible to implement with slicing operations only,
+	the parser will be non-destructive and not do any heap allocations.
+	Such a parser is verifiably `@nogc`, too.
+
+	b) In cases where a dialect requires data-mutating operations,
+	there are two ways for a parser to implement them:
+
+	b.0) Either perform those mutations on the input data itself
+	and alter the contents of that buffer.
+	Because of the destructive nature of this operation,
+	it can be performed only once safely.
+	(Such an implementation could optionally fix up the modified data
+	to become valid and parsable again.
+	Though doing so would come with a performance overhead.)
+
+	b.1) Or allocate a new buffer for the result of the operation.
+	This also has the advantage that it works with `immutable` and `const`
+	input data.
+	For convenience reasons the GC is used to perform such allocations.
+
+	Use [IniParser.isDestructive] to check for the operating mode.
+
+	The construct a non-destructive parser despite a mutable input data,
+	specify `const(char)[]` as the value of the `string` template parameter.
+
+	---
+	char[] mutableInput = [ /* … */ ];
+	auto parser = makeIniParser!(dialect, const(char)[])(mutableInput);
+	assert(parser.isDestructive == false);
+	---
  +/
 module arsd.ini;
 
@@ -336,6 +381,18 @@ struct IniParser(
 	public {
 		///
 		alias Token = IniToken!string;
+
+		// dfmt off
+		///
+		enum isDestructive = (
+			(operatingMode!string == OperatingMode.destructive)
+			&& (
+				   dialect.hasFeature(Dialect.concatSubstrings)
+				|| dialect.hasFeature(Dialect.escapeSequences)
+				|| dialect.hasFeature(Dialect.lineFolding)
+			)
+		);
+		// dfmt on
 	}
 
 	private {
@@ -364,17 +421,16 @@ struct IniParser(
 	public {
 
 		///
-		bool empty() const {
+		bool empty() const @nogc {
 			return _empty;
 		}
 
 		///
-		inout(Token) front() inout {
+		inout(Token) front() inout @nogc {
 			return _front;
 		}
 
-		///
-		void popFront() {
+		private void popFrontImpl() {
 			if (_source.length == 0) {
 				_empty = true;
 				return;
@@ -383,9 +439,35 @@ struct IniParser(
 			_front = this.fetchFront();
 		}
 
-		///
-		inout(typeof(this)) save() inout {
-			return this;
+		/*
+			This is a workaround.
+			The compiler doesn’t feel like inferring `@nogc` properly otherwise.
+
+			→ cannot call non-@nogc function
+				`arsd.ini.makeIniParser!(IniDialect.concatSubstrings, char[]).makeIniParser`
+			→ which calls
+				`arsd.ini.IniParser!(IniDialect.concatSubstrings, char[]).IniParser.this`
+			→ which calls
+				`arsd.ini.IniParser!(IniDialect.concatSubstrings, char[]).IniParser.popFront`
+		 */
+		static if (isDestructive) {
+			///
+			void popFront() @nogc {
+				popFrontImpl();
+			}
+		} else {
+			///
+			void popFront() {
+				popFrontImpl();
+			}
+		}
+
+		// Destructive parsers make very poor Forward Ranges.
+		static if (!isDestructive) {
+			///
+			inout(typeof(this)) save() inout @nogc {
+				return this;
+			}
 		}
 	}
 
@@ -705,7 +787,7 @@ struct IniParser(
 
 				Token token = this.lexSubstringImpl!tokenType();
 
-				auto next = this.save();
+				auto next = this; // copy
 				next._bypassConcatSubstrings = true;
 				next.popFront();
 
@@ -885,6 +967,9 @@ struct IniFilteredParser(
 	///
 	public alias Token = IniToken!string;
 
+	///
+	public enum isDestructive = IniParser!(dialect, string).isDestructive;
+
 	private IniParser!(dialect, string) _parser;
 
 public @safe pure nothrow:
@@ -901,10 +986,10 @@ public @safe pure nothrow:
 	}
 
 	///
-	bool empty() const => _parser.empty;
+	bool empty() const @nogc => _parser.empty;
 
 	///
-	inout(Token) front() inout => _parser.front;
+	inout(Token) front() inout @nogc => _parser.front;
 
 	///
 	void popFront() {
@@ -912,14 +997,16 @@ public @safe pure nothrow:
 		_parser.skipIrrelevant(true);
 	}
 
-	///
-	inout(typeof(this)) save() inout {
-		return this;
+	static if (!isDestructive) {
+		///
+		inout(typeof(this)) save() inout @nogc {
+			return this;
+		}
 	}
 }
 
 ///
-@safe unittest {
+@safe @nogc unittest {
 	// INI document (demo data)
 	static immutable string rawIniDocument = `; This is a comment.
 [section1]
@@ -960,7 +1047,7 @@ oachkatzl = schwoaf ;try pronouncing that
 	assert(values == 2);
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable string rawIniDocument = `; This is a comment.
 [section1]
 s1key1 = value1
@@ -1079,7 +1166,7 @@ s2key2	 =	 value no.4
 	assert(parser.empty());
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = "#not-a = comment";
 	auto parser = makeIniParser(rawIni);
 
@@ -1094,7 +1181,7 @@ s2key2	 =	 value no.4
 	assert(parser.empty);
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = "#actually_a = comment\r\n\t#another one\r\n\t\t ; oh, and a third one";
 	enum dialect = (Dialect.hashLineComments | Dialect.lineComments);
 	auto parser = makeIniParser!dialect(rawIni);
@@ -1114,7 +1201,7 @@ s2key2	 =	 value no.4
 	assert(parser.empty);
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = ";not a = line comment\nkey = value ;not-a-comment \nfoo = bar # not a comment\t";
 	enum dialect = Dialect.lite;
 	auto parser = makeIniParser!dialect(rawIni);
@@ -1149,7 +1236,7 @@ s2key2	 =	 value no.4
 	}
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = "; line comment 0\t\n\nkey = value ; comment-1\nfoo = bar #comment 2\n";
 	enum dialect = (Dialect.inlineComments | Dialect.hashInlineComments);
 	auto parser = makeIniParser!dialect(rawIni);
@@ -1191,7 +1278,7 @@ s2key2	 =	 value no.4
 	assert(parser.skipIrrelevant(false));
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = "key = value;inline";
 	enum dialect = Dialect.inlineComments;
 	auto parser = makeIniParser!dialect(rawIni);
@@ -1211,7 +1298,7 @@ s2key2	 =	 value no.4
 	assert(parser.empty);
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni = "key: value\n"
 		~ "foo= bar\n"
 		~ "lol :rofl\n"
@@ -1274,7 +1361,7 @@ s2key2	 =	 value no.4
 	assert(parser.skipIrrelevant());
 }
 
-@safe unittest {
+@safe @nogc unittest {
 	static immutable rawIni =
 		"\"foo=bar\"=foobar\n"
 		~ "'foo = bar' = foo_bar\n"
@@ -1392,7 +1479,7 @@ IniParser!(dialect, string) makeIniParser(
 }
 
 ///
-@safe unittest {
+@safe @nogc unittest {
 	string regular;
 	auto parser1 = makeIniParser(regular);
 	assert(parser1.empty); // exclude from docs
@@ -1404,6 +1491,21 @@ IniParser!(dialect, string) makeIniParser(
 	const(char)[] constChars;
 	auto parser3 = makeIniParser(constChars);
 	assert(parser3.empty); // exclude from docs
+
+	assert(!parser1.isDestructive); // exclude from docs
+	assert(!parser2.isDestructive); // exclude from docs
+	assert(!parser3.isDestructive); // exclude from docs
+}
+
+@safe unittest {
+	char[] mutableInput;
+	enum dialect = Dialect.concatSubstrings;
+
+	auto parser1 = makeIniParser!(dialect, const(char)[])(mutableInput);
+	auto parser2 = (() @nogc => makeIniParser!(dialect)(mutableInput))();
+
+	assert(!parser1.isDestructive);
+	assert(parser2.isDestructive);
 }
 
 /++
@@ -1427,7 +1529,7 @@ IniFilteredParser!(dialect, string) makeIniFilteredParser(
 }
 
 ///
-@safe unittest {
+@safe @nogc unittest {
 	string regular;
 	auto parser1 = makeIniFilteredParser(regular);
 	assert(parser1.empty); // exclude from docs
