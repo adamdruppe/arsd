@@ -311,12 +311,12 @@ private enum LocationState {
 }
 
 private enum OperatingMode {
-	mut,
-	dup,
+	nonDestructive,
+	destructive,
 }
 
 private enum OperatingMode operatingMode(string) = (is(string == char[]))
-	? OperatingMode.mut : OperatingMode.dup;
+	? OperatingMode.destructive : OperatingMode.nonDestructive;
 
 /++
 	Low-level INI parser
@@ -699,7 +699,7 @@ struct IniParser(
 
 		static if (dialect.hasFeature(Dialect.concatSubstrings)) {
 			Token lexSubstringsImpl(TokenType tokenType)() {
-				static if (operatingMode!string == OperatingMode.mut) {
+				static if (operatingMode!string == OperatingMode.destructive) {
 					auto originalSource = _source;
 				}
 
@@ -709,7 +709,7 @@ struct IniParser(
 				next._bypassConcatSubstrings = true;
 				next.popFront();
 
-				static if (operatingMode!string == OperatingMode.mut) {
+				static if (operatingMode!string == OperatingMode.destructive) {
 					import arsd.core : isSliceOf;
 
 					if (!token.data.isSliceOf(originalSource)) {
@@ -726,10 +726,10 @@ struct IniParser(
 						break;
 					}
 
-					static if (operatingMode!string == OperatingMode.dup) {
+					static if (operatingMode!string == OperatingMode.nonDestructive) {
 						token.data ~= next.front.data;
 					}
-					static if (operatingMode!string == OperatingMode.mut) {
+					static if (operatingMode!string == OperatingMode.destructive) {
 						foreach (const c; next.front.data) {
 							mutSource[mutOffset] = c;
 							++mutOffset;
