@@ -320,7 +320,6 @@ bool isSliceOf(T1, T2)(scope const(T1)[] needle, scope const(T2)[] haystack) @tr
 	assert(s1[$ .. $].isSliceOf(s1));
 }
 
-
 /++
 	Does math as a 64 bit number, but saturates at int.min and int.max when converting back to a 32 bit int.
 
