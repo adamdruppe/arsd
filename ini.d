@@ -1780,7 +1780,12 @@ company = "Digital Mars"
 	See_also:
 		[parseIniDocument]
  +/
-string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow {
+string[immutable(char)[]][immutable(char)[]] parseIniAA(
+	IniDialect dialect = IniDialect.defaults,
+	string,
+)(
+	string rawIni,
+) @safe pure nothrow {
 	static if (is(string == immutable(char)[])) {
 		immutable(char)[] toString(string key) => key;
 	} else {
@@ -1789,8 +1794,8 @@ string[string][string] parseIniAA(IniDialect dialect = IniDialect.defaults, stri
 
 	auto parser = IniParser!(dialect, string)(rawIni);
 
-	string[string][string] document;
-	string[string] section;
+	string[immutable(char)[]][immutable(char)[]] document;
+	string[immutable(char)[]] section;
 
 	string sectionName = null;
 	string keyName = null;
