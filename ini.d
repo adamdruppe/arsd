@@ -993,14 +993,12 @@ struct IniParser(
 
 									case '\r':
 										const idxAfterNext = idxNext + 1;
-
 										// CRLF?
 										if (idxAfterNext < _source.length) {
 											if (_source[idxAfterNext] == '\n') {
 												return 3;
 											}
 										}
-
 										return 2;
 
 									default:
@@ -1014,7 +1012,7 @@ struct IniParser(
 								if (foldingCount > 0) {
 									static if (operatingMode!string == OperatingMode.nonDestructive) {
 										idx += (foldingCount - 1);
-										idxLastText = idx;
+										idxCutoff = idx;
 									}
 									static if (operatingMode!string == OperatingMode.destructive) {
 										_source.splice(idx, foldingCount);
@@ -1073,7 +1071,7 @@ struct IniParser(
 				}
 			}
 
-			const idxNextToken = (idxCutoff >= 0) ? idxCutoff : idxEOT;
+			const idxNextToken = (idxCutoff >= idxLastText) ? idxCutoff : idxEOT;
 			_source = _source[idxNextToken .. $];
 
 			if (inQuotedString != QuotedString.none) {
@@ -1946,12 +1944,7 @@ key \= = value
 	{
 		parser.popFront();
 		assert(!parser.empty);
-		// FIXME: Line folding does not interact properly with keys.
-		version (none) {
-			assert(parser.front.data == "key");
-		} else {
-			assert(parser.front.data == "key "); // bug
-		}
+		assert(parser.front.data == "key");
 
 		parser.popFront();
 		assert(!parser.empty);
