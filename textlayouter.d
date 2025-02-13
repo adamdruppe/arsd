@@ -24,6 +24,9 @@
 +/
 module arsd.textlayouter;
 
+// see: https://harfbuzz.github.io/a-simple-shaping-example.html
+
+
 // FIXME: unicode private use area could be delegated out but it might also be used by something else.
 // just really want an encoding scheme for replaced elements that punt it outside..
 
@@ -347,6 +350,15 @@ public struct Selection {
 		return this;
 	}
 
+	/++
+		Gets the current user coordinate, the point where they explicitly want the caret to be near.
+
+		History:
+			Added January 24, 2025
+	+/
+	Point getUserCoordinate() {
+		return impl.virtualFocusPosition;
+	}
 
 	/+ Moving the internal position +/
 

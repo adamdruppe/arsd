@@ -813,8 +813,6 @@ interface->SetProgressValue(hwnd, 40, 100);
 +/
 module arsd.simpledisplay;
 
-import arsd.core;
-
 // FIXME: tetris demo
 // FIXME: space invaders demo
 // FIXME: asteroids demo
@@ -1161,6 +1159,8 @@ unittest {
 // FIXME: tetris demo
 // FIXME: space invaders demo
 // FIXME: asteroids demo
+
+import arsd.core;
 
 version(OSX) version(DigitalMars) version=OSXCocoa;
 

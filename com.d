@@ -1159,7 +1159,7 @@ extern (D) void ObjectDestroyed()
 }
 
 
-char[] oleCharsToString(char[] buffer, OLECHAR* chars) {
+char[] oleCharsToString(char[] buffer, OLECHAR* chars) @system {
 	auto c = cast(wchar*) chars;
 	auto orig = c;
 
@@ -1470,7 +1470,7 @@ BOOL SetKeyAndValue(LPCSTR pszKey, LPCSTR pszSubkey, LPCSTR pszValue)
     return result;
 }
 
-void unicode2ansi(char *s)
+void unicode2ansi(char *s) @system
 {
     wchar *w;
 

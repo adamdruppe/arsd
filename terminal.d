@@ -559,7 +559,7 @@ enum ConsoleOutputType {
 	cellular = 1, /// or do you want access to the terminal screen as a grid of characters?
 	//truncatedCellular = 3, /// cellular, but instead of wrapping output to the next line automatically, it will truncate at the edges
 
-	minimalProcessing = 255, /// do the least possible work, skips most construction and desturction tasks. Only use if you know what you're doing here
+	minimalProcessing = 255, /// do the least possible work, skips most construction and destruction tasks, does not query terminal in any way in favor of making assumptions about it. Only use if you know what you're doing here
 }
 
 alias ConsoleOutputMode = ConsoleOutputType;
@@ -710,16 +710,16 @@ struct Terminal {
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
-		private int[] delegate() getSizeOverride;
 		void delegate(in void[]) _writeDelegate; // used to override the unix write() system call, set it magically
 	}
+	private int[] delegate() getSizeOverride;
 
 	bool terminalInFamily(string[] terms...) {
 		version(Win32Console) if(UseWin32Console)
 			return false;
 
 		// we're not writing to a terminal at all!
-		if(!usingDirectEmulator)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
 		if(!stdoutIsTerminal || !stdinIsTerminal)
 			return false;
 
@@ -728,7 +728,7 @@ struct Terminal {
 		version(TerminalDirectToEmulator)
 			auto term = "xterm";
 		else
-			auto term = environment.get("TERM");
+			auto term = type == ConsoleOutputType.minimalProcessing ? "xterm" : environment.get("TERM");
 
 		foreach(t; terms)
 			if(indexOf(term, t) != -1)
@@ -900,7 +900,7 @@ struct Terminal {
 
 	// Looks up a termcap item and tries to execute it. Returns false on failure
 	bool doTermcap(T...)(string key, T t) {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing && !stdoutIsTerminal)
 			return false;
 
 		import std.conv;
@@ -1041,6 +1041,7 @@ struct Terminal {
 	private bool tcapsRequested;
 
 	uint tcaps() const {
+		if(type != ConsoleOutputType.minimalProcessing)
 		if(!tcapsRequested) {
 			Terminal* mutable = cast(Terminal*) &this;
 			version(Posix)
@@ -1453,7 +1454,7 @@ struct Terminal {
 		this.type = type;
 
 		if(type == ConsoleOutputType.minimalProcessing) {
-			readTermcap();
+			readTermcap("xterm");
 			_suppressDestruction = true;
 			return;
 		}
@@ -1468,6 +1469,7 @@ struct Terminal {
 			goCellular();
 		}
 
+		if(type != ConsoleOutputType.minimalProcessing)
 		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
 		}
@@ -1475,7 +1477,7 @@ struct Terminal {
 	}
 
 	private void goCellular() {
-		if(!usingDirectEmulator && !Terminal.stdoutIsTerminal)
+		if(!usingDirectEmulator && !Terminal.stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("Cannot go to cellular mode with redirected output");
 
 		if(UseVtSequences) {
@@ -1737,7 +1739,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(!usingDirectEmulator && !stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
 			return;
 		if(force != ForceOption.neverSend) {
 			if(UseVtSequences) {
@@ -1967,7 +1969,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		if(!usingDirectEmulator && stdoutIsTerminal) {
+		if(!usingDirectEmulator && stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing) {
 			if(UseVtSequences)
 				writeStringRaw("\033[0m");
 			else version(Win32Console) if(UseWin32Console) {
@@ -2200,7 +2202,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	private int[] getSizeInternal() {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(getSizeOverride)
+			return getSizeOverride();
+
+		if(!usingDirectEmulator && !stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("unable to get size of non-terminal");
 		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
@@ -2213,11 +2218,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			return [cols, rows];
 		} else {
-			if(getSizeOverride is null) {
-				winsize w;
-				ioctl(0, TIOCGWINSZ, &w);
-				return [w.ws_col, w.ws_row];
-			} else return getSizeOverride();
+			winsize w;
+			ioctl(1, TIOCGWINSZ, &w);
+			return [w.ws_col, w.ws_row];
 		}
 	}
 
@@ -2315,6 +2318,34 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(s.length == 0)
 			return;
 
+		if(type == ConsoleOutputType.minimalProcessing) {
+			// need to still try to track a little, even if we can't
+			// talk to the terminal in minimal processing mode
+			auto height = this.height;
+			foreach(dchar ch; s) {
+				switch(ch) {
+					case '\n':
+						_cursorX = 0;
+						_cursorY++;
+					break;
+					case '\t':
+						int diff = 8 - (_cursorX % 8);
+						if(diff == 0)
+							diff = 8;
+						_cursorX += diff;
+					break;
+					default:
+						_cursorX++;
+				}
+
+				if(_wrapAround && _cursorX > width) {
+					_cursorX = 0;
+					_cursorY++;
+				}
+				if(_cursorY == height)
+					_cursorY--;
+			}
+		}
 
 		version(TerminalDirectToEmulator) {
 			// this breaks up extremely long output a little as an aid to the
@@ -2478,7 +2509,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			On November 7, 2023 (dub v11.3), this function started returning stdin.readln in the event that the instance is not connected to a terminal.
 	+/
 	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
-		if(!usingDirectEmulator)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
 		if(!stdoutIsTerminal || !stdinIsTerminal) {
 			import std.stdio;
 			import std.string;
@@ -2532,6 +2563,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			Added January 8, 2023
 	+/
 	void updateCursorPosition() {
+		if(type == ConsoleOutputType.minimalProcessing)
+			return;
 		auto terminal = &this;
 
 		terminal.flush();
@@ -2560,7 +2593,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                }
 	}
 	private void updateCursorPosition_impl() {
-		if(!usingDirectEmulator)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
 		if(!stdinIsTerminal || !stdoutIsTerminal)
 			throw new Exception("cannot update cursor position on non-terminal");
 		auto terminal = &this;

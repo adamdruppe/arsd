@@ -329,6 +329,16 @@ the virtual functions remain as the default calculated values. then the reads go
 
 	$(H4 custom widgets - how to write your own)
 
+	See some example programs: https://github.com/adamdruppe/minigui-samples
+
+	When you can't build your application out of existing widgets, you'll want to make your own. The general pattern is to subclass [Widget], write a constructor that takes a `Widget` parent argument you pass to `super`, then set some values, override methods you want to customize, and maybe add child widgets and events as appropriate. You might also be able to subclass an existing other Widget and customize that way.
+
+	To get more specific, let's consider a few illustrative examples, then we'll come back to some principles.
+
+	$(H5 Custom Widget Examples)
+
+	$(H5 More notes)
+
 	See [Widget].
 
 	If you override [Widget.recomputeChildLayout], don't forget to call `registerMovement()` at the top of it, then call recomputeChildLayout of all its children too!
@@ -446,6 +456,30 @@ the virtual functions remain as the default calculated values. then the reads go
 
 		More to come.
 
+	Widget_tree_notes:
+		minigui doesn't really formalize these distinctions, but in practice, there are multiple types of widgets:
+
+		$(LIST
+			* Containers - a widget that holds other widgets directly, generally [Layout]s. [WidgetContainer] is an attempt to formalize this but is nothing really special.
+
+			* Reparenting containers - a widget that holds other widgets inside a different one of their parents. [MainWindow] is an example - any time you try to add a child to the main window, it actually goes to a special container one layer deeper. [ScrollMessageWidget] also works this way.
+
+			---
+			auto child = new Widget(mainWindow);
+			assert(child.parent is mainWindow); // fails, its actual parent is mainWindow's inner container instead.
+			---
+
+			* Limiting containers - a widget that can only hold children of a particular type. See [TabWidget], which can only hold [TabWidgetPage]s.
+
+			* Simple controls - a widget that cannot have children, but instead does a specific job.
+
+			* Compound controls - a widget that is comprised of children internally to help it do a specific job, but externally acts like a simple control that does not allow any more children. Ideally, this is encapsulated, but in practice, it leaks right now.
+		)
+
+		In practice, all of these are [Widget]s right now, but this violates the OOP principles of substitutability since some operations are not actually valid on all subclasses.
+
+		Future breaking changes might be related to making this more structured but im not sure it is that important to actually break stuff over.
+
 	My_UI_Guidelines:
 		Note that the Linux custom widgets generally aim to be efficient on remote X network connections.
 
@@ -464,6 +498,20 @@ the virtual functions remain as the default calculated values. then the reads go
 	I want to do some newer ideas that might not be easy to keep working fully on Windows, like adding a menu search feature and scrollbar custom marks and typing in numbers. I might make them a default part of the widget with custom, and let you provide them through a menu or something elsewhere.
 
 	History:
+		In January 2025 (dub v12.0), minigui got a few more breaking changes:
+
+		$(LIST
+			* `defaultEventHandler_*` functions take more specific objects. So if you see errors like:
+
+			---
+			Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusin(Event foe)` does not override any function, did you mean to override `void arsd.minigui.Widget.defaultEventHandler_focusin(arsd.minigui.FocusInEvent event)`?
+			---
+
+			Go to the file+line number from the error message and change `Event` to `FocusInEvent` (or whatever one it tells you in the "did you mean" part of the error) and recompile. No other changes should be necessary to be compatible with this change.
+
+			* Most event classes, except those explicitly used as a base class, are now marked `final`. If you depended on this subclassing, let me know and I'll see what I can do, but I expect there's little use of it. I now recommend all event classes the `final` unless you are specifically planning on extending it.
+		)
+
 		Minigui had mostly additive changes or bug fixes since its inception until May 2021.
 
 		In May 2021 (dub v10.0), minigui got an overhaul. If it was versioned independently, I'd
@@ -760,6 +808,21 @@ version(Windows) {
 	Later I'll add more complete examples, but for now [TextLabel] and [LabeledPasswordEdit] are both simple widgets you can view implementation to get some ideas.
 +/
 class Widget : ReflectableProperties {
+
+	private int toolbarIconSize() {
+		return scaleWithDpi(24);
+	}
+
+
+	/++
+		Returns the current size of the widget.
+
+		History:
+			Added January 3, 2025
+	+/
+	final Size size() const {
+		return Size(width, height);
+	}
 
 	private bool willDraw() {
 		return true;
@@ -1173,12 +1236,24 @@ class Widget : ReflectableProperties {
 
 		History:
 			Added May 10, 2021
+
+		Examples:
+
+		---
+		addEventListener((MouseUpEvent ev) {
+			if(ev.button == MouseButton.left) {
+				// the first arg is the state to modify, the second arg is what to set it to
+				setDynamicState(DynamicState.depressed, false);
+			}
+		});
+		---
+
 	+/
 	enum DynamicState : ulong {
 		focus = (1 << 0), /// the widget currently has the keyboard focus
 		hover = (1 << 1), /// the mouse is currently hovering over the widget (may not always be updated)
-		valid = (1 << 2), /// the widget's content has been validated and it passed (do not set if not validation has been performed!)
-		invalid = (1 << 3), /// the widget's content has been validated and it failed (do not set if not validation has been performed!)
+		valid = (1 << 2), /// the widget's content has been validated and it passed (do not set if no validation has been performed!)
+		invalid = (1 << 3), /// the widget's content has been validated and it failed (do not set if no validation has been performed!)
 		checked = (1 << 4), /// the widget is toggleable and currently toggled on
 		selected = (1 << 5), /// the widget represents one option of many and is currently selected, but is not necessarily focused nor checked.
 		disabled = (1 << 6), /// the widget is currently unable to perform its designated task
@@ -1566,29 +1641,33 @@ class Widget : ReflectableProperties {
 		just want to change the default behavior of an existing event type in a subclass,
 		you override the function (and optionally call `super.method_name`) like normal.
 
+		History:
+			Some of the events changed to take specific subclasses instead of generic `Event`
+			on January 3, 2025.
+
 	+/
 	protected EventHandler[string] defaultEventHandlers;
 
 	/// ditto
 	void setupDefaultEventHandlers() {
-		defaultEventHandlers["click"] = (Widget t, Event event) { t.defaultEventHandler_click(cast(ClickEvent) event); };
-		defaultEventHandlers["dblclick"] = (Widget t, Event event) { t.defaultEventHandler_dblclick(cast(DoubleClickEvent) event); };
-		defaultEventHandlers["keydown"] = (Widget t, Event event) { t.defaultEventHandler_keydown(cast(KeyDownEvent) event); };
-		defaultEventHandlers["keyup"] = (Widget t, Event event) { t.defaultEventHandler_keyup(cast(KeyUpEvent) event); };
-		defaultEventHandlers["mouseover"] = (Widget t, Event event) { t.defaultEventHandler_mouseover(cast(MouseOverEvent) event); };
-		defaultEventHandlers["mouseout"] = (Widget t, Event event) { t.defaultEventHandler_mouseout(cast(MouseOutEvent) event); };
-		defaultEventHandlers["mousedown"] = (Widget t, Event event) { t.defaultEventHandler_mousedown(cast(MouseDownEvent) event); };
-		defaultEventHandlers["mouseup"] = (Widget t, Event event) { t.defaultEventHandler_mouseup(cast(MouseUpEvent) event); };
-		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { t.defaultEventHandler_mouseenter(cast(MouseEnterEvent) event); };
-		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { t.defaultEventHandler_mouseleave(cast(MouseLeaveEvent) event); };
-		defaultEventHandlers["mousemove"] = (Widget t, Event event) { t.defaultEventHandler_mousemove(cast(MouseMoveEvent) event); };
-		defaultEventHandlers["char"] = (Widget t, Event event) { t.defaultEventHandler_char(cast(CharEvent) event); };
-		defaultEventHandlers["triggered"] = (Widget t, Event event) { t.defaultEventHandler_triggered(event); };
-		defaultEventHandlers["change"] = (Widget t, Event event) { t.defaultEventHandler_change(event); };
-		defaultEventHandlers["focus"] = (Widget t, Event event) { t.defaultEventHandler_focus(event); };
-		defaultEventHandlers["blur"] = (Widget t, Event event) { t.defaultEventHandler_blur(event); };
-		defaultEventHandlers["focusin"] = (Widget t, Event event) { t.defaultEventHandler_focusin(event); };
-		defaultEventHandlers["focusout"] = (Widget t, Event event) { t.defaultEventHandler_focusout(event); };
+		defaultEventHandlers["click"] = (Widget t, Event event)      { if(auto e = cast(ClickEvent) event) t.defaultEventHandler_click(e); };
+		defaultEventHandlers["dblclick"] = (Widget t, Event event)   { if(auto e = cast(DoubleClickEvent) event) t.defaultEventHandler_dblclick(e); };
+		defaultEventHandlers["keydown"] = (Widget t, Event event)    { if(auto e = cast(KeyDownEvent) event) t.defaultEventHandler_keydown(e); };
+		defaultEventHandlers["keyup"] = (Widget t, Event event)      { if(auto e = cast(KeyUpEvent) event) t.defaultEventHandler_keyup(e); };
+		defaultEventHandlers["mouseover"] = (Widget t, Event event)  { if(auto e = cast(MouseOverEvent) event) t.defaultEventHandler_mouseover(e); };
+		defaultEventHandlers["mouseout"] = (Widget t, Event event)   { if(auto e = cast(MouseOutEvent) event) t.defaultEventHandler_mouseout(e); };
+		defaultEventHandlers["mousedown"] = (Widget t, Event event)  { if(auto e = cast(MouseDownEvent) event) t.defaultEventHandler_mousedown(e); };
+		defaultEventHandlers["mouseup"] = (Widget t, Event event)    { if(auto e = cast(MouseUpEvent) event) t.defaultEventHandler_mouseup(e); };
+		defaultEventHandlers["mouseenter"] = (Widget t, Event event) { if(auto e = cast(MouseEnterEvent) event) t.defaultEventHandler_mouseenter(e); };
+		defaultEventHandlers["mouseleave"] = (Widget t, Event event) { if(auto e = cast(MouseLeaveEvent) event) t.defaultEventHandler_mouseleave(e); };
+		defaultEventHandlers["mousemove"] = (Widget t, Event event)  { if(auto e = cast(MouseMoveEvent) event) t.defaultEventHandler_mousemove(e); };
+		defaultEventHandlers["char"] = (Widget t, Event event)       { if(auto e = cast(CharEvent) event) t.defaultEventHandler_char(e); };
+		defaultEventHandlers["triggered"] = (Widget t, Event event)  { if(auto e = cast(Event) event) t.defaultEventHandler_triggered(e); };
+		defaultEventHandlers["change"] = (Widget t, Event event)     { if(auto e = cast(ChangeEventBase) event) t.defaultEventHandler_change(e); };
+		defaultEventHandlers["focus"] = (Widget t, Event event)      { if(auto e = cast(FocusEvent) event) t.defaultEventHandler_focus(e); };
+		defaultEventHandlers["blur"] = (Widget t, Event event)       { if(auto e = cast(BlurEvent) event) t.defaultEventHandler_blur(e); };
+		defaultEventHandlers["focusin"] = (Widget t, Event event)    { if(auto e = cast(FocusInEvent) event) t.defaultEventHandler_focusin(e); };
+		defaultEventHandlers["focusout"] = (Widget t, Event event)   { if(auto e = cast(FocusOutEvent) event) t.defaultEventHandler_focusout(e); };
 	}
 
 	/// ditto
@@ -1626,15 +1705,15 @@ class Widget : ReflectableProperties {
 	/// ditto
 	void defaultEventHandler_triggered(Event event) {}
 	/// ditto
-	void defaultEventHandler_change(Event event) {}
+	void defaultEventHandler_change(ChangeEventBase event) {}
 	/// ditto
-	void defaultEventHandler_focus(Event event) {}
+	void defaultEventHandler_focus(FocusEvent event) {}
 	/// ditto
-	void defaultEventHandler_blur(Event event) {}
+	void defaultEventHandler_blur(BlurEvent event) {}
 	/// ditto
-	void defaultEventHandler_focusin(Event event) {}
+	void defaultEventHandler_focusin(FocusInEvent event) {}
 	/// ditto
-	void defaultEventHandler_focusout(Event event) {}
+	void defaultEventHandler_focusout(FocusOutEvent event) {}
 
 	/++
 		[Event]s use a Javascript-esque model. See more details on the [Event] page.
@@ -2110,7 +2189,7 @@ class Widget : ReflectableProperties {
 		History:
 			Added July 2, 2021 (v10.2)
 	+/
-	protected void addScrollPosition(ref int x, ref int y) {};
+	protected void addScrollPosition(ref int x, ref int y) {}
 
 	/++
 		Responsible for actually painting the widget to the screen. The clip rectangle and coordinate translation in the [WidgetPainter] are pre-configured so you can draw independently.
@@ -2730,18 +2809,32 @@ abstract class ComboboxBase : Widget {
 	}
 
 	/++
-		This event is fired when the selection changes. Note it inherits
-		from ChangeEvent!string, meaning you can use that as well, and it also
-		fills in [Event.intValue].
+		This event is fired when the selection changes. Both [Event.stringValue] and
+		[Event.intValue] are filled in - `stringValue` is the text in the selection
+		and `intValue` is the index of the selection. If the combo box allows multiple
+		selection, these values will include only one of the selected items - for those,
+		you should loop through the values and check their selected flag instead.
+
+		(I know that sucks, but it is how it is right now.)
+
+		History:
+			It originally inherited from `ChangeEvent!String`, but now does from [ChangeEventBase] as of January 3, 2025.
+			This shouldn't break anything if you used it through either its own name `SelectionChangedEvent` or through the
+			base `Event`, only if you specifically used `ChangeEvent!string` - those handlers may now get `null` or fail to
+			be called. If you did do this, just change it to generic `Event`, as `stringValue` and `intValue` are already there.
 	+/
-	static class SelectionChangedEvent : ChangeEvent!string {
+	static final class SelectionChangedEvent : ChangeEventBase {
 		this(Widget target, int iv, string sv) {
-			super(target, &stringValue);
+			super(target);
 			this.iv = iv;
 			this.sv = sv;
 		}
 		immutable int iv;
 		immutable string sv;
+
+		deprecated("Use stringValue or intValue instead") @property string value() {
+			return sv;
+		}
 
 		override @property string stringValue() { return sv; }
 		override @property int intValue() { return iv; }
@@ -7075,7 +7168,7 @@ class HorizontalScrollbar : ScrollbarBase {
 	override int minWidth() { return scaleWithDpi(48); }
 }
 
-class ScrollToPositionEvent : Event {
+final class ScrollToPositionEvent : Event {
 	enum EventString = "scrolltoposition";
 
 	this(Widget target, int value) {
@@ -9436,8 +9529,10 @@ class Window : Widget {
 /++
 	History:
 		Added January 12, 2022
+
+		Made `final` on January 3, 2025
 +/
-class DpiChangedEvent : Event {
+final class DpiChangedEvent : Event {
 	enum EventString = "dpichanged";
 
 	this(Widget target) {
@@ -10067,8 +10162,10 @@ class TableView : Widget {
 
 	History:
 		Added November 27, 2021 (dub v10.4)
+
+		Made `final` on January 3, 2025
 +/
-class HeaderClickedEvent : Event {
+final class HeaderClickedEvent : Event {
 	enum EventString = "HeaderClicked";
 	this(Widget target, int columnIndex) {
 		this.columnIndex = columnIndex;
@@ -10441,6 +10538,10 @@ private string toMenuLabel(string s) {
 
 private void autoExceptionHandler(Exception e) {
 	messageBox(e.msg);
+}
+
+void callAsIfClickedFromMenu(alias fn)(auto ref __traits(parent, fn) _this, Window window) {
+	makeAutomaticHandler!(fn)(window, &__traits(child, _this, fn))();
 }
 
 private void delegate() makeAutomaticHandler(alias fn, T)(Window window, T t) {
@@ -11085,8 +11186,6 @@ class ToolBar : Widget {
 	}
 }
 
-enum toolbarIconSize = 24;
-
 /// An implementation helper for [ToolBar]. Generally, you shouldn't create these yourself and instead just pass [Action]s to [ToolBar]'s constructor and let it create the buttons for you.
 class ToolButton : Button {
 	///
@@ -11114,101 +11213,114 @@ class ToolButton : Button {
 	painter.drawThemed(delegate Rectangle (const Rectangle bounds) {
 		painter.outlineColor = Color.black;
 
-		// I want to get from 16 to 24. that's * 3 / 2
-		static assert(toolbarIconSize >= 16);
-		enum multiplier = toolbarIconSize / 8;
-		enum divisor = 2 + ((toolbarIconSize % 8) ? 1 : 0);
+		immutable multiplier = toolbarIconSize / 4;
+		immutable divisor = 16 / 4;
+
+		int ScaledNumber(int n) {
+			// return n * multiplier / divisor;
+			auto s = n * multiplier;
+			auto it = s / divisor;
+			auto rem = s % divisor;
+			if(rem && n >= 8) // cuz the original used 0 .. 16 and we want to try to stay centered so things in the bottom half tend to be added a it
+				it++;
+			return it;
+		}
+
+		arsd.color.Point Point(int x, int y) {
+			return arsd.color.Point(ScaledNumber(x), ScaledNumber(y));
+		}
+
 		switch(action.iconId) {
 			case GenericIcons.New:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(3, 2) * multiplier / divisor, Point(3, 13) * multiplier / divisor, Point(12, 13) * multiplier / divisor, Point(12, 6) * multiplier / divisor,
-					Point(8, 2) * multiplier / divisor, Point(8, 6) * multiplier / divisor, Point(12, 6) * multiplier / divisor, Point(8, 2) * multiplier / divisor,
-					Point(3, 2) * multiplier / divisor, Point(3, 13) * multiplier / divisor
+					Point(3, 2), Point(3, 13), Point(12, 13), Point(12, 6),
+					Point(8, 2), Point(8, 6), Point(12, 6), Point(8, 2),
+					Point(3, 2), Point(3, 13)
 				);
 			break;
 			case GenericIcons.Save:
 				painter.fillColor = Color.white;
 				painter.outlineColor = Color.black;
-				painter.drawRectangle(Point(2, 2) * multiplier / divisor, Point(13, 13) * multiplier / divisor);
+				painter.drawRectangle(Point(2, 2), Point(13, 13));
 
 				// the label
-				painter.drawRectangle(Point(4, 8) * multiplier / divisor, Point(11, 13) * multiplier / divisor);
+				painter.drawRectangle(Point(4, 8), Point(11, 13));
 
 				// the slider
 				painter.fillColor = Color.black;
 				painter.outlineColor = Color.black;
-				painter.drawRectangle(Point(4, 3) * multiplier / divisor, Point(10, 6) * multiplier / divisor);
+				painter.drawRectangle(Point(4, 3), Point(10, 6));
 
 				painter.fillColor = Color.white;
 				painter.outlineColor = Color.white;
 				// the disc window
-				painter.drawRectangle(Point(5, 3) * multiplier / divisor, Point(6, 5) * multiplier / divisor);
+				painter.drawRectangle(Point(5, 3), Point(6, 5));
 			break;
 			case GenericIcons.Open:
 				painter.fillColor = Color.white;
 				painter.drawPolygon(
-					Point(4, 4) * multiplier / divisor, Point(4, 12) * multiplier / divisor, Point(13, 12) * multiplier / divisor, Point(13, 3) * multiplier / divisor,
-					Point(9, 3) * multiplier / divisor, Point(9, 4) * multiplier / divisor, Point(4, 4) * multiplier / divisor);
+					Point(4, 4), Point(4, 12), Point(13, 12), Point(13, 3),
+					Point(9, 3), Point(9, 4), Point(4, 4));
 				painter.drawPolygon(
-					Point(2, 6) * multiplier / divisor, Point(11, 6) * multiplier / divisor,
-					Point(12, 12) * multiplier / divisor, Point(4, 12) * multiplier / divisor,
-					Point(2, 6) * multiplier / divisor);
-				//painter.drawLine(Point(9, 6) * multiplier / divisor, Point(13, 7) * multiplier / divisor);
+					Point(2, 6), Point(11, 6),
+					Point(12, 12), Point(4, 12),
+					Point(2, 6));
+				//painter.drawLine(Point(9, 6), Point(13, 7));
 			break;
 			case GenericIcons.Copy:
 				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(3, 2) * multiplier / divisor, Point(9, 10) * multiplier / divisor);
-				painter.drawRectangle(Point(6, 5) * multiplier / divisor, Point(12, 13) * multiplier / divisor);
+				painter.drawRectangle(Point(3, 2), Point(9, 10));
+				painter.drawRectangle(Point(6, 5), Point(12, 13));
 			break;
 			case GenericIcons.Cut:
 				painter.fillColor = Color.transparent;
 				painter.outlineColor = getComputedStyle.foregroundColor();
-				painter.drawLine(Point(3, 2) * multiplier / divisor, Point(10, 9) * multiplier / divisor);
-				painter.drawLine(Point(4, 9) * multiplier / divisor, Point(11, 2) * multiplier / divisor);
-				painter.drawRectangle(Point(3, 9) * multiplier / divisor, Point(5, 13) * multiplier / divisor);
-				painter.drawRectangle(Point(9, 9) * multiplier / divisor, Point(11, 12) * multiplier / divisor);
+				painter.drawLine(Point(3, 2), Point(10, 9));
+				painter.drawLine(Point(4, 9), Point(11, 2));
+				painter.drawRectangle(Point(3, 9), Point(5, 13));
+				painter.drawRectangle(Point(9, 9), Point(11, 12));
 			break;
 			case GenericIcons.Paste:
 				painter.fillColor = Color.white;
-				painter.drawRectangle(Point(2, 3) * multiplier / divisor, Point(11, 11) * multiplier / divisor);
-				painter.drawRectangle(Point(6, 8) * multiplier / divisor, Point(13, 13) * multiplier / divisor);
-				painter.drawLine(Point(6, 2) * multiplier / divisor, Point(4, 5) * multiplier / divisor);
-				painter.drawLine(Point(6, 2) * multiplier / divisor, Point(9, 5) * multiplier / divisor);
+				painter.drawRectangle(Point(2, 3), Point(11, 11));
+				painter.drawRectangle(Point(6, 8), Point(13, 13));
+				painter.drawLine(Point(6, 2), Point(4, 5));
+				painter.drawLine(Point(6, 2), Point(9, 5));
 				painter.fillColor = Color.black;
-				painter.drawRectangle(Point(4, 5) * multiplier / divisor, Point(9, 6) * multiplier / divisor);
+				painter.drawRectangle(Point(4, 5), Point(9, 6));
 			break;
 			case GenericIcons.Help:
 				painter.outlineColor = getComputedStyle.foregroundColor();
-				painter.drawText(Point(0, 0), "?", Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+				painter.drawText(arsd.color.Point(0, 0), "?", arsd.color.Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 			break;
 			case GenericIcons.Undo:
 				painter.fillColor = Color.transparent;
-				painter.drawArc(Point(3, 4) * multiplier / divisor, 9 * multiplier / divisor, 9 * multiplier / divisor, 0, 360 * 64);
+				painter.drawArc(Point(3, 4), ScaledNumber(9), ScaledNumber(9), 0, 360 * 64);
 				painter.outlineColor = Color.black;
 				painter.fillColor = Color.black;
 				painter.drawPolygon(
-					Point(4, 4) * multiplier / divisor,
-					Point(8, 2) * multiplier / divisor,
-					Point(8, 6) * multiplier / divisor,
-					Point(4, 4) * multiplier / divisor,
+					Point(4, 4),
+					Point(8, 2),
+					Point(8, 6),
+					Point(4, 4),
 				);
 			break;
 			case GenericIcons.Redo:
 				painter.fillColor = Color.transparent;
-				painter.drawArc(Point(3, 4) * multiplier / divisor, 9 * multiplier / divisor, 9 * multiplier / divisor, 0, 360 * 64);
+				painter.drawArc(Point(3, 4), ScaledNumber(9), ScaledNumber(9), 0, 360 * 64);
 				painter.outlineColor = Color.black;
 				painter.fillColor = Color.black;
 				painter.drawPolygon(
-					Point(10, 4) * multiplier / divisor,
-					Point(6, 2) * multiplier / divisor,
-					Point(6, 6) * multiplier / divisor,
-					Point(10, 4) * multiplier / divisor,
+					Point(10, 4),
+					Point(6, 2),
+					Point(6, 6),
+					Point(10, 4),
 				);
 			break;
 			default:
 				painter.outlineColor = getComputedStyle.foregroundColor;
-				painter.drawText(Point(0, 0), action.label, Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
+				painter.drawText(arsd.color.Point(0, 0), action.label, arsd.color.Point(width, height), TextAlignment.Center | TextAlignment.VerticalCenter);
 		}
 		return bounds;
 		});
@@ -12321,11 +12433,11 @@ class MouseActivatedWidget : Widget {
 		});
 	}
 
-	override void defaultEventHandler_focus(Event ev) {
+	override void defaultEventHandler_focus(FocusEvent ev) {
 		super.defaultEventHandler_focus(ev);
 		this.redraw();
 	}
-	override void defaultEventHandler_blur(Event ev) {
+	override void defaultEventHandler_blur(BlurEvent ev) {
 		super.defaultEventHandler_blur(ev);
 		setDynamicState(DynamicState.depressed, false);
 		this.redraw();
@@ -12776,6 +12888,38 @@ class Button : MouseActivatedWidget {
 	private Sprite sprite;
 	private int displayFlags;
 
+	protected bool needsOwnerDraw() {
+		return &this.paint !is &Button.paint || &this.useStyleProperties !is &Button.useStyleProperties || &this.paintContent !is &Button.paintContent;
+	}
+
+	version(win32_widgets)
+	override int handleWmDrawItem(DRAWITEMSTRUCT* dis) {
+		auto itemId = dis.itemID;
+		auto hdc = dis.hDC;
+		auto rect = dis.rcItem;
+		switch(dis.itemAction) {
+			// skipping setDynamicState because i don't want to queue the redraw unnecessarily
+			case ODA_SELECT:
+				dynamicState_ &= ~DynamicState.depressed;
+				if(dis.itemState & ODS_SELECTED)
+					dynamicState_ |= DynamicState.depressed;
+			goto case;
+			case ODA_FOCUS:
+				dynamicState_ &= ~DynamicState.focus;
+				if(dis.itemState & ODS_FOCUS)
+					dynamicState_ |= DynamicState.focus;
+			goto case;
+			case ODA_DRAWENTIRE:
+				auto painter = WidgetPainter(this.simpleWindowWrappingHwnd.draw(true), this);
+				//painter.impl.hdc = hdc;
+				paint(painter);
+			break;
+			default:
+		}
+		return 1;
+
+	}
+
 	/++
 		Creates a push button with the given label, which may be an image or some text.
 
@@ -12788,16 +12932,26 @@ class Button : MouseActivatedWidget {
 			The button with label and image will respect requests to show both on Windows as
 			of March 28, 2022 iff you provide a manifest file to opt into common controls v6.
 	+/
+	this(string label, Widget parent) {
+		this(ImageLabel(label), parent);
+	}
+
+	/// ditto
 	this(ImageLabel label, Widget parent) {
+		bool needsImage;
 		version(win32_widgets) {
-			// FIXME: use ideal button size instead
-			width = 50;
-			height = 30;
 			super(parent);
 
 			// BS_BITMAP is set when we want image only, so checking for exactly that combination
 			enum imgFlags = ImageLabel.DisplayFlags.displayImage | ImageLabel.DisplayFlags.displayText;
 			auto extraStyle = ((label.displayFlags & imgFlags) == ImageLabel.DisplayFlags.displayImage) ? BS_BITMAP : 0;
+
+			// could also do a virtual method needsOwnerDraw which default returns true and we control it here. typeid(this) == typeid(Button) for override check.
+
+			if(needsOwnerDraw) {
+				extraStyle |= BS_OWNERDRAW;
+				needsImage = true;
+			}
 
 			// the transparent thing can mess up borders in other cases, so only going to keep it for bitmap things where it might matter
 			createWin32Window(this, "button"w, label.label, BS_PUSHBUTTON | extraStyle, extraStyle == BS_BITMAP ? WS_EX_TRANSPARENT : 0 );
@@ -12810,24 +12964,19 @@ class Button : MouseActivatedWidget {
 
 			this.label = label.label;
 		} else version(custom_widgets) {
-			width = 50;
-			height = 30;
 			super(parent);
 
 			label.label.extractWindowsStyleLabel(this.label_, this.accelerator);
-
-			if(label.image) {
-				this.sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
-				this.displayFlags = label.displayFlags;
-			}
-
-			this.alignment = label.alignment;
+			needsImage = true;
 		}
-	}
 
-	///
-	this(string label, Widget parent) {
-		this(ImageLabel(label), parent);
+
+		if(needsImage && label.image) {
+			this.sprite = Sprite.fromMemoryImage(parentWindow.win, label.image);
+			this.displayFlags = label.displayFlags;
+		}
+
+		this.alignment = label.alignment;
 	}
 
 	override int minHeight() { return defaultLineHeight + 4; }
@@ -12862,20 +13011,20 @@ class Button : MouseActivatedWidget {
 	}
 	mixin OverrideStyle!Style;
 
-	version(custom_widgets)
-	override void paint(WidgetPainter painter) {
-		painter.drawThemed(delegate Rectangle(const Rectangle bounds) {
-			if(sprite) {
-				sprite.drawAt(
-					painter,
-					bounds.upperLeft + Point((bounds.width - sprite.width) / 2, (bounds.height - sprite.height) / 2),
-					Point(0, 0)
-				);
-			} else {
-				painter.drawText(bounds.upperLeft, label, bounds.lowerRight, alignment | TextAlignment.VerticalCenter);
-			}
-			return bounds;
-		});
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+		if(sprite) {
+			sprite.drawAt(
+				painter,
+				bounds.upperLeft + Point((bounds.width - sprite.width) / 2, (bounds.height - sprite.height) / 2),
+				Point(0, 0)
+			);
+		} else {
+			Point pos = bounds.upperLeft;
+			if(this.height == 16)
+				pos.y -= 2; // total hack omg
+			painter.drawText(pos, label, bounds.lowerRight, alignment | TextAlignment.VerticalCenter);
+		}
+		return bounds;
 	}
 
 	override int flexBasisWidth() {
@@ -12900,6 +13049,41 @@ class Button : MouseActivatedWidget {
 		}
 		fallback:
 			return defaultLineHeight + 4;
+	}
+}
+
+/++
+	A button with a custom appearance, even on systems where there is a standard button. You can subclass it to override its style, paint, or paintContent functions, or you can modify its members for common changes.
+
+	History:
+		Added January 14, 2024
++/
+class CustomButton : Button {
+	this(ImageLabel label, Widget parent) {
+		super(label, parent);
+	}
+
+	this(string label, Widget parent) {
+		super(label, parent);
+	}
+
+	version(win32_widgets)
+	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
+		// paint is driven by handleWmDrawItem instead of minigui's redraw events
+		if(hwnd)
+			InvalidateRect(hwnd, null, false); // get Windows to trigger the actual redraw
+		return;
+	}
+
+	override void paint(WidgetPainter painter) {
+		// the parent does `if(hwnd) return;` because
+		// normally we don't want to draw on standard controls,
+		// but this is an exception if it is an owner drawn button
+		// (which is determined in the constructor by testing,
+		// at runtime, for the existence of an overridden paint
+		// member anyway, so this needed to trigger BS_OWNERDRAW)
+		// sdpyPrintDebugString("drawing");
+		painter.drawThemed(&paintContent);
 	}
 }
 
@@ -13233,7 +13417,7 @@ class TextDisplayHelper : Widget {
 		return ctx;
 	}
 
-	override void defaultEventHandler_blur(Event ev) {
+	override void defaultEventHandler_blur(BlurEvent ev) {
 		super.defaultEventHandler_blur(ev);
 		if(l.wasMutated()) {
 			auto evt = new ChangeEvent!string(this, &this.content);
@@ -13406,9 +13590,6 @@ class TextDisplayHelper : Widget {
 			this.redraw();
 		});
 
-		bool mouseDown;
-		bool mouseActuallyMoved;
-
 		this.addEventListener((scope ResizeEvent re) {
 			// FIXME: I should add a method to give this client area width thing
 			if(wordWrapEnabled_)
@@ -13420,154 +13601,13 @@ class TextDisplayHelper : Widget {
 			this.redraw();
 		});
 
-		this.addEventListener((scope KeyDownEvent kde) {
-			switch(kde.key) {
-				case Key.Up, Key.Down, Key.Left, Key.Right:
-				case Key.Home, Key.End:
-					stateCheckpoint = true;
-					bool setPosition = false;
-					switch(kde.key) {
-						case Key.Up: l.selection.moveUp(); break;
-						case Key.Down: l.selection.moveDown(); break;
-						case Key.Left: l.selection.moveLeft(); setPosition = true; break;
-						case Key.Right: l.selection.moveRight(); setPosition = true; break;
-						case Key.Home: l.selection.moveToStartOfLine(); setPosition = true; break;
-						case Key.End: l.selection.moveToEndOfLine(); setPosition = true; break;
-						default: assert(0);
-					}
+	}
 
-					if(kde.shiftKey)
-						l.selection.setFocus();
-					else
-						l.selection.setAnchor();
-
-					selectionChanged();
-
-					if(setPosition)
-						l.selection.setUserXCoordinate();
-					scrollForCaret();
-					redraw();
-				break;
-				case Key.PageUp, Key.PageDown:
-					// FIXME
-					scrollForCaret();
-				break;
-				case Key.Delete:
-					if(l.selection.isEmpty()) {
-						l.selection.setAnchor();
-						l.selection.moveRight();
-						l.selection.setFocus();
-					}
-					deleteContentOfSelection();
-					adjustScrollbarSizes();
-					scrollForCaret();
-				break;
-				case Key.Insert:
-				break;
-				case Key.A:
-					if(kde.ctrlKey)
-						selectAll();
-				break;
-				case Key.F:
-					// find
-				break;
-				case Key.Z:
-					if(kde.ctrlKey)
-						undo();
-				break;
-				case Key.R:
-					if(kde.ctrlKey)
-						redo();
-				break;
-				case Key.X:
-					if(kde.ctrlKey)
-						cut();
-				break;
-				case Key.C:
-					if(kde.ctrlKey)
-						copy();
-				break;
-				case Key.V:
-					if(kde.ctrlKey)
-						paste();
-				break;
-				case Key.F1:
-					with(l.selection()) {
-						moveToStartOfLine();
-						setAnchor();
-						moveToEndOfLine();
-						moveToIncludeAdjacentEndOfLineMarker();
-						setFocus();
-						replaceContent("");
-					}
-
-					redraw();
-				break;
-				/*
-				case Key.F2:
-					l.selection().changeStyle((old) => l.registerStyle(new MyTextStyle(
-						//(cast(MyTextStyle) old).font,
-						font2,
-						Color.red)));
-					redraw();
-				break;
-				*/
-				case Key.Tab:
-					// we process the char event, so don't want to change focus on it, unless the user overrides that with ctrl
-					if(acceptsTabInput && !kde.ctrlKey)
-						kde.preventDefault();
-				break;
-				default:
-			}
-		});
+	private {
+		bool mouseDown;
+		bool mouseActuallyMoved;
 
 		Point downAt;
-
-		static if(UsingSimpledisplayX11)
-		this.addEventListener((scope ClickEvent ce) {
-			if(ce.button == MouseButton.middle) {
-				parentWindow.win.getPrimarySelection((txt) {
-					doStateCheckpoint();
-
-					// import arsd.core; writeln(txt);writeln(l.selection.getContentString);writeln(preservedPrimaryText);
-
-					if(txt == l.selection.getContentString && preservedPrimaryText.length)
-						l.selection.replaceContent(preservedPrimaryText);
-					else
-						l.selection.replaceContent(txt);
-					redraw();
-				});
-			}
-		});
-
-		this.addEventListener((scope DoubleClickEvent dce) {
-			if(dce.button == MouseButton.left) {
-				with(l.selection()) {
-					scope dg = delegate const(char)[] (scope return const(char)[] ch) {
-						if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
-							return ch;
-						return null;
-					};
-					find(dg, 1, true).moveToEnd.setAnchor;
-					find(dg, 1, false).moveTo.setFocus;
-					selectionChanged();
-					redraw();
-				}
-			}
-		});
-
-		this.addEventListener((scope MouseDownEvent ce) {
-			if(ce.button == MouseButton.left) {
-				downAt = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
-				l.selection.moveTo(adjustForSingleLine(smw.position + downAt));
-				l.selection.setAnchor();
-				mouseDown = true;
-				mouseActuallyMoved = false;
-				parentWindow.captureMouse(this);
-				this.redraw();
-			}
-			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
-		});
 
 		Timer autoscrollTimer;
 		int autoscrollDirection;
@@ -13602,77 +13642,257 @@ class TextDisplayHelper : Widget {
 			autoscrollAmount = 0;
 			autoscrollDirection = 0;
 		}
+	}
 
-		this.addEventListener((scope MouseMoveEvent ce) {
-			if(mouseDown) {
-				auto movedTo = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
+	override void defaultEventHandler_mousemove(scope MouseMoveEvent ce) {
+		if(mouseDown) {
+			auto movedTo = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
 
-				// FIXME: when scrolling i actually do want a timer.
-				// i also want a zone near the sides of the window where i can auto scroll
+			// FIXME: when scrolling i actually do want a timer.
+			// i also want a zone near the sides of the window where i can auto scroll
 
-				auto scrollMultiplier = scaleWithDpi(16);
-				auto scrollDivisor = scaleWithDpi(16); // if you go more than 64px up it will scroll faster
+			auto scrollMultiplier = scaleWithDpi(16);
+			auto scrollDivisor = scaleWithDpi(16); // if you go more than 64px up it will scroll faster
 
-				if(!singleLine && movedTo.y < 4) {
-					setAutoscrollTimer(0, scrollMultiplier * -(movedTo.y-4) / scrollDivisor);
-				} else
-				if(!singleLine && (movedTo.y + 6) > this.height) {
-					setAutoscrollTimer(1, scrollMultiplier * (movedTo.y + 6 - this.height) / scrollDivisor);
-				} else
-				if(movedTo.x < 4) {
-					setAutoscrollTimer(2, scrollMultiplier * -(movedTo.x-4) / scrollDivisor);
-				} else
-				if((movedTo.x + 6) > this.width) {
-					setAutoscrollTimer(3, scrollMultiplier * (movedTo.x + 6 - this.width) / scrollDivisor);
-				} else
-					stopAutoscrollTimer();
-
-				l.selection.moveTo(adjustForSingleLine(smw.position + movedTo));
-				l.selection.setFocus();
-				mouseActuallyMoved = true;
-				this.redraw();
-			}
-		});
-
-		this.addEventListener((scope MouseUpEvent ce) {
-			// FIXME: assert primary selection
-			if(mouseDown && ce.button == MouseButton.left) {
-				stateCheckpoint = true;
-				//l.selection.moveTo(adjustForSingleLine(smw.position + Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop)));
-				//l.selection.setFocus();
-				mouseDown = false;
-				parentWindow.releaseMouseCapture();
+			if(!singleLine && movedTo.y < 4) {
+				setAutoscrollTimer(0, scrollMultiplier * -(movedTo.y-4) / scrollDivisor);
+			} else
+			if(!singleLine && (movedTo.y + 6) > this.height) {
+				setAutoscrollTimer(1, scrollMultiplier * (movedTo.y + 6 - this.height) / scrollDivisor);
+			} else
+			if(movedTo.x < 4) {
+				setAutoscrollTimer(2, scrollMultiplier * -(movedTo.x-4) / scrollDivisor);
+			} else
+			if((movedTo.x + 6) > this.width) {
+				setAutoscrollTimer(3, scrollMultiplier * (movedTo.x + 6 - this.width) / scrollDivisor);
+			} else
 				stopAutoscrollTimer();
-				this.redraw();
 
-				if(mouseActuallyMoved)
-					selectionChanged();
+			l.selection.moveTo(adjustForSingleLine(smw.position + movedTo));
+			l.selection.setFocus();
+			mouseActuallyMoved = true;
+			this.redraw();
+		}
+
+		super.defaultEventHandler_mousemove(ce);
+	}
+
+	override void defaultEventHandler_mouseup(scope MouseUpEvent ce) {
+		// FIXME: assert primary selection
+		if(mouseDown && ce.button == MouseButton.left) {
+			stateCheckpoint = true;
+			//l.selection.moveTo(adjustForSingleLine(smw.position + Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop)));
+			//l.selection.setFocus();
+			mouseDown = false;
+			parentWindow.releaseMouseCapture();
+			stopAutoscrollTimer();
+			this.redraw();
+
+			if(mouseActuallyMoved)
+				selectionChanged();
+		}
+		//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
+
+		super.defaultEventHandler_mouseup(ce);
+	}
+
+	static if(UsingSimpledisplayX11)
+	override void defaultEventHandler_click(scope ClickEvent ce) {
+		if(ce.button == MouseButton.middle) {
+			parentWindow.win.getPrimarySelection((txt) {
+				doStateCheckpoint();
+
+				// import arsd.core; writeln(txt);writeln(l.selection.getContentString);writeln(preservedPrimaryText);
+
+				if(txt == l.selection.getContentString && preservedPrimaryText.length)
+					l.selection.replaceContent(preservedPrimaryText);
+				else
+					l.selection.replaceContent(txt);
+				redraw();
+			});
+		}
+
+		super.defaultEventHandler_click(ce);
+	}
+
+	override void defaultEventHandler_dblclick(scope DoubleClickEvent dce) {
+		if(dce.button == MouseButton.left) {
+			with(l.selection()) {
+				scope dg = delegate const(char)[] (scope return const(char)[] ch) {
+					if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
+						return ch;
+					return null;
+				};
+				find(dg, 1, true).moveToEnd.setAnchor;
+				find(dg, 1, false).moveTo.setFocus;
+				selectionChanged();
+				redraw();
 			}
-			//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
-		});
+		}
 
-		this.addEventListener((scope CharEvent ce) {
-			if(readonly)
-				return;
-			if(ce.character < 32 && ce.character != '\t' && ce.character != '\n' && ce.character != '\b')
-				return; // skip the ctrl+x characters we don't care about as plain text
+		super.defaultEventHandler_dblclick(dce);
+	}
 
-			if(singleLine && ce.character == '\n')
-				return;
-			if(!acceptsTabInput && ce.character == '\t')
-				return;
+	override void defaultEventHandler_mousedown(scope MouseDownEvent ce) {
+		if(ce.button == MouseButton.left) {
+			downAt = Point(ce.clientX - this.paddingLeft, ce.clientY - this.paddingTop);
+			l.selection.moveTo(adjustForSingleLine(smw.position + downAt));
+			if(ce.shiftKey)
+				l.selection.setFocus();
+			else
+				l.selection.setAnchor();
+			mouseDown = true;
+			mouseActuallyMoved = false;
+			parentWindow.captureMouse(this);
+			this.redraw();
+		}
+		//writeln(ce.clientX, ", ", ce.clientY, " = ", l.offsetOfClick(Point(ce.clientX, ce.clientY)));
 
-			doStateCheckpoint();
+		super.defaultEventHandler_mousedown(ce);
+	}
 
-			char[4] buffer;
-			import arsd.core;
-			auto stride = encodeUtf8(buffer, ce.character);
-			l.selection.replaceContent(buffer[0 .. stride]);
-			l.selection.setUserXCoordinate();
-			adjustScrollbarSizes();
-			scrollForCaret();
-			redraw();
-		});
+	override void defaultEventHandler_char(scope CharEvent ce) {
+		super.defaultEventHandler_char(ce);
+
+		if(readonly)
+			return;
+		if(ce.character < 32 && ce.character != '\t' && ce.character != '\n' && ce.character != '\b')
+			return; // skip the ctrl+x characters we don't care about as plain text
+
+		if(singleLine && ce.character == '\n')
+			return;
+		if(!acceptsTabInput && ce.character == '\t')
+			return;
+
+		doStateCheckpoint();
+
+		char[4] buffer;
+		import arsd.core;
+		auto stride = encodeUtf8(buffer, ce.character);
+		l.selection.replaceContent(buffer[0 .. stride]);
+		l.selection.setUserXCoordinate();
+		adjustScrollbarSizes();
+		scrollForCaret();
+		redraw();
+
+	}
+
+	override void defaultEventHandler_keydown(scope KeyDownEvent kde) {
+		switch(kde.key) {
+			case Key.Up, Key.Down, Key.Left, Key.Right:
+			case Key.Home, Key.End:
+				stateCheckpoint = true;
+				bool setPosition = false;
+				switch(kde.key) {
+					case Key.Up: l.selection.moveUp(); break;
+					case Key.Down: l.selection.moveDown(); break;
+					case Key.Left: l.selection.moveLeft(); setPosition = true; break;
+					case Key.Right: l.selection.moveRight(); setPosition = true; break;
+					case Key.Home: l.selection.moveToStartOfLine(); setPosition = true; break;
+					case Key.End: l.selection.moveToEndOfLine(); setPosition = true; break;
+					default: assert(0);
+				}
+
+				if(kde.shiftKey)
+					l.selection.setFocus();
+				else
+					l.selection.setAnchor();
+
+				selectionChanged();
+
+				if(setPosition)
+					l.selection.setUserXCoordinate();
+				scrollForCaret();
+				redraw();
+			break;
+			case Key.PageUp, Key.PageDown:
+				// want to act like the user clicked on the caret again
+				// after the scroll operation completed, so it would remain at
+				// about the same place on the viewport
+				auto oldY = smw.vsb.position;
+				smw.defaultKeyboardListener(kde);
+				auto newY = smw.vsb.position;
+				with(l.selection) {
+					auto uc = getUserCoordinate();
+					uc.y += newY - oldY;
+					moveTo(uc);
+
+					if(kde.shiftKey)
+						setFocus();
+					else
+						setAnchor();
+				}
+			break;
+			case Key.Delete:
+				if(l.selection.isEmpty()) {
+					l.selection.setAnchor();
+					l.selection.moveRight();
+					l.selection.setFocus();
+				}
+				deleteContentOfSelection();
+				adjustScrollbarSizes();
+				scrollForCaret();
+			break;
+			case Key.Insert:
+			break;
+			case Key.A:
+				if(kde.ctrlKey)
+					selectAll();
+			break;
+			case Key.F:
+				// find
+			break;
+			case Key.Z:
+				if(kde.ctrlKey)
+					undo();
+			break;
+			case Key.R:
+				if(kde.ctrlKey)
+					redo();
+			break;
+			case Key.X:
+				if(kde.ctrlKey)
+					cut();
+			break;
+			case Key.C:
+				if(kde.ctrlKey)
+					copy();
+			break;
+			case Key.V:
+				if(kde.ctrlKey)
+					paste();
+			break;
+			case Key.F1:
+				with(l.selection()) {
+					moveToStartOfLine();
+					setAnchor();
+					moveToEndOfLine();
+					moveToIncludeAdjacentEndOfLineMarker();
+					setFocus();
+					replaceContent("");
+				}
+
+				redraw();
+			break;
+			/*
+			case Key.F2:
+				l.selection().changeStyle((old) => l.registerStyle(new MyTextStyle(
+					//(cast(MyTextStyle) old).font,
+					font2,
+					Color.red)));
+				redraw();
+			break;
+			*/
+			case Key.Tab:
+				// we process the char event, so don't want to change focus on it, unless the user overrides that with ctrl
+				if(acceptsTabInput && !kde.ctrlKey)
+					kde.preventDefault();
+			break;
+			default:
+		}
+
+		if(!kde.defaultPrevented)
+			super.defaultEventHandler_keydown(kde);
 	}
 
 	// we want to delegate all the Widget.Style stuff up to the other class that the user can see
@@ -13863,12 +14083,12 @@ abstract class EditableTextWidget : Widget {
 			super.focus();
 	}
 
-	override void defaultEventHandler_focusout(Event foe) {
+	override void defaultEventHandler_focusout(FocusOutEvent foe) {
 		if(tdh !is null && foe.target is tdh)
 			tdh.redraw();
 	}
 
-	override void defaultEventHandler_focusin(Event foe) {
+	override void defaultEventHandler_focusin(FocusInEvent foe) {
 		if(tdh !is null && foe.target is tdh)
 			tdh.redraw();
 	}
@@ -14088,7 +14308,7 @@ abstract class EditableTextWidget : Widget {
 	version(win32_widgets) {
 		private string lastContentBlur;
 
-		override void defaultEventHandler_blur(Event ev) {
+		override void defaultEventHandler_blur(BlurEvent ev) {
 			super.defaultEventHandler_blur(ev);
 
 			if(!useCustomWidget)
@@ -15093,10 +15313,10 @@ enum EventType : string {
 
 	## Creating Your Own Events
 
-	To avoid clashing in the string namespace, your events should use your module and class name as the event string. The simple code `mixin Register;` in your Event subclass will do this for you.
+	To avoid clashing in the string namespace, your events should use your module and class name as the event string. The simple code `mixin Register;` in your Event subclass will do this for you. You should mark events `final` unless you specifically plan to use it as a shared base. Only `Widget` and final classes should actually be sent (and preferably, not even `Widget`), with few exceptions.
 
 	---
-	class MyEvent : Event {
+	final class MyEvent : Event {
 		this(Widget target) { super(EventString, target); }
 		mixin Register; // adds EventString and other reflection information
 	}
@@ -15582,9 +15802,14 @@ void emitCommand(string CommandString, WidgetType, Args...)(WidgetType w, Args a
 }
 
 /++
+	Widgets emit `ResizeEvent`s any time they are resized. You check [Widget.width] and [Widget.height] upon receiving this event to know the new size.
 
+	If you need to know the old size, you need to store it yourself.
+
+	History:
+		Made final on January 3, 2025 (dub v12.0)
 +/
-class ResizeEvent : Event {
+final class ResizeEvent : Event {
 	enum EventString = "resize";
 
 	this(Widget target) { super(EventString, target); }
@@ -15599,8 +15824,10 @@ class ResizeEvent : Event {
 
 	History:
 		Added June 21, 2021 (dub v10.1)
+
+		Made final on January 3, 2025 (dub v12.0)
 +/
-class ClosingEvent : Event {
+final class ClosingEvent : Event {
 	enum EventString = "closing";
 
 	this(Widget target) { super(EventString, target); }
@@ -15610,7 +15837,7 @@ class ClosingEvent : Event {
 }
 
 /// ditto
-class ClosedEvent : Event {
+final class ClosedEvent : Event {
 	enum EventString = "closed";
 
 	this(Widget target) { super(EventString, target); }
@@ -15620,7 +15847,7 @@ class ClosedEvent : Event {
 }
 
 ///
-class BlurEvent : Event {
+final class BlurEvent : Event {
 	enum EventString = "blur";
 
 	// FIXME: related target?
@@ -15630,7 +15857,7 @@ class BlurEvent : Event {
 }
 
 ///
-class FocusEvent : Event {
+final class FocusEvent : Event {
 	enum EventString = "focus";
 
 	// FIXME: related target?
@@ -15645,7 +15872,7 @@ class FocusEvent : Event {
 	History:
 		Added July 3, 2021
 +/
-class FocusInEvent : Event {
+final class FocusInEvent : Event {
 	enum EventString = "focusin";
 
 	// FIXME: related target?
@@ -15655,7 +15882,7 @@ class FocusInEvent : Event {
 }
 
 /// ditto
-class FocusOutEvent : Event {
+final class FocusOutEvent : Event {
 	enum EventString = "focusout";
 
 	// FIXME: related target?
@@ -15665,7 +15892,7 @@ class FocusOutEvent : Event {
 }
 
 ///
-class ScrollEvent : Event {
+final class ScrollEvent : Event {
 	enum EventString = "scroll";
 	this(Widget target) { super(EventString, target); }
 
@@ -15678,7 +15905,7 @@ class ScrollEvent : Event {
 	History:
 		Added May 2, 2021. Previously, this was simply a "char" event and `character` as a member of the [Event] base class.
 +/
-class CharEvent : Event {
+final class CharEvent : Event {
 	enum EventString = "char";
 	this(Widget target, dchar ch) {
 		character = ch;
@@ -15727,7 +15954,7 @@ abstract class ChangeEventBase : Event {
 	History:
 		Added May 11, 2021. Prior to that, widgets would more likely just send `new Event("change")`. These typed ChangeEvents are still compatible with listeners subscribed to generic change events.
 +/
-class ChangeEvent(T) : ChangeEventBase {
+final class ChangeEvent(T) : ChangeEventBase {
 	this(Widget target, T delegate() getNewValue) {
 		assert(getNewValue !is null);
 		this.getNewValue = getNewValue;
@@ -15809,7 +16036,7 @@ abstract class KeyEventBase : Event {
 	History:
 		Added May 2, 2021. Previously, it was only seen as the base [Event] class on "keydown" event listeners.
 +/
-class KeyDownEvent : KeyEventBase {
+final class KeyDownEvent : KeyEventBase {
 	enum EventString = "keydown";
 	this(Widget target) { super(EventString, target); }
 }
@@ -15825,7 +16052,7 @@ class KeyDownEvent : KeyEventBase {
 	History:
 		Added May 2, 2021. Previously, it was only seen as the base [Event] class on "keyup" event listeners.
 +/
-class KeyUpEvent : KeyEventBase {
+final class KeyUpEvent : KeyEventBase {
 	enum EventString = "keyup";
 	this(Widget target) { super(EventString, target); }
 }
@@ -15921,6 +16148,8 @@ abstract class MouseEventBase : Event {
 		Important: MouseDownEvent, MouseUpEvent, ClickEvent, and DoubleClickEvent are all sent for all mouse buttons and
 		for wheel movement! You should check the [MouseEventBase.button|button] property in most your handlers to get correct
 		behavior.
+
+		Use [MouseEventBase.isMouseWheel] to filter wheel events while keeping others.
 	)
 
 	[MouseDownEvent] is sent when the user presses a mouse button. It is also sent on mouse wheel movement.
@@ -15931,7 +16160,7 @@ abstract class MouseEventBase : Event {
 
 	[ClickEvent] is sent when the user clicks on the widget. It may also be sent with keyboard control, though minigui prefers to send a "triggered" event in addition to a mouse click and instead of a simulated mouse click in cases like keyboard activation of a button.
 
-	[DoubleClickEvent] is sent when the user clicks twice on a thing quickly, immediately after the second MouseDownEvent. The sequence is: MouseDownEvent, MouseUpEvent, ClickEvent, MouseDownEvent, DoubleClickEvent, MouseUpEvent. The second ClickEvent is NOT sent. Note that this is differnet than Javascript! They would send down,up,click,down,up,click,dblclick. Minigui does it differently because this is the way the Windows OS reports it.
+	[DoubleClickEvent] is sent when the user clicks twice on a thing quickly, immediately after the second MouseDownEvent. The sequence is: MouseDownEvent, MouseUpEvent, ClickEvent, MouseDownEvent, DoubleClickEvent, MouseUpEvent. The second ClickEvent is NOT sent. Note that this is different than Javascript! They would send down,up,click,down,up,click,dblclick. Minigui does it differently because this is the way the Windows OS reports it.
 
 	[MouseOverEvent] is sent then the mouse first goes over a widget. Please note that this participates in event propagation of children! Use [MouseEnterEvent] instead if you are only interested in a specific element's whole bounding box instead of the top-most element in any particular location.
 
@@ -15954,49 +16183,49 @@ abstract class MouseEventBase : Event {
 	History:
 		Added May 2, 2021. Previously, it was only seen as the base [Event] class on event listeners. See the member [EventString] to see what the associated string is with these elements.
 +/
-class MouseUpEvent : MouseEventBase {
+final class MouseUpEvent : MouseEventBase {
 	enum EventString = "mouseup"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class MouseDownEvent : MouseEventBase {
+final class MouseDownEvent : MouseEventBase {
 	enum EventString = "mousedown"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class MouseMoveEvent : MouseEventBase {
+final class MouseMoveEvent : MouseEventBase {
 	enum EventString = "mousemove"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class ClickEvent : MouseEventBase {
+final class ClickEvent : MouseEventBase {
 	enum EventString = "click"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class DoubleClickEvent : MouseEventBase {
+final class DoubleClickEvent : MouseEventBase {
 	enum EventString = "dblclick"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class MouseOverEvent : Event {
+final class MouseOverEvent : Event {
 	enum EventString = "mouseover"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class MouseOutEvent : Event {
+final class MouseOutEvent : Event {
 	enum EventString = "mouseout"; ///
 	this(Widget target) { super(EventString, target); }
 }
 /// ditto
-class MouseEnterEvent : Event {
+final class MouseEnterEvent : Event {
 	enum EventString = "mouseenter"; ///
 	this(Widget target) { super(EventString, target); }
 
 	override bool propagates() const { return false; }
 }
 /// ditto
-class MouseLeaveEvent : Event {
+final class MouseLeaveEvent : Event {
 	enum EventString = "mouseleave"; ///
 	this(Widget target) { super(EventString, target); }
 
@@ -16788,15 +17017,59 @@ class FilePicker : Dialog {
 		}
 
 		extern(C) static int comparator(scope const void* a, scope const void* b) {
-			// FIXME: make it a natural sort for numbers
-			// maybe put dot files at the end too.
 			auto sa = *cast(string*) a;
 			auto sb = *cast(string*) b;
 
-			for(int i = 0; i < sa.length; i++) {
-				if(i == sb.length)
-					return 1;
-				auto diff = sa[i] - sb[i];
+			/+
+				Goal here:
+
+				Dot first. This puts `foo.d` before `foo2.d`
+				Then numbers , natural sort order (so 9 comes before 10) for positive numbers
+				Then letters, in order Aa, Bb, Cc
+				Then other symbols in ascii order
+			+/
+			static int nextPiece(ref string whole) {
+				if(whole.length == 0)
+					return -1;
+
+				enum specialZoneSize = 1;
+
+				char current = whole[0];
+				if(current >= '0' && current <= '9') {
+					int accumulator;
+					do {
+						whole = whole[1 .. $];
+						accumulator *= 10;
+						accumulator += current - '0';
+						current = whole.length ? whole[0] : 0;
+					} while (current >= '0' && current <= '9');
+
+					return accumulator + specialZoneSize + cast(int) char.max; // leave room for symbols
+				} else {
+					whole = whole[1 .. $];
+
+					if(current == '.')
+						return 0; // the special case to put it before numbers
+
+					// anything above should be < specialZoneSize
+
+					int letterZoneSize = 26 * 2;
+					int base = int.max - letterZoneSize - char.max; // leaves space at end for symbols too if we want them after chars
+
+					if(current >= 'A' && current <= 'Z')
+						return base + (current - 'A') * 2;
+					if(current >= 'a' && current <= 'z')
+						return base + (current - 'a') * 2 + 1;
+					// return base + letterZoneSize + current; // would put symbols after numbers and letters
+					return specialZoneSize + current; // puts symbols before numbers and letters, but after the special zone
+				}
+			}
+
+			while(sa.length || sb.length) {
+				auto pa = nextPiece(sa);
+				auto pb = nextPiece(sb);
+
+				auto diff = pa - pb;
 				if(diff)
 					return diff;
 			}
@@ -16979,13 +17252,27 @@ class FilePicker : Dialog {
 		});
 
 		currentDirectory = initialDirectory is null ? "." : initialDirectory;
+
+		auto prefilledPath = FilePath(expandTilde(prefilledName)).makeAbsolute(FilePath(currentDirectory));
+		currentDirectory = prefilledPath.directoryName;
+		prefilledName = prefilledPath.filename;
 		loadFiles(currentDirectory, currentFilter);
 
-		filesOfType.addEventListener(delegate (ChangeEvent!string ce) {
+		filesOfType.addEventListener(delegate (FreeEntrySelection.SelectionChangedEvent ce) {
 			currentFilter = FileNameFilter.fromString(ce.stringValue);
 			currentNonTabFilter = currentFilter;
 			loadFiles(currentDirectory, currentFilter);
 			// lineEdit.focus(); // this causes a recursive crash.....
+		});
+
+		filesOfType.addEventListener(delegate(KeyDownEvent event) {
+			if(event.key == Key.Enter) {
+				currentFilter = FileNameFilter.fromString(filesOfType.content);
+				currentNonTabFilter = currentFilter;
+				loadFiles(currentDirectory, currentFilter);
+				event.stopPropagation();
+				// FIXME: refocus on the line edit
+			}
 		});
 
 		lineEdit.addEventListener((KeyDownEvent event) {
@@ -17025,16 +17312,25 @@ class FilePicker : Dialog {
 					lineEdit.content = commonPrefix.commonPrefix;
 				} else {
 					// if there were no files, we don't really want to change the filter..
-					sdpyPrintDebugString("no files");
+					//sdpyPrintDebugString("no files");
 				}
 
 				// FIXME: if that is a directory, add the slash? or even go inside?
 
 				event.preventDefault();
 			}
+			else if(event.key == Key.Left && event.altKey) {
+				this.back();
+				event.preventDefault();
+			}
+			else if(event.key == Key.Right && event.altKey) {
+				this.forward();
+				event.preventDefault();
+			}
 		});
 
-		lineEdit.content = expandTilde(prefilledName);
+
+		lineEdit.content = prefilledName;
 
 		auto hl = new HorizontalLayout(60, this);
 		auto cancelButton = new Button("Cancel", hl);
@@ -17162,7 +17458,7 @@ struct separator {}
 deprecated("It was misspelled, use separator instead") alias seperator = separator;
 /// Program-wide keyboard shortcut to trigger the action
 /// Group: generating_from_code
-struct accelerator { string keyString; }
+struct accelerator { string keyString; } // FIXME: allow multiple aliases here
 /// tells which menu the action will be on
 /// Group: generating_from_code
 struct menu { string name; }
@@ -17981,8 +18277,10 @@ final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 
 	History:
 		Moved from minigui_addons.webview to main minigui on November 27, 2021 (dub v10.4)
+
+		Made `final` on January 3, 2025
 +/
-class StateChanged(alias field) : Event {
+final class StateChanged(alias field) : Event {
 	enum EventString = __traits(identifier, __traits(parent, field)) ~ "." ~ __traits(identifier, field) ~ ":change";
 	override bool cancelable() const { return false; }
 	this(Widget target, typeof(field) newValue) {

@@ -272,6 +272,16 @@ auto ref T castTo(T, S)(auto ref S v) {
 alias typeCast = castTo;
 
 /++
+	Treats the memory of one variable as if it is the type of another variable.
+
+	History:
+		Added January 20, 2025
++/
+ref T reinterpretCast(T, V)(return ref V value) @system {
+	return *cast(T*)& value;
+}
+
+/++
 	Determines whether `needle` is a slice of `haystack`.
 
 	History:
@@ -8089,6 +8099,9 @@ unittest {
 	================
 +/
 /++
+	DO NOT USE THIS YET IT IS NOT FUNCTIONAL NOR STABLE
+
+
 	The arsd.core logger works differently than many in that it works as a ring buffer of objects that are consumed (or missed; buffer overruns are possible) by a different thread instead of as strings written to some file.
 
 	A library (or an application) defines a log source. They write to this source.
@@ -8108,22 +8121,64 @@ unittest {
 
 	Examples:
 	---
-		mixin LoggerOf!X mylogger;
+		auto logger = new shared LoggerOf!GenericEmbeddableInterpolatedSequence;
 
-		mylogger.log(i"$this heartbeat"); // creates an ad-hoc log message
+		mylogger.info(i"$this heartbeat");
 	---
 
 	History:
 		Added May 27, 2024
-+/
-mixin template LoggerOf(T) {
-	void log(LogLevel l, T message) {
 
+		Not actually implemented until February 6, 2025, when it changed from mixin template to class.
++/
+class LoggerOf(T, size_t bufferSize = 16) {
+	private LoggedMessage!T[bufferSize] ring;
+	private uint writeBufferPosition;
+
+	void log(LoggedMessage!T message) shared {
+		synchronized(this) {
+			auto unshared = cast() this;
+			unshared.ring[writeBufferPosition] = message;
+			unshared.writeBufferPosition += 1;
+
+			// import std.stdio; std.stdio.writeln(message);
+		}
+	}
+
+	void log(LogLevel level, T message, SourceLocation sourceLocation = SourceLocation(__FILE__, __LINE__)) shared {
+		log(LoggedMessage!T(LogLevel.Info, sourceLocation, 0, message));
+	}
+
+	void info(T message, SourceLocation sourceLocation = SourceLocation(__FILE__, __LINE__)) shared {
+		log(LogLevel.Info, message, sourceLocation);
 	}
 }
 
+struct SourceLocation {
+	string file;
+	size_t line;
+}
+
+struct LoggedMessage(T) {
+	LogLevel level;
+	SourceLocation sourceLocation;
+	ulong timestamp;
+	T message;
+
+	// process id?
+	// thread id?
+	// callstack?
+}
+
+//mixin LoggerOf!GenericEmbeddableInterpolatedSequence GeisLogger;
+
 enum LogLevel {
 	Info
+}
+
+unittest {
+	auto logger = new shared LoggerOf!GenericEmbeddableInterpolatedSequence;
+	logger.info(GenericEmbeddableInterpolatedSequence(i"hello world"));
 }
 
 /+
