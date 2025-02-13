@@ -977,6 +977,7 @@ public @safe pure nothrow:
 	///
 	public this(IniParser!(dialect, string) parser) {
 		_parser = parser;
+		_parser.skipIrrelevant(true);
 	}
 
 	///
@@ -1179,6 +1180,16 @@ s2key2	 =	 value no.4
 
 	parser.popFront();
 	assert(parser.empty);
+}
+
+@safe @nogc unittest {
+	static immutable rawIni = "; only a comment";
+
+	auto regularParser = makeIniParser(rawIni);
+	auto filteredParser = makeIniFilteredParser(rawIni);
+
+	assert(!regularParser.empty);
+	assert(filteredParser.empty);
 }
 
 @safe @nogc unittest {
