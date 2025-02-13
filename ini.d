@@ -302,6 +302,254 @@ private bool hasFeature(ulong dialect, ulong feature) @safe pure nothrow @nogc {
 	return ((dialect & feature) > 0);
 }
 
+private T[] spliceImpl(T)(T[] array, size_t at, size_t count) @safe pure nothrow @nogc
+in (at < array.length)
+in (count <= array.length)
+in (at + count <= array.length) {
+	const upper = array.length - count;
+
+	for (size_t idx = at; idx < upper; ++idx) {
+		array[idx] = array[idx + count];
+	}
+
+	return array[0 .. ($ - count)];
+}
+
+private T[] splice(T)(auto ref scope T[] array, size_t at, size_t count) @safe pure nothrow @nogc {
+	static if (__traits(isRef, array)) {
+		array = spliceImpl(array, at, count); // @suppress(dscanner.suspicious.auto_ref_assignment)
+		return array;
+	} else {
+		return spliceImpl(array, at, count);
+	}
+}
+
+@safe unittest {
+	assert("foobar".dup.splice(0, 0) == "foobar");
+	assert("foobar".dup.splice(0, 6) == "");
+	assert("foobar".dup.splice(0, 1) == "oobar");
+	assert("foobar".dup.splice(1, 5) == "f");
+	assert("foobar".dup.splice(1, 4) == "fr");
+	assert("foobar".dup.splice(4, 1) == "foobr");
+	assert("foobar".dup.splice(4, 2) == "foob");
+}
+
+@safe unittest {
+	char[] array = ['a', 's', 'd', 'f'];
+	array.splice(1, 2);
+	assert(array == "af");
+}
+
+///
+char resolveIniEscapeSequence(char c) @safe pure nothrow @nogc {
+	switch (c) {
+	case 'n':
+		return '\x0A';
+	case 'r':
+		return '\x0D';
+	case 't':
+		return '\x09';
+	case '\\':
+		return '\\';
+	case '0':
+		return '\x00';
+
+	default:
+		return c;
+	}
+}
+
+///
+@safe unittest {
+	assert(resolveIniEscapeSequence('n') == '\n');
+	assert(resolveIniEscapeSequence('r') == '\r');
+	assert(resolveIniEscapeSequence('t') == '\t');
+	assert(resolveIniEscapeSequence('\\') == '\\');
+	assert(resolveIniEscapeSequence('0') == '\0');
+
+	// Unsupported characters are preserved.
+	assert(resolveIniEscapeSequence('a') == 'a');
+	assert(resolveIniEscapeSequence('Z') == 'Z');
+	assert(resolveIniEscapeSequence('1') == '1');
+	// Unsupported special characters are preserved.
+	assert(resolveIniEscapeSequence('@') == '@');
+	// Line breaks are preserved.
+	assert(resolveIniEscapeSequence('\n') == '\n');
+	assert(resolveIniEscapeSequence('\r') == '\r');
+	// UTF-8 is preserved.
+	assert(resolveIniEscapeSequence("ü"[0]) == "ü"[0]);
+}
+
+private struct StringRange {
+	private {
+		const(char)[] _data;
+	}
+
+@safe pure nothrow @nogc:
+
+	public this(const(char)[] data) {
+		_data = data;
+	}
+
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	char front() const {
+		return _data[0];
+	}
+
+	void popFront() {
+		_data = _data[1 .. $];
+	}
+}
+
+/++
+	Resolves escape sequences and performs line folding.
+
+	Feature set depends on the [Dialect].
+ +/
+string resolveIniEscapeSequences(Dialect dialect)(const(char)[] input) @safe pure nothrow {
+	size_t irrelevant = 0;
+
+	auto source = StringRange(input);
+	determineIrrelevantLoop: while (!source.empty) {
+		if (source.front != '\\') {
+			source.popFront();
+			continue;
+		}
+
+		source.popFront();
+		if (source.empty) {
+			break;
+		}
+
+		static if (dialect.hasFeature(Dialect.lineFolding)) {
+			switch (source.front) {
+			case '\n':
+				source.popFront();
+				irrelevant += 2;
+				continue determineIrrelevantLoop;
+
+			case '\r':
+				source.popFront();
+				irrelevant += 2;
+				if (source.empty) {
+					break determineIrrelevantLoop;
+				}
+				// CRLF?
+				if (source.front == '\n') {
+					source.popFront();
+					++irrelevant;
+				}
+				continue determineIrrelevantLoop;
+
+			default:
+				break;
+			}
+		}
+
+		static if (dialect.hasFeature(Dialect.escapeSequences)) {
+			source.popFront();
+			++irrelevant;
+		}
+	}
+
+	const escapedSize = input.length - irrelevant;
+	auto result = new char[](escapedSize);
+
+	size_t cursor = 0;
+	source = StringRange(input);
+	buildResultLoop: while (!source.empty) {
+		if (source.front != '\\') {
+			result[cursor++] = source.front;
+			source.popFront();
+			continue;
+		}
+
+		source.popFront();
+		if (source.empty) {
+			result[cursor] = '\\';
+			break;
+		}
+
+		static if (dialect.hasFeature(Dialect.lineFolding)) {
+			switch (source.front) {
+			case '\n':
+				source.popFront();
+				continue buildResultLoop;
+
+			case '\r':
+				source.popFront();
+				if (source.empty) {
+					break buildResultLoop;
+				}
+				// CRLF?
+				if (source.front == '\n') {
+					source.popFront();
+				}
+				continue buildResultLoop;
+
+			default:
+				break;
+			}
+		}
+
+		static if (dialect.hasFeature(Dialect.escapeSequences)) {
+			result[cursor++] = resolveIniEscapeSequence(source.front);
+			source.popFront();
+			continue;
+		} else {
+			result[cursor++] = '\\';
+		}
+	}
+
+	return result;
+}
+
+///
+@safe unittest {
+	enum none = Dialect.lite;
+	enum escp = Dialect.escapeSequences;
+	enum fold = Dialect.lineFolding;
+	enum both = Dialect.escapeSequences | Dialect.lineFolding;
+
+	assert(resolveIniEscapeSequences!none("foo\\nbar") == "foo\\nbar");
+	assert(resolveIniEscapeSequences!escp("foo\\nbar") == "foo\nbar");
+	assert(resolveIniEscapeSequences!fold("foo\\nbar") == "foo\\nbar");
+	assert(resolveIniEscapeSequences!both("foo\\nbar") == "foo\nbar");
+
+	assert(resolveIniEscapeSequences!none("foo\\\nbar") == "foo\\\nbar");
+	assert(resolveIniEscapeSequences!escp("foo\\\nbar") == "foo\nbar");
+	assert(resolveIniEscapeSequences!fold("foo\\\nbar") == "foobar");
+	assert(resolveIniEscapeSequences!both("foo\\\nbar") == "foobar");
+
+	assert(resolveIniEscapeSequences!none("foo\\\n\\nbar") == "foo\\\n\\nbar");
+	assert(resolveIniEscapeSequences!escp("foo\\\n\\nbar") == "foo\n\nbar");
+	assert(resolveIniEscapeSequences!fold("foo\\\n\\nbar") == "foo\\nbar");
+	assert(resolveIniEscapeSequences!both("foo\\\n\\nbar") == "foo\nbar");
+
+	assert(resolveIniEscapeSequences!none("foobar\\") == "foobar\\");
+	assert(resolveIniEscapeSequences!escp("foobar\\") == "foobar\\");
+	assert(resolveIniEscapeSequences!fold("foobar\\") == "foobar\\");
+	assert(resolveIniEscapeSequences!both("foobar\\") == "foobar\\");
+
+	assert(resolveIniEscapeSequences!none("foo\\\r\nbar") == "foo\\\r\nbar");
+	assert(resolveIniEscapeSequences!escp("foo\\\r\nbar") == "foo\r\nbar");
+	assert(resolveIniEscapeSequences!fold("foo\\\r\nbar") == "foobar");
+	assert(resolveIniEscapeSequences!both("foo\\\r\nbar") == "foobar");
+
+	assert(resolveIniEscapeSequences!none(`\nfoobar\n`) == "\\nfoobar\\n");
+	assert(resolveIniEscapeSequences!escp(`\nfoobar\n`) == "\nfoobar\n");
+	assert(resolveIniEscapeSequences!fold(`\nfoobar\n`) == "\\nfoobar\\n");
+	assert(resolveIniEscapeSequences!both(`\nfoobar\n`) == "\nfoobar\n");
+
+	assert(resolveIniEscapeSequences!none("\\\nfoo \\\rba\\\r\nr") == "\\\nfoo \\\rba\\\r\nr");
+	assert(resolveIniEscapeSequences!escp("\\\nfoo \\\rba\\\r\nr") == "\nfoo \rba\r\nr");
+	assert(resolveIniEscapeSequences!fold("\\\nfoo \\\rba\\\r\nr") == "foo bar");
+	assert(resolveIniEscapeSequences!both("\\\nfoo \\\rba\\\r\nr") == "foo bar");
+}
+
 /++
 	Type of a token (as output by the parser)
  +/
@@ -582,6 +830,7 @@ struct IniParser(
 				endChomp,
 				regular,
 				whitespace,
+				sequence,
 			}
 
 			enum QuotedString : ubyte {
@@ -591,9 +840,14 @@ struct IniParser(
 			}
 
 			// dfmt off
-			enum hasAnyQuotedString = (
-				dialect.hasFeature(Dialect.quotedStrings) ||
-				dialect.hasFeature(Dialect.singleQuoteQuotedStrings)
+			enum bool hasAnyQuotedString = (
+				   dialect.hasFeature(Dialect.quotedStrings)
+				|| dialect.hasFeature(Dialect.singleQuoteQuotedStrings)
+			);
+
+			enum bool hasAnyEscaping = (
+				   dialect.hasFeature(Dialect.lineFolding)
+				|| dialect.hasFeature(Dialect.escapeSequences)
 			);
 			// dfmt on
 
@@ -691,6 +945,13 @@ struct IniParser(
 						return Result.regular;
 					}
 
+				case '\\':
+					static if (hasAnyEscaping) {
+						return Result.sequence;
+					} else {
+						goto default;
+					}
+
 				case ']':
 					static if (tokenType == TokenType.sectionHeader) {
 						return (inQuotedString != QuotedString.none)
@@ -705,7 +966,9 @@ struct IniParser(
 
 			ptrdiff_t idxLastText = -1;
 			ptrdiff_t idxCutoff = -1;
-			foreach (immutable idx, const c; _source) {
+
+			for (size_t idx = 0; idx < _source.length; ++idx) {
+				const c = _source[idx];
 				const status = nextChar(c);
 
 				if (status == Result.end) {
@@ -718,6 +981,62 @@ struct IniParser(
 					break;
 				} else if (status == Result.whitespace) {
 					continue;
+				} else if (status == Result.sequence) {
+					static if (hasAnyEscaping) {
+						const idxNext = idx + 1;
+						if (idxNext < _source.length) {
+							static if (dialect.hasFeature(Dialect.lineFolding)) {
+								size_t determineFoldingCount() {
+									switch (_source[idxNext]) {
+									case '\n':
+										return 2;
+
+									case '\r':
+										const idxAfterNext = idxNext + 1;
+
+										// CRLF?
+										if (idxAfterNext < _source.length) {
+											if (_source[idxAfterNext] == '\n') {
+												return 3;
+											}
+										}
+
+										return 2;
+
+									default:
+										return 0;
+									}
+
+									assert(false, "Bug: This should have been unreachable.");
+								}
+
+								const foldingCount = determineFoldingCount();
+								if (foldingCount > 0) {
+									static if (operatingMode!string == OperatingMode.nonDestructive) {
+										idx += (foldingCount - 1);
+										idxLastText = idx;
+									}
+									static if (operatingMode!string == OperatingMode.destructive) {
+										_source.splice(idx, foldingCount);
+										idx -= (foldingCount - 1);
+									}
+									continue;
+								}
+							}
+							static if (dialect.hasFeature(Dialect.escapeSequences)) {
+								static if (operatingMode!string == OperatingMode.nonDestructive) {
+									++idx;
+								}
+								static if (operatingMode!string == OperatingMode.destructive) {
+									_source[idx] = resolveIniEscapeSequence(_source[idxNext]);
+									_source.splice(idxNext, 1);
+								}
+
+								idxLastText = idx;
+								continue;
+							}
+						}
+					}
 				}
 
 				idxLastText = idx;
@@ -725,6 +1044,12 @@ struct IniParser(
 
 			const idxEOT = (idxLastText + 1);
 			auto token = Token(tokenType, _source[0 .. idxEOT]);
+
+			static if (hasAnyEscaping) {
+				static if (operatingMode!string == OperatingMode.nonDestructive) {
+					token.data = resolveIniEscapeSequences!dialect(token.data);
+				}
+			}
 
 			// "double-quote quoted": cut off any whitespace afterwards
 			if (inQuotedString == QuotedString.regular) {
@@ -896,8 +1221,9 @@ struct IniParser(
 			case ':':
 				static if (dialect.hasFeature(Dialect.colonKeys)) {
 					goto case '=';
+				} else {
+					return this.lexText();
 				}
-				return this.lexText();
 
 			case '=':
 				_locationState = LocationState.preValue;
@@ -1463,6 +1789,173 @@ s2key2	 =	 value no.4
 		parser.popFront();
 		assert(!parser.empty);
 		assert(parser.front == parser.Token(TokenType.value, "error"));
+	}
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	char[] rawIni = `
+key = \nvalue\n
+key = foo\t bar
+key\0key = value
+key \= = value
+`.dup;
+	enum dialect = Dialect.escapeSequences;
+	auto parser = makeIniFilteredParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "\nvalue\n");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "foo\t bar");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key\0key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key =");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	static immutable string rawIni = `
+key = \nvalue\n
+key = foo\t bar
+key\0key = value
+key \= = value
+`;
+	enum dialect = Dialect.escapeSequences;
+	auto parser = makeIniFilteredParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "\nvalue\n");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "foo\t bar");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key\0key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key =");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	char[] rawIni = "key = val\\\nue\nkey \\\n= \\\nvalue \\\rvalu\\\r\ne\n".dup;
+	enum dialect = Dialect.lineFolding;
+	auto parser = makeIniFilteredParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value value");
+	}
+
+	parser.popFront();
+	assert(parser.empty);
+}
+
+@safe unittest {
+	static immutable string rawIni = "key = val\\\nue\nkey \\\n= \\\nvalue \\\rvalu\\\r\ne\n";
+	enum dialect = Dialect.lineFolding;
+	auto parser = makeIniFilteredParser!dialect(rawIni);
+
+	{
+		assert(!parser.empty);
+		assert(parser.front.data == "key");
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value");
+	}
+
+	{
+		parser.popFront();
+		assert(!parser.empty);
+		// FIXME: Line folding does not interact properly with keys.
+		version (none) {
+			assert(parser.front.data == "key");
+		} else {
+			assert(parser.front.data == "key "); // bug
+		}
+
+		parser.popFront();
+		assert(!parser.empty);
+		assert(parser.front.data == "value value");
 	}
 
 	parser.popFront();
