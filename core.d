@@ -282,6 +282,55 @@ ref T reinterpretCast(T, V)(return ref V value) @system {
 }
 
 /++
+	Determines whether `needle` is a slice of `haystack`.
+
+	History:
+		Added on February 11, 2025.
+ +/
+bool isSliceOf(T1, T2)(scope const(T1)[] needle, scope const(T2)[] haystack) @trusted pure nothrow @nogc {
+	return (
+		needle.ptr >= haystack.ptr
+		&& ((needle.ptr + needle.length) <= (haystack.ptr + haystack.length))
+	);
+}
+
+///
+@safe unittest {
+	string        s0 = "01234";
+	const(char)[] s1 = s0[1 .. $];
+	const(void)[] s2 = s1.castTo!(const(void)[]);
+	string        s3 = s1.idup;
+
+	assert( s0.isSliceOf(s0));
+	assert( s1.isSliceOf(s0));
+	assert( s2.isSliceOf(s0));
+	assert(!s3.isSliceOf(s0));
+
+	assert(!s0.isSliceOf(s1));
+	assert( s1.isSliceOf(s1));
+	assert( s2.isSliceOf(s1));
+	assert(!s3.isSliceOf(s1));
+
+	assert(!s0.isSliceOf(s2));
+	assert( s1.isSliceOf(s2));
+	assert( s2.isSliceOf(s2));
+	assert(!s3.isSliceOf(s2));
+
+	assert(!s0.isSliceOf(s3));
+	assert(!s1.isSliceOf(s3));
+	assert(!s2.isSliceOf(s3));
+	assert( s3.isSliceOf(s3));
+
+	assert(s1.length == 4);
+	assert(s1[0 .. 0].isSliceOf(s1));
+	assert(s1[0 .. 1].isSliceOf(s1));
+	assert(s1[1 .. 2].isSliceOf(s1));
+	assert(s1[1 .. 3].isSliceOf(s1));
+	assert(s1[1 .. $].isSliceOf(s1));
+	assert(s1[$ .. $].isSliceOf(s1));
+}
+
+/++
 	Does math as a 64 bit number, but saturates at int.min and int.max when converting back to a 32 bit int.
 
 	History:

@@ -28,6 +28,8 @@ Future release, likely May 2026 or later.
 
 Nothing is planned for it at this time.
 
+arsd.ini was added.
+
 ## 12.0
 
 Released: January 2025
