@@ -790,7 +790,7 @@
 		},
 		{
 			"name": "ini",
-			"description": "INI file support - INI parser with support for various dialects.",
+			"description": "INI configuration file support - configurable INI parser and serializer with support for various dialects.",
 			"targetType": "library",
 			"sourceFiles": ["ini.d"],
 			"dependencies": {
