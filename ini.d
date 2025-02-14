@@ -18,6 +18,15 @@
 	}
 	---
 
+	---
+	import arsd.ini;
+
+	void writeIniFile(string filePath, IniDocument!string document) {
+		import std.file : write;
+		return write(filePath, stringifyIni(document));
+	}
+	---
+
 
 	### On destructiveness and GC usage
 
