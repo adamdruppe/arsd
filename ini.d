@@ -92,6 +92,48 @@ module arsd.ini;
 	assert(icon == "setup.exe,0");
 }
 
+///
+@safe unittest {
+	// INI example data (e.g. from an `autorun.inf` file):
+	static immutable string rawIniData =
+		"[autorun]\n"
+		~ "open=setup.exe\n"
+		~ "icon=setup.exe,0\n";
+
+	// Parse the document.
+	IniDocument!string document = parseIniDocument(rawIniData);
+
+	// Let’s search for the value of an entry `icon` in the `autorun` section.
+	static string searchAutorunIcon(IniDocument!string document) {
+		// Iterate over all sections.
+		foreach (IniSection!string section; document.sections) {
+
+			// Search for the `[autorun]` section.
+			if (section.name == "autorun") {
+
+				// Iterate over all items in the section.
+				foreach (IniKeyValuePair!string item; section.items) {
+
+					// Search for the `icon` entry.
+					if (item.key == "icon") {
+						// Found!
+						return item.value;
+					}
+				}
+			}
+		}
+
+		// Not found!
+		return null;
+	}
+
+	// Call our search function.
+	string icon = searchAutorunIcon(document);
+
+	// Finally, verify the result.
+	assert(icon == "setup.exe,0");
+}
+
 /++
 	Determines whether a type `T` is a string type compatible with this library. 
  +/
