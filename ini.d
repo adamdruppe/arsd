@@ -404,6 +404,30 @@ private struct StringRange {
 	}
 }
 
+private struct StringSliceRange {
+	private {
+		const(char)[] _data;
+	}
+
+@safe pure nothrow @nogc:
+
+	public this(const(char)[] data) {
+		_data = data;
+	}
+
+	bool empty() const {
+		return (_data.length == 0);
+	}
+
+	const(char)[] front() const {
+		return _data[0 .. 1];
+	}
+
+	void popFront() {
+		_data = _data[1 .. $];
+	}
+}
+
 /++
 	Resolves escape sequences and performs line folding.
 
@@ -2504,4 +2528,374 @@ key = merged and overwritten
 	assert(aa["1"]["key"] == "merged and overwritten");
 	assert(aa["1"]["no2"] == "kept");
 	assert(aa["2"]["key"] == "overwritten");
+}
+
+private void stringifyIniString(string, OutputRange)(string data, OutputRange output) {
+	if (data is null) {
+		output.put("\"\"");
+		return;
+	}
+
+	size_t nQuotes = 0;
+	size_t nSingleQuotes = 0;
+	bool hasLineBreaks = false;
+
+	foreach (const c; data) {
+		switch (c) {
+		default:
+			break;
+
+		case '"':
+			++nQuotes;
+			break;
+		case '\'':
+			++nSingleQuotes;
+			break;
+
+		case '\n':
+		case '\r':
+			hasLineBreaks = true;
+			break;
+		}
+	}
+
+	const hasQuotes = (nQuotes > 0);
+	const hasSingleQuotes = (nSingleQuotes > 0);
+
+	if (hasQuotes && !hasSingleQuotes) {
+		output.put("'");
+		output.put(data);
+		output.put("'");
+		return;
+	}
+
+	if (!hasQuotes && hasSingleQuotes) {
+		output.put("\"");
+		output.put(data);
+		output.put("\"");
+		return;
+	}
+
+	if (hasQuotes && hasSingleQuotes) {
+		if (nQuotes <= nSingleQuotes) {
+			output.put("\"");
+
+			foreach (const c; StringSliceRange(data)) {
+				if (c == "\"") {
+					output.put("\" '\"' \"");
+					continue;
+				}
+
+				output.put(c);
+			}
+
+			output.put("\"");
+			return;
+		}
+
+		if ( /*nQuotes > nSingleQuotes*/ true) {
+			output.put("'");
+
+			foreach (const c; StringSliceRange(data)) {
+				if (c == "'") {
+					output.put("' \"'\" '");
+					continue;
+				}
+
+				output.put(c);
+			}
+
+			output.put("'");
+			return;
+		}
+	}
+
+	if ( /*!hasQuotes && !hasSingleQuotes*/ true) {
+		if (hasLineBreaks) {
+			output.put("\"");
+		}
+
+		output.put(data);
+
+		if (hasLineBreaks) {
+			output.put("\"");
+		}
+	}
+}
+
+private void stringifyIni(StringKey, StringValue, OutputRange)(StringKey key, StringValue value, OutputRange output) {
+	stringifyIniString(key, output);
+	output.put(" = ");
+	stringifyIniString(value, output);
+	output.put("\n");
+}
+
+private void stringifyIni(string, OutputRange)(const IniKeyValuePair!string kvp, OutputRange output) {
+	return stringifyIni(kvp.key, kvp.value, output);
+}
+
+private void stringifyIniSectionHeader(string, OutputRange)(string sectionName, OutputRange output) {
+	if (sectionName !is null) {
+		output.put("[");
+		stringifyIniString(sectionName, output);
+		output.put("]\n");
+	}
+}
+
+private void stringifyIni(string, OutputRange)(const IniSection!string section, OutputRange output) {
+	stringifyIniSectionHeader(section.name, output);
+	foreach (const item; section.items) {
+		stringifyIni(item, output);
+	}
+}
+
+/++
+	Serializes an [IniDocument] to a string in INI format.
+ +/
+void stringifyIni(string, OutputRange)(IniDocument!string document, OutputRange output) {
+	bool anySectionsWritten = false;
+
+	foreach (const section; document.sections) {
+		if (section.name is null) {
+			if (anySectionsWritten) {
+				output.put("\n");
+			}
+
+			stringifyIni(section, output);
+
+			if (section.items.length > 0) {
+				anySectionsWritten = true;
+			}
+		}
+	}
+
+	foreach (const section; document.sections) {
+		if (section.name is null) {
+			continue;
+		}
+
+		if (!anySectionsWritten) {
+			anySectionsWritten = true;
+		} else {
+			output.put("\n");
+		}
+
+		stringifyIni(section, output);
+	}
+}
+
+/// ditto
+string stringifyIni(string)(IniDocument!string document) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(document, output);
+	return output[];
+}
+
+///
+@safe unittest {
+	auto doc = IniDocument!string([
+		IniSection!string(null, [
+			IniKeyValuePair!string("key", "value"),
+		]),
+		IniSection!string("Section 1", [
+			IniKeyValuePair!string("key1", "value1"),
+			IniKeyValuePair!string("key2", "foo'bar"),
+		]),
+	]);
+
+	// Serialize
+	string ini = stringifyIni(doc);
+
+	static immutable expected =
+		"key = value\n"
+		~ "\n"
+		~ "[Section 1]\n"
+		~ "key1 = value1\n"
+		~ "key2 = \"foo'bar\"\n";
+	assert(ini == expected);
+}
+
+@safe unittest {
+	auto doc = IniDocument!string([
+		IniSection!string("Oachkatzlschwoaf", [
+			IniKeyValuePair!string("key1", "value1"),
+			IniKeyValuePair!string("key2", "value2"),
+			IniKeyValuePair!string("key3", "foo bar"),
+		]),
+		IniSection!string(null, [
+			IniKeyValuePair!string("key", "value"),
+		]),
+		IniSection!string("Kaiserschmarrn", [
+			IniKeyValuePair!string("1", "value\n1"),
+			IniKeyValuePair!string("2", "\"value\t2"),
+			IniKeyValuePair!string("3", "\"foo'bar\""),
+			IniKeyValuePair!string("4", "'foo\"bar'"),
+		]),
+	]);
+
+	string ini = stringifyIni(doc);
+
+	static immutable expected = "key = value\n"
+		~ "\n"
+		~ "[Oachkatzlschwoaf]\n"
+		~ "key1 = value1\n"
+		~ "key2 = value2\n"
+		~ "key3 = foo bar\n"
+		~ "\n"
+		~ "[Kaiserschmarrn]\n"
+		~ "1 = \"value\n1\"\n"
+		~ "2 = '\"value\t2'\n"
+		~ "3 = '\"foo' \"'\" 'bar\"'\n"
+		~ "4 = \"'foo\" '\"' \"bar'\"\n";
+	assert(ini == expected);
+}
+
+/++
+	Serializes an AA to a string in INI format.
+ +/
+void stringifyIni(
+	StringKey,
+	StringValue,
+	OutputRange,
+)(
+	const StringValue[StringKey] sectionItems,
+	OutputRange output,
+) if (isCompatibleString!StringKey && isCompatibleString!StringValue) {
+	foreach (key, value; sectionItems) {
+		stringifyIni(key, value, output);
+	}
+}
+
+/// ditto
+string stringifyIni(
+	StringKey,
+	StringValue,
+)(
+	const StringValue[StringKey] sectionItems
+) if (isCompatibleString!StringKey && isCompatibleString!StringValue) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(sectionItems, output);
+	return output[];
+}
+
+///
+@safe unittest {
+	string[string] doc;
+	doc["1"] = "value1";
+	doc["2"] = "foo'bar";
+
+	// Serialize AA to INI
+	string ini = stringifyIni(doc);
+
+	// dfmt off
+	static immutable expectedEither = "1 = value1\n"      ~ "2 = \"foo'bar\"\n"; // exclude from docs
+	static immutable expectedOr     = "2 = \"foo'bar\"\n" ~ "1 = value1\n"     ; // exclude from docs
+	// dfmt on
+
+	assert(ini == expectedEither || ini == expectedOr); // exclude from docs
+}
+
+/++
+	Serializes a nested AA to a string in INI format.
+ +/
+void stringifyIni(
+	StringSection,
+	StringKey,
+	StringValue,
+	OutputRange,
+)(
+	const StringValue[StringKey][StringSection] document,
+	OutputRange output,
+) if (isCompatibleString!StringSection && isCompatibleString!StringKey && isCompatibleString!StringValue) {
+	bool anySectionsWritten = false;
+
+	const rootSection = null in document;
+	if (rootSection !is null) {
+		stringifyIni(*rootSection, output);
+		anySectionsWritten = true;
+	}
+
+	foreach (sectionName, items; document) {
+		if (sectionName is null) {
+			continue;
+		}
+
+		if (!anySectionsWritten) {
+			anySectionsWritten = true;
+		} else {
+			output.put("\n");
+		}
+
+		stringifyIniSectionHeader(sectionName, output);
+		foreach (key, value; items) {
+			stringifyIni(key, value, output);
+		}
+	}
+}
+
+/// ditto
+string stringifyIni(
+	StringSection,
+	StringKey,
+	StringValue,
+)(
+	const StringValue[StringKey][StringSection] document,
+) if (isCompatibleString!StringSection && isCompatibleString!StringKey && isCompatibleString!StringValue) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(document, output);
+	return output[];
+}
+
+///
+@safe unittest {
+	string[string][string] doc;
+
+	doc[null]["key"] = "value";
+	doc[null]["foo"] = "bar";
+
+	doc["Section 1"]["firstname"] = "Walter";
+	doc["Section 1"]["lastname"] = "Bright";
+	doc["Section 1"]["language"] = "'D'";
+
+	doc["Section 2"]["Oachkatzl"] = "Schwoaf";
+
+	// Serialize AA to INI
+	string ini = stringifyIni(doc);
+
+	import std.string : indexOf, startsWith; // exclude from docs
+
+	assert(ini.startsWith("key = value\n") || ini.startsWith("foo = bar\n")); // exclude from docs
+	assert(ini.indexOf("\n[Section 1]\n") > 0); // exclude from docs
+	assert(ini.indexOf("\nfirstname = Walter\n") > 0); // exclude from docs
+	assert(ini.indexOf("\nlastname = Bright\n") > 0); // exclude from docs
+	assert(ini.indexOf("\nlanguage = \"'D'\"\n") > 0); // exclude from docs
+	assert(ini.indexOf("\n[Section 2]\n") > 0); // exclude from docs
+	assert(ini.indexOf("\nOachkatzl = Schwoaf\n") > 0); // exclude from docs
+}
+
+@safe unittest {
+	string[string][string] doc;
+	doc[null]["key"] = "value";
+	doc["S1"]["1"] = "value1";
+	doc["S1"]["2"] = "value2";
+	doc["S2"]["x"] = "foo'bar";
+	doc["S2"][null] = "bamboozled";
+
+	string ini = stringifyIni(doc);
+
+	import std.string : indexOf, startsWith;
+
+	assert(ini.startsWith("key = value\n"));
+	assert(ini.indexOf("\n[S1]\n") > 0);
+	assert(ini.indexOf("\n1 = value1\n") > 0);
+	assert(ini.indexOf("\n2 = value2\n") > 0);
+	assert(ini.indexOf("\n[S2]\n") > 0);
+	assert(ini.indexOf("\nx = \"foo'bar\"\n") > 0);
+	assert(ini.indexOf("\n\"\" = bamboozled\n") > 0);
 }
