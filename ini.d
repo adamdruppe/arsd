@@ -137,7 +137,7 @@ module arsd.ini;
 /++
 	Determines whether a type `T` is a string type compatible with this library. 
  +/
-enum isCompatibleString(T) = (is(T == string) || is(T == const(char)[]) || is(T == char[]));
+enum isCompatibleString(T) = (is(T == immutable(char)[]) || is(T == const(char)[]) || is(T == char[]));
 
 //dfmt off
 /++
