@@ -9,6 +9,15 @@
 	This module provides a configurable INI parser with support for multiple
 	“dialects” of the format.
 
+	### Getting started
+
+	$(LIST
+		* [parseIniDocument] – Parse INI string into a DOM-like document.
+		* [parseIniAA] – Parse INI string into an associative array.
+		* [stringifyIni] – Serialize an [IniDocument] or an associative array
+		  to a string of data in INI format.
+	)
+
 	---
 	import arsd.ini;
 
