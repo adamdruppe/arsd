@@ -2683,15 +2683,41 @@ private void stringifyIniString(string, OutputRange)(string data, OutputRange ou
 	}
 }
 
-private void stringifyIni(StringKey, StringValue, OutputRange)(StringKey key, StringValue value, OutputRange output) {
+/++
+	Serializes a `key` + `value` pair to a string in INI format.
+ +/
+void stringifyIni(StringKey, StringValue, OutputRange)(StringKey key, StringValue value, OutputRange output)
+		if (isCompatibleString!StringKey && isCompatibleString!StringValue) {
 	stringifyIniString(key, output);
 	output.put(" = ");
 	stringifyIniString(value, output);
 	output.put("\n");
 }
 
-private void stringifyIni(string, OutputRange)(const IniKeyValuePair!string kvp, OutputRange output) {
+/// ditto
+string stringifyIni(StringKey, StringValue)(StringKey key, StringValue value)
+		if (isCompatibleString!StringKey && isCompatibleString!StringValue) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(key, value, output);
+	return output[];
+}
+
+/++
+	Serializes an [IniKeyValuePair] to a string in INI format.
+ +/
+void stringifyIni(string, OutputRange)(const IniKeyValuePair!string kvp, OutputRange output) {
 	return stringifyIni(kvp.key, kvp.value, output);
+}
+
+/// ditto
+string stringifyIni(string)(const IniKeyValuePair!string kvp) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(kvp, output);
+	return output[];
 }
 
 private void stringifyIniSectionHeader(string, OutputRange)(string sectionName, OutputRange output) {
@@ -2702,11 +2728,23 @@ private void stringifyIniSectionHeader(string, OutputRange)(string sectionName, 
 	}
 }
 
-private void stringifyIni(string, OutputRange)(const IniSection!string section, OutputRange output) {
+/++
+	Serializes an [IniSection] to a string in INI format.
+ +/
+void stringifyIni(string, OutputRange)(const IniSection!string section, OutputRange output) {
 	stringifyIniSectionHeader(section.name, output);
 	foreach (const item; section.items) {
 		stringifyIni(item, output);
 	}
+}
+
+/// ditto
+string stringifyIni(string)(const IniSection!string section) {
+	import std.array : appender;
+
+	auto output = appender!string();
+	stringifyIni(section, output);
+	return output[];
 }
 
 /++
@@ -2958,4 +2996,26 @@ string stringifyIni(
 	assert(ini.indexOf("\n[S2]\n") > 0);
 	assert(ini.indexOf("\nx = \"foo'bar\"\n") > 0);
 	assert(ini.indexOf("\n\"\" = bamboozled\n") > 0);
+}
+
+@safe unittest {
+	const section = IniSection!string("Section Name", [
+		IniKeyValuePair!string("monkyyy", "business"),
+		IniKeyValuePair!string("Oachkatzl", "Schwoaf"),
+	]);
+
+	static immutable expected = "[Section Name]\n"
+		~ "monkyyy = business\n"
+		~ "Oachkatzl = Schwoaf\n";
+
+	assert(stringifyIni(section) == expected);
+}
+
+@safe unittest {
+	const kvp = IniKeyValuePair!string("Key", "Value");
+	assert(stringifyIni(kvp) == "Key = Value\n");
+}
+
+@safe unittest {
+	assert(stringifyIni("monkyyy", "business lol") == "monkyyy = business lol\n");
 }
