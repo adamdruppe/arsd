@@ -12,7 +12,7 @@
 	### Getting started
 
 	$(LIST
-		* [parseIniDocument] – Parse INI string into a DOM-like document.
+		* [parseIniDocument] – Parse INI string into a DOM-like [IniDocument].
 		* [parseIniAA] – Parse INI string into an associative array.
 		* [stringifyIni] – Serialize an [IniDocument] or an associative array
 		  to a string of data in INI format.
