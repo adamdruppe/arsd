@@ -703,6 +703,7 @@ private enum OperatingMode operatingMode(string) = (is(string == char[]))
 			* [IniFilteredParser]
 			* [parseIniDocument]
 			* [parseIniAA]
+			* [parseIniMergedAA]
 		)
  +/
 struct IniParser(
@@ -1366,6 +1367,7 @@ struct IniParser(
 			* [IniParser]
 			* [parseIniDocument]
 			* [parseIniAA]
+			* [parseIniMergedAA]
 		)
  +/
 struct IniFilteredParser(
@@ -2203,7 +2205,10 @@ struct IniDocument(string) if (isCompatibleString!string) {
 	Parses an INI string into a document ("DOM").
 
 	See_also:
-		[parseIniAA]
+		$(LIST
+			* [parseIniAA]
+			* [parseIniMergedAA]
+		)
  +/
 IniDocument!string parseIniDocument(IniDialect dialect = IniDialect.defaults, string)(string rawIni) @safe pure nothrow
 if (isCompatibleString!string) {
@@ -2359,7 +2364,10 @@ company = "Digital Mars"
 	)
 
 	See_also:
-		[parseIniDocument]
+		$(LIST
+			* [parseIniMergedAA]
+			* [parseIniDocument]
+		)
  +/
 string[immutable(char)[]][immutable(char)[]] parseIniAA(
 	IniDialect dialect = IniDialect.defaults,
@@ -2588,6 +2596,110 @@ key = merged and overwritten
 	assert(aa["1"]["key"] == "merged and overwritten");
 	assert(aa["1"]["no2"] == "kept");
 	assert(aa["2"]["key"] == "overwritten");
+}
+
+/++
+	Parses an INI string into a section-less associate array.
+	All sections are merged.
+
+	$(LIST
+		* Section names are discarded.
+		* Duplicate keys cause values to get overwritten.
+	)
+
+	See_also:
+		$(LIST
+			* [parseIniAA]
+			* [parseIniDocument]
+		)
+ +/
+string[immutable(char)[]] parseIniMergedAA(
+	IniDialect dialect = IniDialect.defaults,
+	string,
+)(
+	string rawIni,
+) @safe pure nothrow {
+	static if (is(string == immutable(char)[])) {
+		immutable(char)[] toString(string key) => key;
+	} else {
+		immutable(char)[] toString(string key) => key.idup;
+	}
+
+	auto parser = IniParser!(dialect, string)(rawIni);
+
+	string[immutable(char)[]] section;
+
+	string keyName = null;
+	string value = null;
+
+	void commitKeyValuePair(string nextKey) {
+		if (keyName !is null) {
+			section[toString(keyName)] = value;
+		}
+
+		keyName = nextKey;
+		value = null;
+	}
+
+	void setValue(string nextValue) {
+		value = nextValue;
+	}
+
+	while (!parser.skipIrrelevant()) {
+		switch (parser.front.type) with (TokenType) {
+
+		case key:
+			commitKeyValuePair(parser.front.data);
+			break;
+
+		case value:
+			setValue(parser.front.data);
+			break;
+
+		case sectionHeader:
+			// nothing to do
+			break;
+
+		default:
+			assert(false, "Unexpected parsing error."); // TODO
+		}
+
+		parser.popFront();
+	}
+
+	commitKeyValuePair(null);
+
+	return section;
+}
+
+///
+@safe unittest {
+	static immutable demoData = `
+key0 = value0
+
+[1]
+key1 = value1
+key2 = other value
+
+[2]
+key1 = value2
+key3 = yet another value`;
+
+	// Parse INI file into an associative array with merged sections.
+	string[string] aa = parseIniMergedAA(demoData);
+
+	// As sections were merged, entries sharing the same key got overridden.
+	// Hence, there are only four entries left.
+	assert(aa.length == 4);
+
+	// The "key1" entry of the first section got overruled
+	// by the "key1" entry of the second section that came later.
+	assert(aa["key1"] == "value2");
+
+	// Entries with unique keys got through unaffected.
+	assert(aa["key0"] == "value0");
+	assert(aa["key2"] == "other value");
+	assert(aa["key3"] == "yet another value");
 }
 
 private void stringifyIniString(string, OutputRange)(string data, OutputRange output) {
