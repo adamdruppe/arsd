@@ -12,9 +12,14 @@
 	### Getting started
 
 	$(LIST
-		* [parseIniDocument] – Parse INI string into a DOM-like [IniDocument].
-		* [parseIniAA] – Parse INI string into an associative array.
-		* [stringifyIni] – Serialize an [IniDocument] or an associative array
+		* [parseIniDocument] – Parses a string of INI data and stores the
+		  result in a DOM-inspired [IniDocument] structure.
+		* [parseIniAA] – Parses a string of INI data and stores the result
+		  in an associative array (named sections) of associative arrays
+		  (key/value pairs of the section).
+		* [parseIniMergedAA] – Parses a string of INI data and stores the
+		  result in a flat associative array (with all sections merged).
+		* [stringifyIni] – Serializes an [IniDocument] or an associative array
 		  to a string of data in INI format.
 	)
 
