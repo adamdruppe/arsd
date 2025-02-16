@@ -108,6 +108,26 @@ module arsd.ini;
 
 ///
 @safe unittest {
+	// INI example data (e.g. from an `autorun.inf` file)
+	static immutable string rawIniData =
+		"[autorun]\n"
+		~ "open=setup.exe\n"
+		~ "icon=setup.exe,0\n";
+
+	// Parse the document into a flat associative array.
+	// (Sections would get merged, but there is only one section in the
+	// example anyway.)
+	string[string] data = parseIniMergedAA(rawIniData);
+
+	string open = data["open"];
+	string icon = data["icon"];
+
+	assert(open == "setup.exe");
+	assert(icon == "setup.exe,0");
+}
+
+///
+@safe unittest {
 	// INI example data (e.g. from an `autorun.inf` file):
 	static immutable string rawIniData =
 		"[autorun]\n"
