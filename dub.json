@@ -787,6 +787,18 @@
 			"dflags-dmd": ["-mv=arsd.archive=$PACKAGE_DIR/archive.d"],
 			"dflags-ldc": ["--mv=arsd.archive=$PACKAGE_DIR/archive.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.archive=$PACKAGE_DIR/archive.d"]
+		},
+		{
+			"name": "ini",
+			"description": "INI configuration file support - configurable INI parser and serializer with support for various dialects.",
+			"targetType": "library",
+			"sourceFiles": ["ini.d"],
+			"dependencies": {
+				"arsd-official:core":"*"
+			},
+			"dflags-dmd": ["-mv=arsd.ini=$PACKAGE_DIR/ini.d"],
+			"dflags-ldc": ["--mv=arsd.ini=$PACKAGE_DIR/ini.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.ini=$PACKAGE_DIR/ini.d"]
 		}
 	]
 }

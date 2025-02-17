@@ -42,6 +42,8 @@ Go to the file+line number from the error message and change `Event` to `FocusIn
 
 arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
+arsd.ini was added.
+
 ## 11.0
 
 Released: Planned for May 2023, actually out August 2023.
