@@ -30,7 +30,7 @@ Nothing is planned for it at this time.
 
 ## 12.0
 
-Released: January 2025
+Released: Planned for some time between January and May 2025
 
 minigui's `defaultEventHandler_*` functions take more specific objects. So if you see errors like:
 

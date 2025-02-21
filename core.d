@@ -423,6 +423,46 @@ struct stringz {
 }
 
 /+
+/++
+	A runtime tagged union, aka a sumtype.
+
+	History:
+		Added February 15, 2025
++/
+struct Union(T...) {
+	private uint contains_;
+	private union {
+		private T payload;
+	}
+
+	static foreach(index, type; T)
+	@implicit public this(type t) {
+		contains_ = index;
+		payload[index] = t;
+	}
+
+	bool contains(Part)() const {
+		static assert(indexFor!Part != -1);
+		return contains_ == indexFor!Part;
+	}
+
+	inout(Part) get(Part)() inout {
+		if(!contains!Part) {
+			throw new ArsdException!"Dynamic type mismatch"(indexFor!Part, contains_);
+		}
+		return payload[indexFor!Part];
+	}
+
+	private int indexFor(Part)() {
+		foreach(idx, thing; T)
+			static if(is(T == Part))
+				return idx;
+		return -1;
+	}
+}
++/
+
+/+
 	DateTime
 		year: 16 bits (-32k to +32k)
 		month: 4 bits

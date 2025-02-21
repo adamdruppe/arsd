@@ -24,8 +24,26 @@
 +/
 module arsd.textlayouter;
 
-// see: https://harfbuzz.github.io/a-simple-shaping-example.html
+// FIXME: elastic tabstops https://nick-gravgaard.com/elastic-tabstops/
+/+
+Each cell ends with a tab character. A column block is a run of uninterrupted vertically adjacent cells. A column block is as wide as the widest piece of text in the cells it contains or a minimum width (plus padding). Text outside column blocks is ignored.
++/
+// opening tabs work as indentation just like they do now, but wrt the algorithm are just considered one unit.
+// then groups of lines with more tabs than the opening ones are processed together but only if they all right next to each other
 
+// FIXME: soft word wrap w/ indentation preserved
+// FIXME: line number stuff?
+
+// want to support PS (new paragraph), LS (forced line break), FF (next page)
+// and GS = <table> RS = <tr> US = <td> FS = </table> maybe.
+
+
+// FIXME: maybe i need another overlay of block style not just text style. list, alignment, heading, paragraph spacing, etc. should it nest?
+
+// FIXME: copy/paste preserving style.
+
+
+// see: https://harfbuzz.github.io/a-simple-shaping-example.html
 
 // FIXME: unicode private use area could be delegated out but it might also be used by something else.
 // just really want an encoding scheme for replaced elements that punt it outside..
@@ -1188,6 +1206,8 @@ class TextLayouter {
 		int length;
 
 		int styleInformationIndex;
+
+		bool isSpecialStyle;
 	}
 
 	/+
@@ -1274,9 +1294,11 @@ class TextLayouter {
 
 
 	/++
-		Appends text at the end, without disturbing user selection.
+		Appends text at the end, without disturbing user selection. If style is not specified, it reuses the most recent style. If it is, it switches to that style.
+
+		If you put `isSpecialStyle` to `true`, the style will only apply to this text specifically and user edits will not inherit it.
 	+/
-	public void appendText(scope const(char)[] text, StyleHandle style = StyleHandle.init) {
+	public void appendText(scope const(char)[] text, StyleHandle style = StyleHandle.init, bool isSpecialStyle = false) {
 		wasMutated_ = true;
 		auto before = this.text;
 		this.text.length += text.length;
@@ -1290,8 +1312,15 @@ class TextLayouter {
 			// otherwise, insert a new block for it
 			styles[$-1].length -= 1; // it no longer covers the zero terminator
 
-			// but this does, hence the +1
-			styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length + 1, style.index);
+			if(isSpecialStyle) {
+				auto oldIndex = styles[$-1].styleInformationIndex;
+				styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length, style.index, true);
+				// cover the zero terminator back in the old style
+				styles ~= StyleBlock(cast(int) this.text.length - 1, 1, oldIndex, false);
+			} else {
+				// but this does, hence the +1
+				styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length + 1, style.index, false);
+			}
 		}
 
 		invalidateLayout(cast(int) before.length - 1 /* zero terminator */, this.text.length, cast(int) text.length);
@@ -1817,14 +1846,21 @@ class TextLayouter {
 			offset--; // use the previous one
 		}
 
-		return getStyleAt(offset);
+		return getStyleAt(offset, false);
 	}
 
-	private StyleHandle getStyleAt(int offset) {
+	private StyleHandle getStyleAt(int offset, bool allowSpecialStyle = true) {
 		// FIXME: binary search
-		foreach(style; styles) {
-			if(offset >= style.offset && offset < (style.offset + style.length))
+		foreach(idx, style; styles) {
+			if(offset >= style.offset && offset < (style.offset + style.length)) {
+				if(style.isSpecialStyle && !allowSpecialStyle) {
+					// we need to find the next style that is not special...
+					foreach(s2; styles[idx + 1 .. $])
+						if(!s2.isSpecialStyle)
+							return StyleHandle(s2.styleInformationIndex);
+				}
 				return StyleHandle(style.styleInformationIndex);
+			}
 		}
 		assert(0);
 	}
@@ -1873,10 +1909,27 @@ class TextLayouter {
 		Can override this to define if a char is a word splitter for word wrapping.
 	+/
 	protected bool isWordwrapPoint(dchar c) {
+		// FIXME: assume private use characters are split points
 		if(c == ' ')
 			return true;
 		return false;
 	}
+
+	/+
+	/++
+
+	+/
+	protected ReplacedCharacter privateUseCharacterInfo(dchar c) {
+		return ReplacedCharacter.init;
+	}
+
+	/// ditto
+	static struct ReplacedCharacter {
+		bool overrideFont; /// if false, it uses the font like any other character, if true, it uses info from this struct
+		int width; /// in device pixels
+		int height; /// in device pixels
+	}
+	+/
 
 	private bool invalidateLayout_;
 	private int invalidStart = int.max;
@@ -2024,13 +2077,19 @@ class TextLayouter {
 		TextStyle currentStyle = null;
 		int currentStyleIndex = 0;
 		MeasurableFont font;
+		bool glyphCacheValid;
 		ubyte[128] glyphWidths;
 		void loadNewFont(MeasurableFont what) {
 			font = what;
 
 			// caching the ascii widths locally can give a boost to ~ 20% of the speed of this function
+			glyphCacheValid = true;
 			foreach(char c; 32 .. 128) {
 				auto w = font.stringWidth((&c)[0 .. 1]);
+				if(w >= 256) {
+					glyphCacheValid = false;
+					break;
+				}
 				glyphWidths[c] = cast(ubyte) w; // FIXME: what if it doesn't fit?
 			}
 		}
@@ -2273,6 +2332,9 @@ class TextLayouter {
 
 			int thisWidth = 0;
 
+			// FIXME: delegate private-use area to their own segments
+			// FIXME: line separator, paragraph separator, form feed
+
 			switch(ch) {
 				case 0:
 					goto advance;
@@ -2296,7 +2358,8 @@ class TextLayouter {
 					// a tab should be its own segment with no text
 					// per se
 
-					thisWidth = 48;
+					enum tabStop = 48;
+					thisWidth = 16 + tabStop - currentCorner.x % tabStop;
 
 					segment.width += thisWidth;
 					currentCorner.x += thisWidth;
@@ -2319,7 +2382,7 @@ class TextLayouter {
 							thisWidth = width;
 						}
 					} else {
-						if(text[idx] < 128)
+						if(glyphCacheValid && text[idx] < 128)
 							thisWidth = glyphWidths[text[idx]];
 						else
 							thisWidth = font.stringWidth(text[idx .. idx + stride(text[idx])]);

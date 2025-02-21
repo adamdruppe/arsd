@@ -217,6 +217,7 @@ struct DatabaseDatum {
 	alias toString this;
 
 	/// ditto
+	version(D_OpenD) {} else // opend enables -preview=rvaluerefparam which makes this conflict with the rvalue toString in matching to!T stuff
 	T opCast(T)() {
 		import std.conv;
 		return to!T(this.toString);

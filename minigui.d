@@ -13718,6 +13718,7 @@ class TextDisplayHelper : Widget {
 	override void defaultEventHandler_dblclick(scope DoubleClickEvent dce) {
 		if(dce.button == MouseButton.left) {
 			with(l.selection()) {
+				// FIXME: for a url or file picker i might wanna use / as a separator intead
 				scope dg = delegate const(char)[] (scope return const(char)[] ch) {
 					if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
 						return ch;
@@ -13912,7 +13913,8 @@ class TextDisplayHelper : Widget {
 			return super.maxHeight();
 	}
 
-	void drawTextSegment(WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+	void drawTextSegment(MyTextStyle myStyle, WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+		painter.setFont(myStyle.font);
 		painter.drawText(upperLeft, text);
 	}
 
@@ -13928,12 +13930,6 @@ class TextDisplayHelper : Widget {
 		l.getDrawableText(delegate bool(txt, style, info, carets...) {
 			//writeln("Segment: ", txt);
 			assert(style !is null);
-
-			auto myStyle = cast(MyTextStyle) style;
-			assert(myStyle !is null);
-
-			painter.setFont(myStyle.font);
-			// defaultColor = myStyle.color; // FIXME: so wrong
 
 			if(info.selections && info.boundingBox.width > 0) {
 				auto color = this.isFocused ? cs.selectionBackgroundColor : Color(128, 128, 128); // FIXME don't hardcode
@@ -13957,7 +13953,11 @@ class TextDisplayHelper : Widget {
 			}
 
 			if(txt.stripInternal.length) {
-				drawTextSegment(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRightInternal);
+				// defaultColor = myStyle.color; // FIXME: so wrong
+				if(auto myStyle = cast(MyTextStyle) style)
+					drawTextSegment(myStyle, painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRightInternal);
+				else if(auto myStyle = cast(MyImageStyle) style)
+					myStyle.draw(painter, info.boundingBox.upperLeft - smw.position() + bounds.upperLeft, txt.stripRightInternal);
 			}
 
 			if(info.boundingBox.upperLeft.y - smw.position().y > this.height) {
@@ -13989,6 +13989,33 @@ class TextDisplayHelper : Widget {
 
 		override OperatingSystemFont font() {
 			return font_;
+		}
+	}
+
+	static class MyImageStyle : TextStyle, MeasurableFont {
+		MemoryImage image_;
+		Image converted;
+		this(MemoryImage image) {
+			this.image_ =  image;
+			this.converted = Image.fromMemoryImage(image);
+		}
+
+		bool isMonospace() { return false; }
+		int averageWidth() { return image_.width; }
+		int height() { return image_.height; }
+		int ascent() { return image_.height; }
+		int descent() { return 0; }
+
+		int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+			return image_.width;
+		}
+
+		override MeasurableFont font() {
+			return this;
+		}
+
+		void draw(WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+			painter.drawImage(upperLeft, converted);
 		}
 	}
 }
@@ -14059,6 +14086,8 @@ abstract class EditableTextWidget : Widget {
 	void wordWrapEnabled(bool enabled) {
 		if(useCustomWidget) {
 			wordWrapEnabled_ = enabled;
+			if(tdh)
+				tdh.wordWrapEnabled_ = true;
 			textLayout.wordWrapWidth = enabled ? this.width : 0; // FIXME
 		} else version(win32_widgets) {
 			SendMessageW(hwnd, EM_FMTLINES, enabled ? 1 : 0, 0);
@@ -14431,11 +14460,12 @@ class PasswordEdit : EditableTextWidget {
 				super(textLayout, smw);
 			}
 
-			override void drawTextSegment(WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
+			override void drawTextSegment(MyTextStyle myStyle, WidgetPainter painter, Point upperLeft, scope const(char)[] text) {
 				char[256] buffer = void;
 				int bufferLength = 0;
 				foreach(dchar ch; text)
 					buffer[bufferLength++] = '*';
+				painter.setFont(myStyle.font);
 				painter.drawText(upperLeft, buffer[0..bufferLength]);
 			}
 		}
