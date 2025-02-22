@@ -8299,15 +8299,15 @@ class LoggerOf(T, size_t bufferSize = 16) {
 							auto startPos = readBufferPosition % bufferSize;
 							auto endPos = us.writeBufferPosition % bufferSize;
 							if(endPos > startPos) {
-								buffer[0 .. n] = us.ring[startPos .. endPos];
+								buffer[0 .. cast(size_t) n] = us.ring[cast(size_t) startPos .. cast(size_t) endPos];
 							} else {
 								auto ourSplit = us.ring.length - startPos;
-								buffer[0 .. ourSplit] = us.ring[startPos .. $];
-								buffer[ourSplit .. ourSplit + endPos] = us.ring[0 .. endPos];
+								buffer[0 .. cast(size_t) ourSplit] = us.ring[cast(size_t) startPos .. $];
+								buffer[cast(size_t) ourSplit .. cast(size_t) (ourSplit + endPos)] = us.ring[0 .. cast(size_t) endPos];
 							}
 							readBufferPosition = us.writeBufferPosition;
 						}
-						foreach(item; buffer[0 .. n]) {
+						foreach(item; buffer[0 .. cast(size_t) n]) {
 							if(!connected)
 								break;
 							dg(item, missedMessages);
