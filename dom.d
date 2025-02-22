@@ -140,6 +140,151 @@ class Document : FileResource, DomParent {
 	inout(Document) asDocument() inout { return this; }
 	inout(Element) asElement() inout { return null; }
 
+	/++
+		These three functions, `processTagOpen`, `processTagClose`, and `processNodeWhileParsing`, allow you to process elements as they are parsed and choose to not append them to the dom tree.
+
+
+		`processTagOpen` is called as soon as it reads the tag name and attributes into the passed `Element` structure, in order
+		of appearance in the file. `processTagClose` is called similarly, when that tag has been closed. In between, all descendant
+		nodes - including tags as well as text and other nodes - are passed to `processNodeWhileParsing`. Finally, after `processTagClose`,
+		the node itself is passed to `processNodeWhileParsing` only after its children.
+
+		So, given:
+
+		```xml
+		<thing>
+			<child>
+				<grandchild></grandchild>
+			</child>
+		</thing>
+		```
+
+		It would call:
+
+		$(NUMBERED_LIST
+			* processTagOpen(thing)
+			* processNodeWhileParsing(thing, whitespace text) // the newlines, spaces, and tabs between the thing tag and child tag
+			* processTagOpen(child)
+			* processNodeWhileParsing(child, whitespace text)
+			* processTagOpen(grandchild)
+			* processTagClose(grandchild)
+			* processNodeWhileParsing(child, grandchild)
+			* processNodeWhileParsing(child, whitespace text) // whitespace after the grandchild
+			* processTagClose(child)
+			* processNodeWhileParsing(thing, child)
+			* processNodeWhileParsing(thing, whitespace text)
+			* processTagClose(thing)
+		)
+
+		The Element objects passed to those functions are the same ones you'd see; the tag open and tag close calls receive the same
+		object, so you can compare them with the `is` operator if you want.
+
+		The default behavior of each function is that `processTagOpen` and `processTagClose` do nothing.
+		`processNodeWhileParsing`'s default behavior is to call `parent.appendChild(child)`, in order to
+		build the dom tree. If you do not want the dom tree, you can do override this function to do nothing.
+
+		If you do not choose to append child to parent in `processNodeWhileParsing`, the garbage collector is free to clean up
+		the node even as the document is not finished parsing, allowing memory use to stay lower. Memory use will tend to scale
+		approximately with the max depth in the element tree rather the entire document size.
+
+		To cancel processing before the end of a document, you'll have to throw an exception and catch it at your call to parse.
+		There is no other way to stop early and there are no concrete plans to add one.
+
+		There are several approaches to use this: you might might use `processTagOpen` and `processTagClose` to keep a stack or
+		other state variables to process nodes as they come and never add them to the actual tree. You might also build partial
+		subtrees to use all the convenient methods in `processTagClose`, but then not add that particular node to the rest of the
+		tree to keep memory usage down.
+
+		Examples:
+
+			Suppose you have a large array of items under the root element you'd like to process individually, without
+			taking all the items into memory at once. You can do that with code like this:
+			---
+			import arsd.dom;
+			class MyStream : XmlDocument {
+				this(string s) { super(s); } // need to forward the constructor we use
+
+				override void processNodeWhileParsing(Element parent, Element child) {
+					// don't append anything to the root node, since we don't need them
+					// all in the tree - that'd take too much memory -
+					// but still build any subtree for each individual item for ease of processing
+					if(parent is root)
+						return;
+					else
+						super.processNodeWhileParsing(parent, child);
+				}
+
+				int count;
+				override void processTagClose(Element element) {
+					if(element.tagName == "item") {
+						// process the element here with all the regular dom functions on `element`
+						count++;
+						// can still use dom functions on the subtree we built
+						assert(element.requireSelector("name").textContent == "sample");
+					}
+				}
+			}
+
+			void main() {
+				// generate an example file with a million items
+				string xml = "<list>";
+				foreach(i; 0 .. 1_000_000) {
+					xml ~= "<item><name>sample</name><type>example</type></item>";
+				}
+				xml ~= "</list>";
+
+				auto document = new MyStream(xml);
+				assert(document.count == 1_000_000);
+			}
+			---
+
+			This example runs in about 1/10th of the memory and 2/3 of the time on my computer relative to a default [XmlDocument] full tree dom.
+
+			By overriding these three functions to fit the specific document and processing requirements you have, you might realize even bigger
+			gains over the normal full document tree while still getting most the benefits of the convenient dom functions.
+
+			Tip: if you use a [Utf8Stream] instead of a string, you might be able to bring the memory use further down. The easiest way to do that
+			is something like this when loading from a file:
+
+			---
+			import std.stdio;
+			auto file = File("filename.xml", "rb");
+			auto textStream = new Utf8Stream(() {
+				 // get more
+				 auto buffer = new char[](32 * 1024);
+				 return cast(string) file.rawRead(buffer);
+			}, () {
+				 // has more
+				 return !file.eof;
+			});
+
+			auto document = new XmlDocument(textStream);
+			---
+
+			You'll need to forward a constructor in your subclasses that takes `Utf8Stream` too if you want to subclass to override the streaming parsing functions.
+
+			Note that if you do save parts of the document strings or objects, it might prevent the GC from freeing that string block anyway, since dom.d will often slice into its buffer while parsing instead of copying strings. It will depend on your specific case to know if this actually saves memory or not for you.
+
+		Bugs:
+			Even if you use a [Utf8Stream] to feed data and decline to append to the tree, the entire xml text is likely to
+			end up in memory anyway.
+
+		See_Also:
+			[Document#examples]'s high level streaming example.
+
+		History:
+			`processNodeWhileParsing` was added January 6, 2023.
+
+			`processTagOpen` and `processTagClose` were added February 21, 2025.
+	+/
+	void processTagOpen(Element what) {
+	}
+
+	/// ditto
+	void processTagClose(Element what) {
+	}
+
+	/// ditto
 	void processNodeWhileParsing(Element parent, Element child) {
 		parent.appendChild(child);
 	}
@@ -551,11 +696,7 @@ class Document : FileResource, DomParent {
 		bool nonNestableHackRequired = false;
 
 		int getLineNumber(sizediff_t p) {
-			int line = 1;
-			foreach(c; data[0..p])
-				if(c == '\n')
-					line++;
-			return line;
+			return data.getLineNumber(p);
 		}
 
 		void parseError(string message) {
@@ -572,6 +713,9 @@ class Document : FileResource, DomParent {
 		}
 
 		string readTagName() {
+
+			data.markDataDiscardable(pos);
+
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
 			auto start = pos;
@@ -972,7 +1116,7 @@ class Document : FileResource, DomParent {
 						import std.algorithm.comparison;
 
 						if(strict) {
-						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[max(0, pos - 100) .. min(data.length, pos + 100)]));
+						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[max(0, pos - data.contextToKeep) .. min(data.length, pos + data.contextToKeep)]));
 						} else {
 							// if we got here, it's probably because a slash was in an
 							// unquoted attribute - don't trust the selfClosed value
@@ -1001,6 +1145,15 @@ class Document : FileResource, DomParent {
 						}
 						e.selfClosed = selfClosed;
 						e.parseAttributes();
+
+						// might temporarily set root to the first element we encounter,
+						// then the final root element assignment will be at the end of the parse,
+						// when the recursive work is complete.
+						if(this.root is null)
+							this.root = e;
+						this.processTagOpen(e);
+						scope(exit)
+							this.processTagClose(e);
 
 
 						// HACK to handle script and style as a raw data section as it is in HTML browsers
@@ -4205,14 +4358,25 @@ class Element : DomParent {
 +/
 /// Group: core_functionality
 class XmlDocument : Document {
+	/++
+		Constructs a stricter-mode XML parser and parses the given data source.
+
+		History:
+			The `Utf8Stream` version of the constructor was added on February 22, 2025.
+	+/
 	this(string data, bool enableHtmlHacks = false) {
+		this(new Utf8Stream(data), enableHtmlHacks);
+	}
+
+	/// ditto
+	this(Utf8Stream data, bool enableHtmlHacks = false) {
 		selfClosedElements = null;
 		inlineElements = null;
 		rawSourceElements = null;
 		contentType = "text/xml; charset=utf-8";
 		_prolog = `<?xml version="1.0" encoding="UTF-8"?>` ~ "\n";
 
-		parseStrict(data, !enableHtmlHacks);
+		parseStream(data, true, true, !enableHtmlHacks);
 	}
 }
 
@@ -8710,25 +8874,53 @@ class Utf8Stream {
 			// stdout.flush();
 		}
 
+		enum contextToKeep = 100;
+
+		void markDataDiscardable(size_t p) {
+
+			if(p < contextToKeep)
+				return;
+			p -= contextToKeep;
+
+			// pretends data[0 .. p] is gone and adjusts future things as if it was still there
+			startingLineNumber = getLineNumber(p);
+			assert(p >= virtualStartIndex);
+			data = data[p - virtualStartIndex .. $];
+			virtualStartIndex = p;
+		}
+
+		int getLineNumber(size_t p) {
+			int line = startingLineNumber;
+			assert(p >= virtualStartIndex);
+			foreach(c; data[0 .. p - virtualStartIndex])
+				if(c == '\n')
+					line++;
+			return line;
+		}
+
+
 		@property final size_t length() {
 			// the parser checks length primarily directly before accessing the next character
 			// so this is the place we'll hook to append more if possible and needed.
-			if(lastIdx + 1 >= data.length && hasMore()) {
+			if(lastIdx + 1 >= (data.length + virtualStartIndex) && hasMore()) {
 				data ~= getMore();
 			}
-			return data.length;
+			return data.length + virtualStartIndex;
 		}
 
 		final char opIndex(size_t idx) {
 			if(idx > lastIdx)
 				lastIdx = idx;
-			return data[idx];
+			return data[idx - virtualStartIndex];
 		}
 
 		final string opSlice(size_t start, size_t end) {
 			if(end > lastIdx)
 				lastIdx = end;
-			return data[start .. end];
+			// writeln(virtualStartIndex, " " , start, " ", end);
+			assert(start >= virtualStartIndex);
+			assert(end >= virtualStartIndex);
+			return data[start - virtualStartIndex .. end - virtualStartIndex];
 		}
 
 		final size_t opDollar() {
@@ -8756,6 +8948,9 @@ class Utf8Stream {
 
 		bool delegate() hasMoreHelper;
 		string delegate() getMoreHelper;
+
+		int startingLineNumber = 1;
+		size_t virtualStartIndex = 0;
 
 
 		/+
