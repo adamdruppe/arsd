@@ -14,7 +14,6 @@
 module arsd.email;
 
 import std.net.curl;
-pragma(lib, "curl");
 
 import std.base64;
 import std.string;
