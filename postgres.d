@@ -179,13 +179,21 @@ class PostgreSql : Database {
 		PGconn* conn;
 }
 
+private string toLowerFast(string s) {
+	import std.ascii : isUpper;
+	foreach (c; s)
+		if (c >= 0x80 || isUpper(c))
+			return toLower(s);
+	return s;
+}
+
 ///
 class PostgresResult : ResultSet {
 	// name for associative array to result index
 	int getFieldIndex(string field) {
 		if(mapping is null)
 			makeFieldMapping();
-		field = field.toLower;
+		field = field.toLowerFast;
 		if(field in mapping)
 			return mapping[field];
 		else throw new Exception("no mapping " ~ field);
