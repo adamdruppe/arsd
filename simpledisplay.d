@@ -1599,6 +1599,10 @@ enum WindowFlags : int {
 	+/
 	managesChildWindowFocus = 128,
 
+	/++
+	+/
+	overrideRedirect = 256,
+
 	dontAutoShow = 0x1000_0000, /// Don't automatically show window after creation; you will have to call `show()` manually.
 }
 
@@ -1628,12 +1632,19 @@ enum WindowTypes : int {
 	/// A popup bubble notification
 	notification,
 	/*
-	menu, /// a tearable menu bar
+	menu, /// a tearable menu bar (not override-redirect - contrast to popups)
+	toolbar, /// a tearable menu bar (not override-redirect)
 	splashScreen, /// a loading splash screen for your application
-	tooltip, /// A tiny window showing temporary help text or something.
-	comboBoxDropdown,
-	toolbar
+	desktop, ///
+	dockOrPanel, /// think taskbar
+	utility, /// a palette or something
 	*/
+	/// A tiny window showing temporary help text or something.
+	tooltip,
+	/// only supported on X; will assert fail elsewhere
+	dnd,
+	/// can also be used for other auto-complete presentations
+	comboBoxDropdown,
 	/// a dialog box of some sort
 	dialog,
 	/// a child nested inside the parent. You must pass a parent window to the ctor
@@ -2540,7 +2551,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			case normal, undecorated, eventOnly:
 			case nestedChild, minimallyWrapped:
 				return (customizationFlags & WindowFlags.transient) ? true : false;
-			case dropdownMenu, popupMenu, notification, dialog:
+			case dropdownMenu, popupMenu, notification, dialog, tooltip, dnd, comboBoxDropdown:
 				return true;
 		}
 	}
@@ -7047,7 +7058,7 @@ version(X11) {
 		import core.stdc.stdio;
 		char[265] buffer;
 		XGetErrorText(dpy, evt.error_code, buffer.ptr, cast(int) buffer.length);
-		debug printf("X Error %d: %s / Serial: %lld, Opcode: %d.%d, XID: 0x%llx\n", evt.error_code, buffer.ptr, evt.serial, evt.request_code, evt.minor_code, evt.resourceid);
+		debug printf("X Error %d: %s / Serial: %lld, Opcode: %d.%d, XID: 0x%llx\n", evt.error_code, buffer.ptr, cast(long) evt.serial, evt.request_code, evt.minor_code, cast(long) evt.resourceid);
 		errorHappened = true;
 		return 0;
 	}
@@ -12525,6 +12536,9 @@ version(Windows) {
 				case WindowTypes.eventOnly:
 					_hidden = true;
 				break;
+				case WindowTypes.tooltip:
+				case WindowTypes.dnd:
+				case WindowTypes.comboBoxDropdown:
 				case WindowTypes.dropdownMenu:
 				case WindowTypes.popupMenu:
 				case WindowTypes.notification:
@@ -13434,7 +13448,7 @@ version(X11) {
 				}
 
 				version(with_xft) {
-					if(xftFont is null || xftDraw is null)
+					if(xftDraw is null)
 						return;
 					XftDrawSetClip(xftDraw, null);
 				}
@@ -13447,7 +13461,7 @@ version(X11) {
 					XRenderSetPictureClipRectangles(display, xrenderPicturePainter, 0, 0, rects.ptr, cast(int) rects.length);
 
 				version(with_xft) {
-					if(xftFont is null || xftDraw is null)
+					if(xftDraw is null)
 						return;
 					XftDrawSetClipRectangles(xftDraw, 0, 0, rects.ptr, 1);
 				}
@@ -13477,6 +13491,19 @@ version(X11) {
 			}
 		}
 
+		void enableXftDraw() {
+			if(xftDraw is null) {
+				xftDraw = XftDrawCreate(
+					display,
+					d,
+					DefaultVisual(display, DefaultScreen(display)),
+					DefaultColormap(display, 0)
+				);
+
+				updateXftColor();
+			}
+		}
+
 		private OperatingSystemFont _activeFont;
 		void setFont(OperatingSystemFont font) {
 			_activeFont = font;
@@ -13487,17 +13514,7 @@ version(X11) {
 					this.xftFont = null;
 
 				if(this.xftFont) {
-					if(xftDraw is null) {
-						xftDraw = XftDrawCreate(
-							display,
-							d,
-							DefaultVisual(display, DefaultScreen(display)),
-							DefaultColormap(display, 0)
-						);
-
-						updateXftColor();
-					}
-
+					enableXftDraw();
 					return;
 				}
 			}
@@ -15519,7 +15536,14 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			auto screen = DefaultScreen(display);
 
 			bool overrideRedirect = false;
-			if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.notification)// || windowType == WindowTypes.nestedChild)
+			if(
+				windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu ||
+				windowType == WindowTypes.tooltip ||
+				windowType == WindowTypes.notification ||
+				windowType == WindowTypes.dnd ||
+				windowType == WindowTypes.comboBoxDropdown ||
+				(customizationFlags & WindowFlags.overrideRedirect)
+			)// || windowType == WindowTypes.nestedChild)
 				overrideRedirect = true;
 
 			version(without_opengl) {}
@@ -15733,6 +15757,21 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				case WindowTypes.dialog:
 					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DIALOG"(display));
 				break;
+				case WindowTypes.comboBoxDropdown:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_COMBO"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
+				case WindowTypes.tooltip:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
+				case WindowTypes.dnd:
+					motifHideDecorations();
+					setNetWMWindowType(GetAtom!"_NET_WM_WINDOW_TYPE_DND"(display));
+					customizationFlags |= WindowFlags.skipTaskbar | WindowFlags.alwaysOnTop;
+				break;
 				/+
 				case WindowTypes.menu:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_MENU"(display);
@@ -15756,17 +15795,8 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				case WindowTypes.splash:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_SPLASH"(display);
 				break;
-				case WindowTypes.tooltip:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_TOOLTIP"(display);
-				break;
 				case WindowTypes.notification:
 					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_NOTIFICATION"(display);
-				break;
-				case WindowTypes.combo:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_COMBO"(display);
-				break;
-				case WindowTypes.dnd:
-					atoms[0] = GetAtom!"_NET_WM_WINDOW_TYPE_DND"(display);
 				break;
 				+/
 			}
