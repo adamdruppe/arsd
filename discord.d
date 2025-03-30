@@ -22,6 +22,8 @@
 +/
 module arsd.discord;
 
+// FIXME: it thought it was still alive but showed as not online and idk why. maybe setPulseCallback stopped triggering?
+
 // FIXME: Secure Connect Failed sometimes on trying to reconnect, should prolly just try again after a short period, or ditch the whole thing if reconnectAndResume and try fresh
 
 // FIXME: User-Agent: DiscordBot ($url, $versionNumber)
@@ -672,6 +674,7 @@ class DiscordGatewayConnection {
 		} else {
 			// otherwise, unless we were asked by the api user to close, let's try reconnecting
 			// since discord just does discord things.
+			websocket_ = null;
 			connect();
 		}
 	}
@@ -947,6 +950,8 @@ class DiscordGatewayConnection {
 		auto d = 1.seconds;
 		int count = 0;
 
+		try_again:
+
 		try {
 			this.websocket_.connect();
 		} catch(Exception e) {
@@ -956,6 +961,8 @@ class DiscordGatewayConnection {
 			count++;
 			if(count == 10)
 				throw e;
+
+			goto try_again;
 		}
 	}
 

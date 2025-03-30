@@ -289,3 +289,13 @@ immutable monthNames = [
 	"November",
 	"December"
 ];
+
+immutable daysOfWeekNames = [
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday",
+];

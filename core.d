@@ -129,7 +129,8 @@ version(OSXCocoa) {
 		enum bool UseCocoa = false;
 	else
 		enum bool UseCocoa = true;
-}
+} else
+	enum bool UseCocoa = false;
 
 import core.attribute;
 static if(!__traits(hasMember, core.attribute, "mustuse"))
@@ -199,18 +200,22 @@ version(Emscripten)  {
 }
 
 // FIXME: pragma(linkerDirective, "-framework", "Cocoa") works in ldc
-version(OSXCocoa)
+static if(UseCocoa)
 	enum CocoaAvailable = true;
 else
 	enum CocoaAvailable = false;
 
 version(D_OpenD) {
-	version(OSXCocoa)
+	static if(UseCocoa) {
 		pragma(linkerDirective, "-framework", "Cocoa");
+		pragma(linkerDirective, "-framework", "QuartzCore");
+	}
 } else {
-	version(OSXCocoa)
-	version(LDC)
+	static if(UseCocoa)
+	version(LDC) {
 		pragma(linkerDirective, "-framework", "Cocoa");
+		pragma(linkerDirective, "-framework", "QuartzCore");
+	}
 }
 
 version(Posix) {
@@ -1897,7 +1902,7 @@ unittest {
 	assert(decodeUriComponent("+", true) == " ");
 }
 
-private auto toDelegate(T)(T t) {
+public auto toDelegate(T)(T t) {
 	// static assert(is(T == function)); // lol idk how to do what i actually want here
 
 	static if(is(T Return == return))
@@ -1908,8 +1913,8 @@ private auto toDelegate(T)(T t) {
 			}
 		}
 		return &((cast(Wrapper*) t).call);
-	} else static assert(0, "could not get params");
-	else static assert(0, "could not get return value");
+	} else static assert(0, "could not get params; is it already a delegate you can pass directly?");
+	else static assert(0, "could not get return value, if it is a functor maybe try getting a delegate with `&yourobj.opCall` instead of toDelegate(yourobj)");
 }
 
 @system unittest {
@@ -4519,7 +4524,8 @@ class Timer {
 
 	version(Windows) {} else
 	static void unregister(arsd.core.ICoreEventLoop.UnregisterToken urt) {
-		urt.unregister();
+		if(urt.impl !is null)
+			urt.unregister();
 	}
 
 
@@ -4576,7 +4582,7 @@ class Timer {
 		CallbackHelper cbh;
 	} else version(linux) {
 		int fd = -1;
-	} else version(OSXCocoa) {
+	} else static if(UseCocoa) {
 	} else static assert(0, "timer not supported");
 }
 
@@ -9242,7 +9248,7 @@ package(arsd) version(Windows) extern(Windows) {
 	int WSARecvFrom(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, sockaddr*, LPINT, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
 }
 
-package(arsd) version(OSXCocoa) {
+package(arsd) static if(UseCocoa) {
 
 /* Copy/paste chunk from Jacob Carlborg { */
 // from https://raw.githubusercontent.com/jacob-carlborg/druntime/550edd0a64f0eb2c4f35d3ec3d88e26b40ac779e/src/core/stdc/clang_block.d

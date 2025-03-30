@@ -4825,6 +4825,19 @@ struct AttributesHolder {
 		}
 		return 0;
 	}
+
+	string toString() {
+		string ret;
+		foreach(k, v; this) {
+			if(ret.length)
+				ret ~= " ";
+			ret ~= k;
+			ret ~= `="`;
+			ret ~= v;
+			ret ~= `"`;
+		}
+		return ret;
+	}
 }
 
 unittest {

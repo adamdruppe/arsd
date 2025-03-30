@@ -96,6 +96,9 @@ unittest {
 	// writeln(toPlainText(document));
 }
 
+/++
+	Returns a plan text string that represents the jist of the document's content.
++/
 string toPlainText(RtfDocument document) {
 	string ret;
 	document.process((piece, ref state) {
@@ -243,6 +246,9 @@ private string parseRtfText(ref const(ubyte)[] s) {
 // \t is read but you should use \tab generally
 // when reading, ima translate the ascii tab to \tab control word
 // and ignore
+/++
+	A union of entities you can see while parsing a RTF file.
++/
 struct RtfPiece {
 	/++
 	+/
@@ -301,6 +307,9 @@ struct RtfPiece {
 }
 
 // a \word thing
+/++
+	A control word directly from the RTF file format.
++/
 struct RtfControlWord {
 	bool hadSpaceAtEnd;
 	bool hadNumber;
@@ -371,6 +380,9 @@ private bool isAlpha(char c) {
 }
 
 // a { ... } thing
+/++
+	A group directly from the RTF file.
++/
 struct RtfGroup {
 	RtfPiece[] pieces;
 

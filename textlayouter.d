@@ -36,6 +36,9 @@ Each cell ends with a tab character. A column block is a run of uninterrupted ve
 
 // want to support PS (new paragraph), LS (forced line break), FF (next page)
 // and GS = <table> RS = <tr> US = <td> FS = </table> maybe.
+// use \a bell for bookmarks in the text?
+
+// note: ctrl+c == ascii 3 and ctrl+d == ascii 4 == end of text
 
 
 // FIXME: maybe i need another overlay of block style not just text style. list, alignment, heading, paragraph spacing, etc. should it nest?
@@ -130,6 +133,8 @@ import arsd.simpledisplay;
 // You can do the caret by any time it gets drawn, you set the flag that it is on, then you can xor it to turn it off and keep track of that at top level.
 
 
+// FIXME: might want to be able to swap out all styles at once and trigger whole relayout, as if a document theme changed wholesale, without changing the saved style handles
+// FIXME: line and paragrpah numbering options while drawing
 /++
 	Represents the style of a span of text.
 
@@ -142,6 +147,39 @@ interface TextStyle {
 		Must never return `null`.
 	+/
 	MeasurableFont font();
+
+	/++
+		History:
+			Added February 24, 2025
+	+/
+	//ParagraphMetrics paragraphMetrics();
+
+	// FIXME: list styles?
+	// FIXME: table styles?
+
+	/// ditto
+	static struct ParagraphMetrics {
+		/++
+			Extra spacing between each line, given in physical pixels.
+		+/
+		int lineSpacing;
+		/++
+			Spacing between each paragraph, given in physical pixels.
+		+/
+		int paragraphSpacing;
+		/++
+			Extra indentation on the first line of each paragraph, given in physical pixels.
+		+/
+		int paragraphIndentation;
+
+		// margin left and right?
+
+		/++
+			Note that TextAlignment.Left might be redefined to mean "Forward", meaning left if left-to-right, right if right-to-left,
+			but right now it ignores bidi anyway.
+		+/
+		TextAlignment alignment = TextAlignment.Left;
+	}
 
 	// FIXME: I might also want a duplicate function for saving state.
 
@@ -167,6 +205,13 @@ interface TextStyle {
 			return TerminalFontRepresentation.instance;
 		}
 
+		/++
+			The default returns reasonable values, you might want to call this to get the defaults,
+			then change some values and return the rest.
+		+/
+		ParagraphMetrics paragraphMetrics() {
+			return  ParagraphMetrics.init;
+		}
 	}
 }
 

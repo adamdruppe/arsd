@@ -1162,7 +1162,16 @@ unittest {
 
 import arsd.core;
 
-version(OSX) version(DigitalMars) version=OSXCocoa;
+version(D_OpenD) {
+	version(OSX)
+		version=OSXCocoa;
+	version(iOS)
+		version=OSXCocoa;
+} else {
+	version(OSX) version(DigitalMars) version=OSXCocoa;
+}
+
+
 
 version(Emscripten) {
 	version=allow_unimplemented_features;
@@ -18686,10 +18695,10 @@ struct Visual
 		SimpleWindow simpleWindow;
 
 		override static SDGraphicsView alloc() @selector("alloc");
-		override SDGraphicsView init() @selector("init") {
+		override SDGraphicsView init() @selector("init");/* {
 			super.init();
 			return this;
-		}
+		}*/
 
 		override void drawRect(NSRect rect) @selector("drawRect:") {
 			auto curCtx = NSGraphicsContext.currentContext.graphicsPort;

@@ -5620,6 +5620,7 @@ class WebSocket {
 			activeSockets ~= s;
 			s.registered = true;
 			version(use_arsd_core) {
+				version(Posix)
 				s.unregisterToken = arsd.core.getThisThreadEventLoop().addCallbackOnFdReadable(s.socket.handle, new arsd.core.CallbackHelper(() { s.readyToRead(s); }));
 			}
 		}

@@ -21,6 +21,8 @@
 
 // FIXME: add menu checkbox and menu icon eventually
 
+// FIXME: checkbox menus and submenus and stuff
+
 // FOXME: look at Windows rebar control too
 
 /*
@@ -668,11 +670,23 @@ version(Windows) {
 }
 
 version(Windows) {
-	version(minigui_manifest) {} else version=minigui_no_manifest;
+	// to swap the default
+	// version(minigui_manifest) {} else version=minigui_no_manifest;
 
-	version(minigui_no_manifest) {} else
-	static if(__VERSION__ >= 2_083)
-	version(CRuntime_Microsoft) { // FIXME: mingw?
+	version(minigui_no_manifest) {} else {
+		version(D_OpenD) {
+			// OpenD always supports it
+			version=UseManifestMinigui;
+		} else {
+			static if(__VERSION__ >= 2_083)
+			version(CRuntime_Microsoft) // FIXME: mingw?
+				version=UseManifestMinigui;
+		}
+
+	}
+
+
+	version(UseManifestMinigui) {
 		// assume we want commctrl6 whenever possible since there's really no reason not to
 		// and this avoids some of the manifest hassle
 		pragma(linkerDirective, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"");
@@ -1482,16 +1496,21 @@ class Widget : ReflectableProperties {
 	Menu contextMenu(int x, int y) { return null; }
 
 	/++
-		Shows the widget's context menu, as if the user right clicked at the x, y position. You should rarely, if ever, have to call this, since default event handlers will do it for you automatically. To control what menu shows up, override [contextMenu] instead.
+		Shows the widget's context menu, as if the user right clicked at the x, y position. You should rarely, if ever, have to call this, since default event handlers will do it for you automatically. To control what menu shows up, you can pass one as `menuToShow`, but if you don't, it will call [contextMenu], which you can override on a per-widget basis.
+
+		History:
+			The `menuToShow` parameter was added on March 19, 2025.
 	+/
-	final bool showContextMenu(int x, int y) {
-		return showContextMenu(x, y, -2, -2);
+	final bool showContextMenu(int x, int y, Menu menuToShow = null) {
+		return showContextMenu(x, y, -2, -2, menuToShow);
 	}
 
-	private final bool showContextMenu(int x, int y, int screenX, int screenY) {
+	private final bool showContextMenu(int x, int y, int screenX, int screenY, Menu menu = null) {
 		if(parentWindow is null || parentWindow.win is null) return false;
 
-		auto menu = this.contextMenu(x, y);
+		if(menu is null)
+			menu = this.contextMenu(x, y);
+
 		if(menu is null)
 			return false;
 
@@ -2312,7 +2331,7 @@ class Widget : ReflectableProperties {
 		bool invalidateChildren = invalidate;
 
 		if(redrawRequested || force) {
-			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
+			painter.setClipRectangleForWidget(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 
 			painter.drawingUpon = this;
 
@@ -4224,6 +4243,10 @@ struct WidgetPainter {
 	this(ScreenPainter screenPainter, Widget drawingUpon) {
 		this.drawingUpon = drawingUpon;
 		this.screenPainter = screenPainter;
+
+		this.widgetClipRectangle = screenPainter.currentClipRectangle;
+
+		// this.screenPainter.impl.enableXftDraw();
 		if(auto font = visualTheme.defaultFontCached(drawingUpon.currentDpi))
 			this.screenPainter.setFont(font);
 	}
@@ -4241,10 +4264,37 @@ struct WidgetPainter {
 		}
 	}
 
+	private Rectangle widgetClipRectangle;
+
+	private Rectangle setClipRectangleForWidget(Point upperLeft, int width, int height) {
+		widgetClipRectangle = Rectangle(upperLeft, Size(width, height));
+
+		return screenPainter.setClipRectangle(widgetClipRectangle);
+	}
+
+	/++
+		Sets the clip rectangle to the given settings. It will automatically calculate the intersection
+		of your widget's content boundaries and your requested clip rectangle.
+
+		History:
+			Before February 26, 2025, you could sometimes exceed widget boundaries, as this forwarded
+			directly to the underlying `ScreenPainter`. It now wraps it to calculate the intersection.
+	+/
+	Rectangle setClipRectangle(Rectangle rectangle) {
+		return screenPainter.setClipRectangle(rectangle.intersectionOf(widgetClipRectangle));
+	}
+	/// ditto
+	Rectangle setClipRectangle(Point upperLeft, int width, int height) {
+		return setClipRectangle(Rectangle(upperLeft, Size(width, height)));
+	}
+	/// ditto
+	Rectangle setClipRectangle(Point upperLeft, Size size) {
+		return setClipRectangle(Rectangle(upperLeft, size));
+	}
 
 	///
 	ScreenPainter screenPainter;
-	/// Forward to the screen painter for other methods
+	/// Forward to the screen painter for all other methods, see [arsd.simpledisplay.ScreenPainter] for more information
 	alias screenPainter this;
 
 	private Widget drawingUpon;
@@ -4718,6 +4768,10 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 			update = () { le.content = *valptr; };
 			update();
 			return le;
+		} else static if(is(typeof(tt) == E[], E)) {
+			auto w = new ArrayEditingWidget!E(parent);
+			// FIXME update
+			return w;
 		} else static if(is(typeof(tt) == function)) {
 			auto w = new Button(displayName, parent);
 			return w;
@@ -4725,6 +4779,300 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 			return parent.addDataControllerWidget(tt);
 		} else static assert(0, typeof(tt).stringof);
 	} else static assert(0, "multiple controllers not yet supported");
+}
+
+class ArrayEditingWidget(T) : ArrayEditingWidgetBase {
+	this(Widget parent) {
+		super(parent);
+	}
+}
+
+class ArrayEditingWidgetBase : Widget {
+	this(Widget parent) {
+		super(parent);
+
+		// FIXME: a trash can to move items into to delete them?
+		static class MyListViewItem : GenericListViewItem {
+			this(Widget parent) {
+				super(parent);
+
+				/+
+					drag handle
+						left click lets you move the whole selection. if the current element is not selected, it changes the selection to it.
+						right click here gives you the movement controls too
+					index/key view zone
+						left click here selects/unselects
+					element view/edit zone
+					delete button
+				+/
+
+				// FIXME: make sure the index is viewable
+
+				auto hl = new HorizontalLayout(this);
+
+				button = new CommandButton("d", hl);
+
+				label = new TextLabel("unloaded", TextAlignment.Left, hl);
+				// if member editable, have edit view... get from the subclass.
+
+				// or a "..." menu?
+				button = new CommandButton("Up", hl); // shift+click is move to top
+				button = new CommandButton("Down", hl); // shift+click is move to bottom
+				button = new CommandButton("Move to", hl); // move before, after, or swap
+				button = new CommandButton("Delete", hl);
+
+				button.addEventListener("triggered", delegate(){
+					//messageBox(text("clicked ", currentIndexLoaded()));
+				});
+			}
+			override void showItem(int idx) {
+				label.label = "Item ";// ~ to!string(idx);
+			}
+
+			TextLabel label;
+			Button button;
+		}
+
+		auto outer_this = this;
+
+		// FIXME: make sure item count is easy to see
+
+		glvw = new class GenericListViewWidget {
+			this() {
+				super(outer_this);
+			}
+			override GenericListViewItem itemFactory(Widget parent) {
+				return new MyListViewItem(parent);
+			}
+			override Size itemSize() {
+				return Size(0, scaleWithDpi(80));
+			}
+
+			override Menu contextMenu(int x, int y) {
+				return createContextMenuFromAnnotatedCode(this);
+			}
+
+			@context_menu {
+				void Select_All() {
+
+				}
+
+				void Undo() {
+
+				}
+
+				void Redo() {
+
+				}
+
+				void Cut() {
+
+				}
+
+				void Copy() {
+
+				}
+
+				void Paste() {
+
+				}
+
+				void Delete() {
+
+				}
+
+				void Find() {
+
+				}
+			}
+		};
+
+		glvw.setItemCount(400);
+
+		auto hl = new HorizontalLayout(this);
+		add = new FreeEntrySelection(hl);
+		addButton = new Button("Add", hl);
+	}
+
+	GenericListViewWidget glvw;
+	ComboboxBase add;
+	Button addButton;
+	/+
+		Controls:
+			clear (select all / delete)
+			reset (confirmation blocked button, maybe only on the whole form? or hit undo so many times to get back there)
+			add item
+				palette of options to add to the array (add prolly a combo box)
+			rearrange - move up/down, drag and drop a selection? right click can always do, left click only drags when on a selection handle.
+			edit/input/view items (GLVW? or it could be a table view in a way.)
+			undo/redo
+			select whole elements (even if a struct)
+			cut/copy/paste elements
+
+			could have an element picker, a details pane, and an add bare?
+
+
+			put a handle on the elements for left click dragging. allow right click drag anywhere but pretty big wiggle until it enables.
+			left click and drag should never work for plain text, i more want to change selection there and there no room to put a handle on it.
+			the handle should let dragging w/o changing the selection, or if part of the selection, drag the whole selection i think.
+			make it textured and use the grabby hand mouse cursor.
+	+/
+}
+
+/++
+	A button that pops up a menu on click for working on a particular item or selection.
+
+	History:
+		Added March 23, 2025
++/
+class MenuPopupButton : Button {
+	/++
+		You might consider using [createContextMenuFromAnnotatedCode] to populate the `menu` argument.
+
+		You also may want to set the [prepare] delegate after construction.
+	+/
+	this(Menu menu, Widget parent) {
+		assert(menu !is null);
+
+		this.menu = menu;
+		super("...", parent);
+	}
+
+	private Menu menu;
+	/++
+		If set, this delegate is called before popping up the window. This gives you a chance
+		to prepare your dynamic data structures for the element(s) selected.
+
+		For example, if your `MenuPopupButton` is attached to a [GenericListViewItem], you can call
+		[GenericListViewItem.currentIndexLoaded] in here and set it to a variable in the object you
+		called [createContextMenuFromAnnotatedCode] to apply the operation to the right object.
+
+		(The api could probably be simpler...)
+	+/
+	void delegate() prepare;
+
+	override void defaultEventHandler_triggered(scope Event e) {
+		if(prepare)
+			prepare();
+		showContextMenu(this.x, this.y + this.height, -2, -2, menu);
+	}
+
+	override int maxHeight() {
+		return defaultLineHeight;
+	}
+
+	override int maxWidth() {
+		return defaultLineHeight;
+	}
+}
+
+/++
+	A button that pops up an information box, similar to a tooltip, but explicitly triggered.
+
+	FIXME: i want to be able to easily embed these in other things too.
++/
+class TipPopupButton : Button {
+	/++
+	+/
+	this(Widget delegate(Widget p) factory, Widget parent) {
+		this.factory = factory;
+		super("?", parent);
+	}
+
+	private Widget delegate(Widget p) factory;
+
+	override void defaultEventHandler_triggered(scope Event e) {
+		auto window = new TooltipWindow(factory, this);
+		window.popup(this);
+	}
+}
+
+/++
+	History:
+		Added March 23, 2025
++/
+class TooltipWindow : Window {
+	void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
+		/+
+		this.menuParent = parent;
+
+		previouslyFocusedWidget = parent.parentWindow.focusedWidget;
+		previouslyFocusedWidgetBelongsIn = &parent.parentWindow.focusedWidget;
+		parent.parentWindow.focusedWidget = this;
+
+		int w = 150;
+		int h = paddingTop + paddingBottom;
+		if(this.children.length) {
+			// hacking it to get the ideal height out of recomputeChildLayout
+			this.width = w;
+			this.height = h;
+			this.recomputeChildLayoutEntry();
+			h = this.children[$-1].y + this.children[$-1].height + this.children[$-1].marginBottom;
+			h += paddingBottom;
+
+			h -= 2; // total hack, i just like the way it looks a bit tighter even though technically MenuItem reserves some space to center in normal circumstances
+		}
+		+/
+
+		if(offsetY == int.min)
+			offsetY = parent.defaultLineHeight;
+
+		int w = 150;
+		int h = 50;
+
+		auto coord = parent.globalCoordinates();
+		dropDown.moveResize(coord.x + offsetX, coord.y + offsetY, w, h);
+
+		static if(UsingSimpledisplayX11)
+			XSync(XDisplayConnection.get, 0);
+
+		dropDown.visibilityChanged = (bool visible) {
+			if(visible) {
+				this.redraw();
+				dropDown.grabInput();
+			} else {
+				dropDown.releaseInputGrab();
+			}
+		};
+
+		dropDown.show();
+
+		clickListener = this.addEventListener((scope ClickEvent ev) {
+			unpopup();
+			// need to unlock asap just in case other user handlers block...
+			static if(UsingSimpledisplayX11)
+				flushGui();
+		}, true /* again for asap action */);
+	}
+
+	private EventListener clickListener;
+
+	void unpopup() {
+		mouseLastOver = mouseLastDownOn = null;
+		dropDown.hide();
+		clickListener.disconnect();
+	}
+
+	private SimpleWindow dropDown;
+	private Widget child;
+
+	///
+	this(Widget delegate(Widget p) factory, Widget parent) {
+		assert(parent);
+		assert(parent.parentWindow);
+		assert(parent.parentWindow.win);
+		dropDown = new SimpleWindow(
+			250, 40,
+			null, OpenGlOptions.no, Resizability.fixedSize,
+			WindowTypes.tooltip,
+			WindowFlags.dontAutoShow,
+			parent ? parent.parentWindow.win : null
+		);
+
+		super(dropDown);
+
+		child = factory(this);
+	}
 }
 
 private template controlledByCount(alias tt) {
@@ -5653,7 +6001,7 @@ enum ScrollBarShowPolicy {
 +/
 // FIXME ScrollBarShowPolicy
 // FIXME: use the ScrollMessageWidget in here now that it exists
-// deprecated("Use ScrollMessageWidget or ScrollableContainerWidget instead") // ugh compiler won't let me do it
+deprecated("Use ScrollMessageWidget or ScrollableContainerWidget instead") // ugh compiler won't let me do it
 class ScrollableWidget : Widget {
 	// FIXME: make line size configurable
 	// FIXME: add keyboard controls
@@ -6014,12 +6362,19 @@ class ScrollableWidget : Widget {
 		return WidgetPainter(painter, this);
 	}
 
+	override void addScrollPosition(ref int x, ref int y) {
+		x += scrollOrigin.x;
+		y += scrollOrigin.y;
+	}
+
 	mixin ScrollableChildren;
 }
 
 // you need to have a Point scrollOrigin in the class somewhere
 // and a paintFrameAndBackground
 private mixin template ScrollableChildren() {
+	static assert(!__traits(isSame, this.addScrollPosition, Widget.addScrollPosition), "Your widget should provide `Point scrollOrigin()` and `override void addScrollPosition`");
+
 	override protected void privatePaint(WidgetPainter painter, int lox, int loy, Rectangle containment, bool force, bool invalidate) {
 		if(hidden)
 			return;
@@ -6038,7 +6393,7 @@ private mixin template ScrollableChildren() {
 
 		if(force || redrawRequested) {
 			//painter.setClipRectangle(scrollOrigin, width, height);
-			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
+			painter.setClipRectangleForWidget(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 			paintFrameAndBackground(painter);
 		}
 
@@ -6051,7 +6406,7 @@ private mixin template ScrollableChildren() {
 		painter.originX = painter.originX - scrollOrigin.x;
 		painter.originY = painter.originY - scrollOrigin.y;
 		if(force || redrawRequested) {
-			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY) + Point(2, 2) /* border */, clip.width - 4, clip.height - 4);
+			painter.setClipRectangleForWidget(clip.upperLeft - Point(painter.originX, painter.originY) + Point(2, 2) /* border */, clip.width - 4, clip.height - 4);
 			//painter.setClipRectangle(scrollOrigin + Point(2, 2) /* border */, width - 4, height - 4);
 
 			//erase(painter); // we paintFrameAndBackground above so no need
@@ -6104,7 +6459,7 @@ private class InternalScrollableContainerInsideWidget : ContainerWidget {
 		painter.originX = lox + x - scrollOrigin.x;
 		painter.originY = loy + y - scrollOrigin.y;
 		if(force || redrawRequested) {
-			painter.setClipRectangle(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
+			painter.setClipRectangleForWidget(clip.upperLeft - Point(painter.originX, painter.originY), clip.width, clip.height);
 
 			erase(painter);
 			if(painter.visualTheme)
@@ -6326,7 +6681,7 @@ class ScrollableContainerWidget : ContainerWidget {
 
 
 version(custom_widgets)
-// deprecated // i can't deprecate it w/o stupid messages ugh
+deprecated
 private class InternalScrollableContainerWidget : Widget {
 
 	ScrollableWidget sw;
@@ -9315,10 +9670,18 @@ class Window : Widget {
 		eleR.x = ev.x;
 		eleR.y = ev.y;
 		auto pain = captureEle;
+
+		auto vpx = eleR.x;
+		auto vpy = eleR.y;
+
 		while(pain) {
 			eleR.x -= pain.x;
 			eleR.y -= pain.y;
 			pain.addScrollPosition(eleR.x, eleR.y);
+
+			vpx -= pain.x;
+			vpy -= pain.y;
+
 			pain = pain.parent;
 		}
 
@@ -9328,6 +9691,9 @@ class Window : Widget {
 			event.state = ev.modifierState;
 			event.clientX = eleR.x;
 			event.clientY = eleR.y;
+
+			event.viewportX = vpx;
+			event.viewportY = vpy;
 
 			event.shiftKey = (ev.modifierState & ModifierState.shift) ? true : false;
 			event.altKey = (ev.modifierState & ModifierState.alt) ? true : false;
@@ -9696,7 +10062,9 @@ class TableView : Widget {
 		super(parent);
 
 		version(win32_widgets) {
-			createWin32Window(this, WC_LISTVIEW, "", LVS_REPORT | LVS_OWNERDATA);//| LVS_OWNERDRAWFIXED);
+			// LVS_EX_LABELTIP might be worth too
+			// LVS_OWNERDRAWFIXED
+			createWin32Window(this, WC_LISTVIEW, "", LVS_REPORT | LVS_OWNERDATA);//, LVS_EX_TRACKSELECT); // ex style for for LVN_HOTTRACK
 		} else version(custom_widgets) {
 			auto smw = new ScrollMessageWidget(this);
 			smw.addDefaultKeyboardListeners();
@@ -9834,6 +10202,54 @@ class TableView : Widget {
 			if(SendMessage(hwnd, LVM_INSERTCOLUMN, cast(WPARAM) i, cast(LPARAM) &lvColumn) == -1)
 				throw new WindowsApiException("Insert Column Fail", GetLastError());
 		}
+	}
+
+	version(custom_widgets)
+	private int getColumnSizeForContent(size_t columnIndex) {
+		// FIXME: idk where the problem is but with a 2x scale the horizontal scroll is insuffiicent. i think the SMW is doing it wrong.
+		// might also want a user-defined max size too
+		int padding = scaleWithDpi(6);
+		int m = this.defaultTextWidth(this.columns[columnIndex].name) + padding;
+
+		if(getData !is null)
+		foreach(row; 0 .. itemCount)
+			getData(row, cast(int) columnIndex, (txt) {
+				m = mymax(m, this.defaultTextWidth(txt) + padding);
+			});
+
+		if(m < 32)
+			m = 32;
+
+		return m;
+	}
+
+	/++
+		History:
+			Added February 26, 2025
+	+/
+	void autoSizeColumnsToContent() {
+		version(custom_widgets) {
+			foreach(idx, ref c; columns) {
+				c.width = getColumnSizeForContent(idx);
+			}
+			updateCalculatedWidth(false);
+			tvwi.updateScrolls();
+		} else version(win32_widgets) {
+			foreach(i, c; columns)
+				SendMessage(hwnd, LVM_SETCOLUMNWIDTH, i, LVSCW_AUTOSIZE); // LVSCW_AUTOSIZE or LVSCW_AUTOSIZE_USEHEADER are amazing omg
+		}
+	}
+
+	/++
+		History:
+			Added March 1, 2025
+	+/
+	bool supportsPerCellAlignment() {
+		version(custom_widgets)
+			return true;
+		else version(win32_widgets)
+			return false;
+		return false;
 	}
 
 	private int getActualSetSize(size_t i, bool askWindows) {
@@ -10017,12 +10433,26 @@ class TableView : Widget {
 				auto info = cast(LPNMLISTVIEW) hdr;
 				this.emit!HeaderClickedEvent(info.iSubItem);
 			break;
+			case (LVN_FIRST-21) /* LVN_HOTTRACK */:
+				// requires LVS_EX_TRACKSELECT
+				// sdpyPrintDebugString("here");
+				mustReturn = 1; // override Windows' auto selection
+			break;
 			case NM_CLICK:
+				NMITEMACTIVATE* info = cast(NMITEMACTIVATE*) hdr;
+				this.emit!CellClickedEvent(info.iItem, info.iSubItem, MouseButton.left, MouseButtonLinear.left, info.ptAction.x, info.ptAction.y, !!(info.uKeyFlags & LVKF_ALT), !!(info.uKeyFlags & LVKF_CONTROL), !!(info.uKeyFlags & LVKF_SHIFT), false);
+			break;
 			case NM_DBLCLK:
+				NMITEMACTIVATE* info = cast(NMITEMACTIVATE*) hdr;
+				this.emit!CellClickedEvent(info.iItem, info.iSubItem, MouseButton.left, MouseButtonLinear.left, info.ptAction.x, info.ptAction.y, !!(info.uKeyFlags & LVKF_ALT), !!(info.uKeyFlags & LVKF_CONTROL), !!(info.uKeyFlags & LVKF_SHIFT), true);
+			break;
 			case NM_RCLICK:
+				NMITEMACTIVATE* info = cast(NMITEMACTIVATE*) hdr;
+				this.emit!CellClickedEvent(info.iItem, info.iSubItem, MouseButton.right, MouseButtonLinear.left, info.ptAction.x, info.ptAction.y, !!(info.uKeyFlags & LVKF_ALT), !!(info.uKeyFlags & LVKF_CONTROL), !!(info.uKeyFlags & LVKF_SHIFT), false);
+			break;
 			case NM_RDBLCLK:
-				// the item/subitem is set here and that can be a useful notification
-				// even beyond the normal click notification
+				NMITEMACTIVATE* info = cast(NMITEMACTIVATE*) hdr;
+				this.emit!CellClickedEvent(info.iItem, info.iSubItem, MouseButton.right, MouseButtonLinear.left, info.ptAction.x, info.ptAction.y, !!(info.uKeyFlags & LVKF_ALT), !!(info.uKeyFlags & LVKF_CONTROL), !!(info.uKeyFlags & LVKF_SHIFT), true);
 			break;
 			case LVN_GETDISPINFO:
 				LV_DISPINFO* info = cast(LV_DISPINFO*) hdr;
@@ -10048,6 +10478,7 @@ class TableView : Widget {
 		return 0;
 	}
 
+	// FIXME: this throws off mouse calculations, it should only happen when we're at the top level or something idk
 	override bool encapsulatedChildren() {
 		return true;
 	}
@@ -10120,7 +10551,28 @@ class TableView : Widget {
 			this.backgroundColor = backgroundColor;
 			this.flags |= Flags.textColorSet | Flags.backgroundColorSet;
 		}
+		/++
+			Alignment is only supported on some platforms.
+		+/
+		this(TextAlignment alignment) {
+			this.alignment = alignment;
+			this.flags |= Flags.alignmentSet;
+		}
+		/// ditto
+		this(TextAlignment alignment, Color textColor) {
+			this.alignment = alignment;
+			this.textColor = textColor;
+			this.flags |= Flags.alignmentSet | Flags.textColorSet;
+		}
+		/// ditto
+		this(TextAlignment alignment, Color textColor, Color backgroundColor) {
+			this.alignment = alignment;
+			this.textColor = textColor;
+			this.backgroundColor = backgroundColor;
+			this.flags |= Flags.alignmentSet | Flags.textColorSet | Flags.backgroundColorSet;
+		}
 
+		TextAlignment alignment;
 		Color textColor;
 		Color backgroundColor;
 		int flags; /// bitmask of [Flags]
@@ -10128,6 +10580,7 @@ class TableView : Widget {
 		enum Flags {
 			textColorSet = 1 << 0,
 			backgroundColorSet = 1 << 1,
+			alignmentSet = 1 << 2,
 		}
 	}
 	/++
@@ -10148,9 +10601,15 @@ class TableView : Widget {
 	// void delegate(int row, int column, WidgetPainter painter, int width, int height, in char[] text) drawCell;
 
 	/++
-		When the user clicks on a header, this event is emitted. It has a meber to identify which header (by index) was clicked.
+		When the user clicks on a header, this event is emitted. It has a member to identify which header (by index) was clicked.
 	+/
 	mixin Emits!HeaderClickedEvent;
+
+	/++
+		History:
+			Added March 2, 2025
+	+/
+	mixin Emits!CellClickedEvent;
 }
 
 /++
@@ -10179,6 +10638,54 @@ final class HeaderClickedEvent : Event {
 	override @property int intValue() {
 		return columnIndex;
 	}
+}
+
+/++
+	History:
+		Added March 2, 2025
++/
+final class CellClickedEvent : MouseEventBase {
+	enum EventString = "CellClicked";
+	this(Widget target, int rowIndex, int columnIndex, MouseButton button, MouseButtonLinear mouseButtonLinear, int x, int y, bool altKey, bool ctrlKey, bool shiftKey, bool isDoubleClick) {
+		this.rowIndex = rowIndex;
+		this.columnIndex = columnIndex;
+		this.button = button;
+		this.buttonLinear = mouseButtonLinear;
+		this.isDoubleClick = isDoubleClick;
+		this.clientX = x;
+		this.clientY = y;
+
+		this.altKey = altKey;
+		this.ctrlKey = ctrlKey;
+		this.shiftKey = shiftKey;
+
+		// import std.stdio; std.stdio.writeln(rowIndex, "x", columnIndex, " @ ", x, ",", y, " ", button, " ", isDoubleClick, " ", altKey, " ", ctrlKey, " ", shiftKey);
+
+		// FIXME: x, y, state, altButton etc?
+		super(EventString, target);
+	}
+
+	/++
+		See also: [button] inherited from the base class.
+
+		clientX and clientY are irrespective of scrolling - FIXME is that sane?
+	+/
+	int columnIndex;
+
+	/// ditto
+	int rowIndex;
+
+	/// ditto
+	bool isDoubleClick;
+
+	/+
+	// i could do intValue as a linear index if we know the width
+	// and a stringValue with the string in the cell. but idk if worth.
+	override @property int intValue() {
+		return columnIndex;
+	}
+	+/
+
 }
 
 version(custom_widgets)
@@ -10214,8 +10721,7 @@ private class TableViewWidgetInner : Widget {
 	void updateScrolls() {
 		int w;
 		foreach(idx, column; tvw.columns) {
-			if(column.width == 0) continue;
-			w += tvw.getActualSetSize(idx, false);// + padding;
+			w += column.calculatedWidth;
 		}
 		smw.setTotalArea(w, tvw.itemCount);
 		columnsWidth = w;
@@ -10256,10 +10762,13 @@ private class TableViewWidgetInner : Widget {
 					}
 					if(column.width != 0) // no point drawing an invisible column
 					tvw.getData(row, cast(int) columnNumber, (in char[] info) {
-						auto clip = painter.setClipRectangle(Rectangle(Point(startX - smw.position.x, y), Point(endX - smw.position.x, y + lh)));
+						auto endClip = endX - smw.position.x;
+						if(endClip > this.width - padding)
+							endClip = this.width - padding;
+						auto clip = painter.setClipRectangle(Rectangle(Point(startX - smw.position.x, y), Point(endClip, y + lh)));
 
-						void dotext(WidgetPainter painter) {
-							painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x, y + lh), column.alignment);
+						void dotext(WidgetPainter painter, TextAlignment alignment) {
+							painter.drawText(Point(startX - smw.position.x, y), info, Point(endX - smw.position.x - padding, y + lh), alignment);
 						}
 
 						if(tvw.getCellStyle !is null) {
@@ -10277,9 +10786,12 @@ private class TableViewWidgetInner : Widget {
 							if(style.flags & TableView.CellStyle.Flags.textColorSet)
 								tempPainter.outlineColor = style.textColor;
 
-							dotext(tempPainter);
+							auto alignment = column.alignment;
+							if(style.flags & TableView.CellStyle.Flags.alignmentSet)
+								alignment = style.alignment;
+							dotext(tempPainter, alignment);
 						} else {
-							dotext(painter);
+							dotext(painter, column.alignment);
 						}
 					});
 				}
@@ -10325,6 +10837,10 @@ private class TableViewWidgetInner : Widget {
 				}
 
 			});
+		}
+
+		override int minHeight() {
+			return defaultLineHeight + 4; // same as Button
 		}
 
 		void updateHeaders() {
@@ -10376,7 +10892,54 @@ private class TableViewWidgetInner : Widget {
 		}
 		void paintFrameAndBackground(WidgetPainter painter) { }
 
+		// for mouse event dispatching
+		override protected void addScrollPosition(ref int x, ref int y) {
+			x += scrollOrigin.x;
+			y += scrollOrigin.y;
+		}
+
 		mixin ScrollableChildren;
+	}
+
+	private void emitCellClickedEvent(scope MouseEventBase event, bool isDoubleClick) {
+		int mx = event.clientX + smw.position.x;
+		int my = event.clientY;
+
+		Widget par = this;
+		while(par && !par.encapsulatedChildren) {
+			my -= par.y; // to undo the encapsulatedChildren adjustClientCoordinates effect
+			par = par.parent;
+		}
+		if(par is null)
+			my = event.clientY; // encapsulatedChildren not present?
+
+		int row = my / lh + smw.position.y; // scrolling here is done per-item, not per pixel
+		if(row > tvw.itemCount)
+			row = -1;
+
+		int column = -1;
+		if(row != -1) {
+			int pos;
+			foreach(idx, col; tvw.columns) {
+				pos += col.calculatedWidth;
+				if(mx < pos) {
+					column = cast(int) idx;
+					break;
+				}
+			}
+		}
+
+		// wtf are these casts about?
+		tvw.emit!CellClickedEvent(row, column, cast(MouseButton) event.button, cast(MouseButtonLinear) event.buttonLinear, event.clientX, event.clientY, event.altKey, event.ctrlKey, event.shiftKey, isDoubleClick);
+	}
+
+	override void defaultEventHandler_click(scope ClickEvent ce) {
+		// FIXME: should i filter mouse wheel events? Windows doesn't send them but i can.
+		emitCellClickedEvent(ce, false);
+	}
+
+	override void defaultEventHandler_dblclick(scope DoubleClickEvent ce) {
+		emitCellClickedEvent(ce, true);
 	}
 }
 
@@ -11410,6 +11973,7 @@ class MenuBar : Widget {
 
 	sb.parts[0].content = "Status bar text!";
 */
+// https://learn.microsoft.com/en-us/windows/win32/controls/status-bars#owner-drawn-status-bars
 class StatusBar : Widget {
 	private Part[] partsArray;
 	///
@@ -12106,6 +12670,7 @@ class Menu : Window {
 			}
 			dropDown = new SimpleWindow(
 				150, 4,
+				// FIXME: what if it is a popupMenu ?
 				null, OpenGlOptions.no, Resizability.fixedSize, WindowTypes.dropdownMenu, WindowFlags.dontAutoShow, parent ? parent.parentWindow.win : null);
 
 			this.label = label;
@@ -13924,8 +14489,8 @@ class TextDisplayHelper : Widget {
 		auto cs = getComputedStyle();
 		auto defaultColor = cs.foregroundColor;
 
-		auto old = painter.setClipRectangle(bounds);
-		scope(exit) painter.setClipRectangle(old);
+		auto old = painter.setClipRectangleForWidget(bounds.upperLeft, bounds.width, bounds.height);
+		scope(exit) painter.setClipRectangleForWidget(old.upperLeft, old.width, old.height);
 
 		l.getDrawableText(delegate bool(txt, style, info, carets...) {
 			//writeln("Segment: ", txt);
@@ -13990,6 +14555,17 @@ class TextDisplayHelper : Widget {
 		override OperatingSystemFont font() {
 			return font_;
 		}
+
+		bool foregroundColorOverridden;
+		bool backgroundColorOverridden;
+		Color foregroundColor;
+		Color backgroundColor; // should this be inline segment or the whole paragraph block?
+		bool italic;
+		bool bold;
+		bool underline;
+		bool strikeout;
+		bool subscript;
+		bool superscript;
 	}
 
 	static class MyImageStyle : TextStyle, MeasurableFont {
@@ -15207,7 +15783,7 @@ alias void delegate(Widget handlerAttachedTo, Event event) EventHandler;
 	This is an opaque type you can use to disconnect an event handler when you're no longer interested.
 
 	History:
-		The data members were `public` (albiet undocumented and not intended for use) prior to May 13, 2021. They are now `private`, reflecting the single intended use of this object.
+		The data members were `public` (albeit undocumented and not intended for use) prior to May 13, 2021. They are now `private`, reflecting the single intended use of this object.
 +/
 struct EventListener {
 	private Widget widget;
@@ -15217,7 +15793,8 @@ struct EventListener {
 
 	///
 	void disconnect() {
-		widget.removeEventListener(this);
+		if(widget !is null && handler !is null)
+			widget.removeEventListener(this);
 	}
 }
 
@@ -15569,8 +16146,6 @@ class Event : ReflectableProperties {
 	private bool isBubbling;
 
 	/// This is an internal implementation detail you should not use. It would be private if the language allowed it and it may be removed without notice.
-	protected void adjustScrolling() { }
-	/// ditto
 	protected void adjustClientCoordinates(int deltaX, int deltaY) { }
 
 	/++
@@ -15587,8 +16162,6 @@ class Event : ReflectableProperties {
 
 		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
 			//target.parentWindow.devTools.log("Event ", eventName, " dispatched directly to ", srcElement);
-
-		adjustScrolling();
 
 		if(auto e = target.parentWindow) {
 			if(auto handlers = "*" in e.capturingEventHandlers)
@@ -15628,7 +16201,6 @@ class Event : ReflectableProperties {
 		//debug if(eventName != "mousemove" && target !is null && target.parentWindow && target.parentWindow.devTools)
 			//target.parentWindow.devTools.log("Event ", eventName, " dispatched to ", srcElement);
 
-		adjustScrolling();
 		// first capture, then bubble
 
 		Widget[] chain;
@@ -16151,20 +16723,6 @@ abstract class MouseEventBase : Event {
 	override void adjustClientCoordinates(int deltaX, int deltaY) {
 		clientX += deltaX;
 		clientY += deltaY;
-	}
-
-	override void adjustScrolling() {
-	version(custom_widgets) { // TEMP
-		viewportX = clientX;
-		viewportY = clientY;
-		if(auto se = cast(ScrollableWidget) srcElement) {
-			clientX += se.scrollOrigin.x;
-			clientY += se.scrollOrigin.y;
-		} else if(auto se = cast(ScrollableContainerWidget) srcElement) {
-			//clientX += se.scrollX_;
-			//clientY += se.scrollY_;
-		}
-	}
 	}
 
 	mixin Register;
@@ -17510,6 +18068,33 @@ struct tip { string tip; }
 ///
 /// Group: generating_from_code
 enum context_menu = menu.init;
+/++
+	// FIXME: the options should have both a label and a value
+
+	if label is null, it will try to just stringify value.
+
+	if type is int or size_t and it returns a string array, we can use the index but this will implicitly not allow custom, even if allowCustom is set.
++/
+/// Group: generating_from_code
+Choices!T choices(T)(T[] options, bool allowCustom = false, bool allowReordering = true, bool allowDuplicates = true) {
+	return Choices!T(() => options, allowCustom, allowReordering, allowDuplicates);
+}
+/// ditto
+Choices!T choices(T)(T[] delegate() options, bool allowCustom = false, bool allowReordering = true, bool allowDuplicates = true) {
+	return Choices!T(options, allowCustom, allowReordering, allowDuplicates);
+}
+/// ditto
+struct Choices(T) {
+	///
+	T[] delegate() options;
+	bool allowCustom = false;
+	/// only relevant if attached to an array
+	bool allowReordering = true;
+	/// ditto
+	bool allowDuplicates = true;
+	/// makes no sense on a set
+	bool requireAll = false;
+}
 
 
 /++
@@ -18334,23 +18919,28 @@ void addWhenTriggered(Widget w, void delegate() dg) {
 }
 
 /++
-	Observable varables can be added to widgets and when they are changed, it fires
+	Observable variables can be added to widgets and when they are changed, it fires
 	off a [StateChanged] event so you can react to it.
 
 	It is implemented as a getter and setter property, along with another helper you
-	can use to subscribe whith is `name_changed`. You can also subscribe to the [StateChanged]
+	can use to subscribe with is `name_changed`. You can also subscribe to the [StateChanged]
 	event through the usual means. Just give the name of the variable. See [StateChanged] for an
 	example.
 
+	To get an `ObservableReference` to the observable, use `&yourname_changed`.
+
 	History:
 		Moved from minigui_addons.webview to main minigui on November 27, 2021 (dub v10.4)
+
+		As of March 5, 2025, the changed function now returns an [EventListener] handle, which
+		you can use to disconnect the observer.
 +/
 mixin template Observable(T, string name) {
 	private T backing;
 
 	mixin(q{
-		void } ~ name ~ q{_changed (void delegate(T) dg) {
-			this.addEventListener((StateChanged!this_thing ev) {
+		EventListener } ~ name ~ q{_changed (void delegate(T) dg) {
+			return this.addEventListener((StateChanged!this_thing ev) {
 				dg(ev.newValue);
 			});
 		}
@@ -18369,6 +18959,8 @@ mixin template Observable(T, string name) {
 	mixin("private alias this_thing = " ~ name ~ ";");
 }
 
+/// ditto
+alias ObservableReference(T) = EventListener delegate(void delegate(T));
 
 private bool startsWith(string test, string thing) {
 	if(test.length < thing.length)
