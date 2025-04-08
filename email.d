@@ -747,7 +747,7 @@ class MimePart {
 
 		MimeAttachment att;
 		att.type = type;
-		if(att.type == "application/octet-stream" && filename.length == 0 && name.length > 0 ) {
+		if(filename.length == 0 && name.length > 0 ) {
 			att.filename = name;
 		} else {
 			att.filename = filename;
@@ -1218,11 +1218,17 @@ class IncomingEmailMessage : EmailMessage {
 				break;
 				case "multipart/mixed":
 					if(part.stuff.length) {
-						auto msg = part.stuff[0];
-						foreach(thing; part.stuff[1 .. $]) {
-							attachments ~= thing.toMimeAttachment();
+						MimePart msg;
+						foreach(idx, thing; part.stuff) {
+							if(msg is null && thing.disposition != "attachment" && (thing.type.length == 0 || thing.type.indexOf("multipart/") != -1 || thing.type.indexOf("text/") != -1)) {
+								// the message should be the first suitable item for conversion
+								msg = thing;
+							} else {
+								attachments ~= thing.toMimeAttachment();
+							}
 						}
-						part = msg;
+						if(msg)
+							part = msg;
 						goto deeperInTheMimeTree;
 					}
 
@@ -1653,7 +1659,7 @@ unittest {
 
 	assert(result.subject.equal(mail.subject));
 	assert(mail.to.canFind(result.to));
-	assert(result.from == mail.from.toString);
+	assert(result.from == mail.from.toProtocolString);
 
 	// This roundtrip works modulo trailing newline on the parsed message and LF vs CRLF
 	assert(result.textMessageBody.replace("\n", "\r\n").stripRight().equal(mail.textBody_));
