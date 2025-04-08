@@ -883,6 +883,7 @@ class Widget : ReflectableProperties {
 				EnableWindow(hwnd, yes);
 		}
 		setDynamicState(DynamicState.disabled, yes);
+		redraw();
 	}
 
 	private string disabledReason_;
