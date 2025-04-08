@@ -13019,6 +13019,8 @@ class MouseActivatedWidget : Widget {
 		super.defaultEventHandler_keyup(ev);
 		if(!(dynamicState & DynamicState.depressed))
 			return;
+		if(!enabled)
+			return;
 		setDynamicState(DynamicState.depressed, false);
 		setDynamicState(DynamicState.hover, false);
 		this.redraw();
@@ -13028,7 +13030,7 @@ class MouseActivatedWidget : Widget {
 	}
 	override void defaultEventHandler_click(ClickEvent ev) {
 		super.defaultEventHandler_click(ev);
-		if(ev.button == MouseButton.left) {
+		if(ev.button == MouseButton.left && enabled) {
 			auto event = new Event(EventType.triggered, this);
 			event.sendDirectly();
 		}
@@ -13551,18 +13553,25 @@ class Button : MouseActivatedWidget {
 			auto cs = widget.getComputedStyle(); // FIXME: this is potentially recursive
 
 			auto pressed = DynamicState.depressed | DynamicState.hover;
-			if((widget.dynamicState & pressed) == pressed) {
+			if((widget.dynamicState & pressed) == pressed && widget.enabled) {
 				return WidgetBackground(cs.depressedButtonColor());
-			} else if(widget.dynamicState & DynamicState.hover) {
+			} else if(widget.dynamicState & DynamicState.hover && widget.enabled) {
 				return WidgetBackground(cs.hoveringColor());
 			} else {
 				return WidgetBackground(cs.buttonColor());
 			}
 		}
 
+		override Color foregroundColor() {
+			auto clr = super.foregroundColor();
+			if(widget.enabled) return clr;
+
+			return Color(clr.r, clr.g, clr.b, clr.a / 2);
+		}
+
 		override FrameStyle borderStyle() {
 			auto pressed = DynamicState.depressed | DynamicState.hover;
-			if((widget.dynamicState & pressed) == pressed) {
+			if((widget.dynamicState & pressed) == pressed && widget.enabled) {
 				return FrameStyle.sunk;
 			} else {
 				return FrameStyle.risen;
@@ -13587,6 +13596,7 @@ class Button : MouseActivatedWidget {
 			Point pos = bounds.upperLeft;
 			if(this.height == 16)
 				pos.y -= 2; // total hack omg
+
 			painter.drawText(pos, label, bounds.lowerRight, alignment | TextAlignment.VerticalCenter);
 		}
 		return bounds;
