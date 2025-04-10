@@ -678,7 +678,6 @@ version(Windows) {
 			// OpenD always supports it
 			version=UseManifestMinigui;
 		} else {
-			static if(__VERSION__ >= 2_083)
 			version(CRuntime_Microsoft) // FIXME: mingw?
 				version=UseManifestMinigui;
 		}
@@ -2968,7 +2967,6 @@ private class CustomComboBoxPopup : Window {
 			if(visible) {
 				this.redraw();
 				captureMouse(this);
-				//dropDown.grabInput();
 
 				if(previouslyFocusedWidget is null)
 					previouslyFocusedWidget = associatedWidget.parentWindow.focusedWidget;
@@ -4979,12 +4977,44 @@ class TipPopupButton : Button {
 		this.factory = factory;
 		super("?", parent);
 	}
+	/// ditto
+	this(string tip, Widget parent) {
+		this((parent) {
+			auto td = new TextDisplayTooltip(tip, parent);
+			return td;
+		}, parent);
+	}
 
 	private Widget delegate(Widget p) factory;
 
 	override void defaultEventHandler_triggered(scope Event e) {
 		auto window = new TooltipWindow(factory, this);
 		window.popup(this);
+	}
+
+	private static class TextDisplayTooltip : TextDisplay {
+		this(string txt, Widget parent) {
+			super(txt, parent);
+		}
+
+		// override int minHeight() { return defaultLineHeight; }
+		// override int flexBasisHeight() { return defaultLineHeight; }
+
+		static class Style : TextDisplay.Style {
+			override WidgetBackground background() {
+				return WidgetBackground(Color.yellow);
+			}
+
+			override FrameStyle borderStyle() {
+				return FrameStyle.solid;
+			}
+
+			override Color borderColor() {
+				return Color.black;
+			}
+		}
+
+		mixin OverrideStyle!Style;
 	}
 }
 
@@ -4993,36 +5023,24 @@ class TipPopupButton : Button {
 		Added March 23, 2025
 +/
 class TooltipWindow : Window {
+
+	private Widget previouslyFocusedWidget;
+	private Widget* previouslyFocusedWidgetBelongsIn;
+
 	void popup(Widget parent, int offsetX = 0, int offsetY = int.min) {
-		/+
-		this.menuParent = parent;
-
-		previouslyFocusedWidget = parent.parentWindow.focusedWidget;
-		previouslyFocusedWidgetBelongsIn = &parent.parentWindow.focusedWidget;
-		parent.parentWindow.focusedWidget = this;
-
-		int w = 150;
-		int h = paddingTop + paddingBottom;
-		if(this.children.length) {
-			// hacking it to get the ideal height out of recomputeChildLayout
-			this.width = w;
-			this.height = h;
-			this.recomputeChildLayoutEntry();
-			h = this.children[$-1].y + this.children[$-1].height + this.children[$-1].marginBottom;
-			h += paddingBottom;
-
-			h -= 2; // total hack, i just like the way it looks a bit tighter even though technically MenuItem reserves some space to center in normal circumstances
-		}
-		+/
-
 		if(offsetY == int.min)
-			offsetY = parent.defaultLineHeight;
+			offsetY = 0;
 
-		int w = 150;
-		int h = 50;
+		int w = child.flexBasisWidth();
+		int h = child.flexBasisHeight() + this.paddingTop + this.paddingBottom + /* horiz scroll bar - FIXME */ 16 + 2 /* for border */;
 
 		auto coord = parent.globalCoordinates();
 		dropDown.moveResize(coord.x + offsetX, coord.y + offsetY, w, h);
+
+		this.width = w;
+		this.height = h;
+
+		this.recomputeChildLayout();
 
 		static if(UsingSimpledisplayX11)
 			XSync(XDisplayConnection.get, 0);
@@ -5030,19 +5048,29 @@ class TooltipWindow : Window {
 		dropDown.visibilityChanged = (bool visible) {
 			if(visible) {
 				this.redraw();
-				dropDown.grabInput();
+				//dropDown.grabInput();
+				captureMouse(this);
+
+				if(previouslyFocusedWidget is null)
+					previouslyFocusedWidget = parent.parentWindow.focusedWidget;
+				parent.parentWindow.focusedWidget = this;
 			} else {
-				dropDown.releaseInputGrab();
+				releaseMouseCapture();
+				//dropDown.releaseInputGrab();
+
+				parent.parentWindow.focusedWidget = previouslyFocusedWidget;
+
+				static if(UsingSimpledisplayX11)
+					flushGui();
 			}
 		};
 
 		dropDown.show();
 
 		clickListener = this.addEventListener((scope ClickEvent ev) {
-			unpopup();
-			// need to unlock asap just in case other user handlers block...
-			static if(UsingSimpledisplayX11)
-				flushGui();
+			if(ev.target is this) {
+				unpopup();
+			}
 		}, true /* again for asap action */);
 	}
 
@@ -5052,6 +5080,11 @@ class TooltipWindow : Window {
 		mouseLastOver = mouseLastDownOn = null;
 		dropDown.hide();
 		clickListener.disconnect();
+	}
+
+	override void defaultEventHandler_char(CharEvent ce) {
+		if(ce.character == '\033')
+			unpopup();
 	}
 
 	private SimpleWindow dropDown;
@@ -7965,9 +7998,6 @@ class TabMessageWidget : Widget {
 		} else static assert(0);
 	}
 
-	version(custom_widgets)
-		string[] tabs;
-
 	this(Widget parent) {
 		super(parent);
 
@@ -8033,6 +8063,8 @@ class TabMessageWidget : Widget {
 		private int currentTab_;
 		private int tabBarHeight() { return defaultLineHeight; }
 		int tabWidth() { return scaleWithDpi(80); }
+
+		string[] tabs;
 	}
 
 	version(win32_widgets)
@@ -8305,9 +8337,8 @@ class PageWidget : Widget {
 
 +/
 class TabWidgetPage : Widget {
-	string title;
 	this(string title, Widget parent) {
-		this.title = title;
+		this.title_ = title;
 		this.tabStop = false;
 		super(parent);
 
@@ -8316,6 +8347,29 @@ class TabWidgetPage : Widget {
 			createWin32Window(this, Win32Class!"arsd_minigui_TabWidgetPage"w, "", 0);
 		}
 		//*/
+	}
+
+	private string title_;
+
+	/++
+		History:
+			Prior to April 6, 2025, it was a public field. It was changed to properties so it can queue redraws;
+	+/
+	string title() {
+		return title_;
+	}
+
+	/// ditto
+	void title(string t) {
+		title_ = t;
+		version(custom_widgets) {
+			if(auto tw = cast(TabWidget) parent) {
+				foreach(idx, child; tw.children)
+					if(child is this)
+						tw.tabs[idx] = t;
+				tw.redraw();
+			}
+		}
 	}
 
 	override int minHeight() {
@@ -15206,7 +15260,7 @@ class TextDisplay : EditableTextWidget {
 		}
 	}
 
-	class Style : Widget.Style {
+	static class Style : Widget.Style {
 		// just want the generic look for these
 	}
 
@@ -18898,7 +18952,7 @@ final class DefaultVisualTheme : VisualTheme!DefaultVisualTheme {
 }
 
 /++
-	Event fired when an [Observeable] variable changes. You will want to add an event listener referencing
+	Event fired when an [Observable] variable changes. You will want to add an event listener referencing
 	the field like `widget.addEventListener((scope StateChanged!(Whatever.field) ev) { });`
 
 	History:
