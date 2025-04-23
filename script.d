@@ -2968,7 +2968,7 @@ Expression parseAddend(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 				case "<":
 				case ">":
 					tokens.popFront();
-					e1 = new BinaryExpression(peek.str, e1, parseAddend(tokens));
+					e1 = new BinaryExpression(peek.str, e1, parseFactor(tokens));
 					break;
 				case "+=":
 				case "-=":
@@ -3615,7 +3615,6 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 
 // FIXME someday this should work, my parser is so bad
 // until then put parens around your == stuff.
-version(none)
 unittest {
 	interpret(q{
 		var a = 5;
@@ -3629,6 +3628,13 @@ unittest {
 		var a = 5;
 		var b = false;
 		assert(((a == 5) || b));
+	});
+}
+
+unittest {
+	interpret(q{
+		var a = 10 - 5 - 5;
+		assert(a == 0);
 	});
 }
 
