@@ -94,6 +94,7 @@ enum /*JPEG_MARKER*/ {
   M_RST0  = 0xD0, M_RST1  = 0xD1, M_RST2  = 0xD2, M_RST3  = 0xD3, M_RST4  = 0xD4, M_RST5  = 0xD5, M_RST6  = 0xD6, M_RST7  = 0xD7,
   M_SOI   = 0xD8, M_EOI   = 0xD9, M_SOS   = 0xDA, M_DQT   = 0xDB, M_DNL   = 0xDC, M_DRI   = 0xDD, M_DHP   = 0xDE, M_EXP   = 0xDF,
   M_APP0  = 0xE0, M_APP15 = 0xEF, M_JPG0  = 0xF0, M_JPG13 = 0xFD, M_COM   = 0xFE, M_TEM   = 0x01, M_ERROR = 0x100, RST0   = 0xD0,
+  M_APP1  = 0xE1,
 }
 
 alias JPEG_SUBSAMPLING = int;
@@ -1222,6 +1223,198 @@ private:
     }
   }
 
+  private void exif_enforce(bool what) {
+	if(!what)
+		throw new Exception("jpeg exif data format error");
+  }
+
+  void read_exif_marker() {
+    uint num_left;
+
+    num_left = get_bits(16);
+
+    if (num_left < 2)
+      stop_decoding(JPGD_BAD_VARIABLE_MARKER);
+
+    num_left -= 2;
+
+    ubyte[] data;
+    data.length = num_left;
+    int offset;
+
+    while (num_left)
+    {
+      data[offset++] = cast(ubyte) get_bits(8);
+      num_left--;
+    }
+
+    if(data.length > 4 && data[0 .. 4] == "Exif") {
+	data = data[4 .. $];
+	while(data.length && data[0] == 0)
+		data = data[1 .. $];
+	if(data.length < 8)
+		return; // abandon the parse, no tiff header
+
+	int offsetAdjustment = 0;
+
+	bool bigEndian = data[0] == 'M';
+	// should be MM or II
+	exif_enforce(data[0] == data[1]);
+	if(!bigEndian)
+		exif_enforce(data[0] == 'I');
+	data = data[2 .. $];
+	offsetAdjustment += 2;
+
+	uint read4() {
+		exif_enforce(data.length >= 4);
+
+		uint ret;
+		if(bigEndian) {
+			ret |= data[0] << 24;
+			ret |= data[1] << 16;
+			ret |= data[2] <<  8;
+			ret |= data[3] <<  0;
+		} else {
+			ret |= data[3] << 24;
+			ret |= data[2] << 16;
+			ret |= data[1] <<  8;
+			ret |= data[0] <<  0;
+		}
+
+		data = data[4 .. $];
+		offsetAdjustment += 4;
+		return ret;
+	}
+
+	ushort read2() {
+		exif_enforce(data.length >= 2);
+
+		ushort ret;
+		if(bigEndian) {
+			ret |= data[0] << 8;
+			ret |= data[1] << 0;
+		} else {
+			ret |= data[1] << 8;
+			ret |= data[0] << 0;
+		}
+
+		data = data[2 .. $];
+		offsetAdjustment += 2;
+		return ret;
+	}
+
+	ubyte read1() {
+		exif_enforce(data.length >= 1);
+		ubyte ret = data[0];
+		data = data[1 .. $];
+		offsetAdjustment += 1;
+		return ret;
+	}
+
+	void jumpOffset(uint offset) {
+		exif_enforce(offsetAdjustment <= offset);
+		offset -= offsetAdjustment;
+		data = data[offset .. $];
+		offsetAdjustment += offset;
+	}
+
+	exif_enforce(read2() == 42);
+
+	while(data.length) {
+		auto nextIfdOffset = read4();
+		if(nextIfdOffset == 0)
+			return;
+		jumpOffset(nextIfdOffset);
+
+		// reading an ifd now
+		auto numberOfIfdEntries = read2();
+		foreach(item; 0 .. numberOfIfdEntries) {
+			auto tagId = read2();
+			auto fieldType = read2();
+			auto countOfType = read4();
+			auto valueOrOffset = read4();
+
+			// https://exiftool.org/TagNames/EXIF.html
+
+			// FIXME we could read a LOT more of this, but for now all i care about is orientation lol
+			if(tagId == 0x0112 && fieldType == 3 && countOfType == 1) {
+				/+
+					valueOrOffset can be:
+
+					1 = Horizontal (normal)
+					2 = Mirror horizontal
+					3 = Rotate 180
+					4 = Mirror vertical
+					5 = Mirror horizontal and rotate 270 CW
+					6 = Rotate 90 CW
+					7 = Mirror horizontal and rotate 90 CW
+					8 = Rotate 270 CW
+				+/
+
+				// it stores the data inline but packed into the first bytes
+				// so since this is a 16 bit thing packed to the left, we want to move it
+				// down to right slot based on endinanness. woof but meh.
+				if(bigEndian) {
+					this.orientation = valueOrOffset >> 16;
+				} else {
+					this.orientation = valueOrOffset;
+				}
+			}
+
+			// import std.stdio; writefln("%04x %d %d %d", tagId, fieldType, countOfType, valueOrOffset);
+		}
+	}
+    }
+
+    // format: Exif\0\0<tiff file bytes here>
+    // are those two zero bytes just padding?
+    /+
+	tiff file:
+
+	II or MM for byte order
+	then 16 bit number 42 (0x2a 0x00)
+	32 bit number containing byte offset of first IFD (should prolly be 8, saying it starts right after the header)
+
+	IFD:
+		16 bit number of fields
+		12-byte entries
+		4 byte offset of next ifd (0 if none)
+
+	IFD entry:
+		16 bit tag id
+		16 bit field type
+			1 = byte
+			2 = ascii stringz
+			3 = 16 bit ushort
+			4 = 32 bit ulong
+			5 = rational; numerator then denominator
+
+			and others, see https://web.archive.org/web/20210108174645/https://www.adobe.io/content/dam/udp/en/open/standards/tiff/TIFF6.pdf
+		32 bit number of values (count of the type)
+		32 bit value or offset (must be even number, can point anywhere in file, but if the type is 4 bytes or less it is just packed in here, left-aligned)
+    +/
+  }
+
+    /++
+	The exif orientation value from the file, if present (0 if it was not present).
+
+	You do not have to look at this if you leave [autoRotateBasedOnExifOrientation] as the default `true` value.
+
+	History:
+		Added May 6, 2025
+    +/
+    public int orientation = 0;
+
+    /++
+	If true (the default), the image will have the orientation automatically applied to the pixels before returning.
+
+	Otherwise, you must see [orientation] to know the intended look.
+
+	History:
+		Added May 7, 2025
+    +/
+    public bool autoRotateBasedOnExifOrientation = true;
+
   // Used to skip unrecognized markers.
   void skip_variable_marker () {
     uint num_left;
@@ -1370,6 +1563,10 @@ private:
         case M_DRI:
           read_dri_marker();
           break;
+	case M_APP1: /* likely EXIF data */
+          read_exif_marker();
+
+	break;
         //case M_APP0:  /* no need to read the JFIF marker */
 
         case M_RST0:    /* no parameters */
@@ -3276,6 +3473,7 @@ public LastJpegError lastJpegError;
 
 static if (JpegHasArsd) {
 import arsd.color;
+static import arsd.core;
 
 // ////////////////////////////////////////////////////////////////////////// //
 /// decompress JPEG image, what else?
@@ -3363,6 +3561,117 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
         }
       }
     }
+  }
+
+  static void rotate180(TrueColorImage img) {
+	size_t cursor = img.imageData.colors.length - 1;
+
+	foreach(i, px; img.imageData.colors) {
+		img.imageData.colors[i] = img.imageData.colors[cursor];
+		img.imageData.colors[cursor] = px;
+
+		cursor -= 1;
+		if(i == cursor)
+			break;
+	}
+  }
+
+  static void mirrorHorizontally(TrueColorImage img) {
+  	if(img.width < 2)
+		return;
+  	foreach(row; 0 .. img.height) {
+		auto off1 = row * img.width;
+		auto off2 = off1 + img.width - 1;
+
+		while(off1 < off2) {
+			auto px = img.imageData.colors[off1];
+			img.imageData.colors[off1] = img.imageData.colors[off2];
+			img.imageData.colors[off2] = px;
+
+			off1++;
+			off2--;
+		}
+	}
+  }
+
+  static void mirrorVertically(TrueColorImage img) {
+  	if(img.height < 2)
+		return;
+  	foreach(column; 0 .. img.width) {
+		auto off1 = column;
+		auto off2 = img.imageData.colors.length - img.width + off1;
+
+		while(off1 < off2) {
+			auto px = img.imageData.colors[off1];
+			img.imageData.colors[off1] = img.imageData.colors[off2];
+			img.imageData.colors[off2] = px;
+
+			off1 += img.width;
+			off2 -= img.width;
+		}
+	}
+  }
+
+
+  static TrueColorImage rotate90(const TrueColorImage img) {
+	auto rotatedImage = new TrueColorImage(img.height, img.width); // swapped due to rotation
+	const area = img.imageData.colors.length;
+	const rowLength = img.height;
+	ptrdiff_t cursor = -1;
+
+	foreach(px; img.imageData.colors) {
+		cursor += rowLength;
+		if(cursor > area) {
+			cursor -= (area + 1);
+		}
+
+		rotatedImage.imageData.colors[cursor] = px;
+	}
+
+	return rotatedImage;
+  }
+
+  if(decoder.autoRotateBasedOnExifOrientation && img.imageData.colors.length)
+  switch(decoder.orientation) {
+  	case 0:
+  	case 1:
+		// no work required
+	break;
+	case 2:
+		// mirror horizontal
+		mirrorHorizontally(img);
+	break;
+	case 3:
+		// rotate 180
+		rotate180(img);
+	break;
+	case 4:
+		// mirror vertical
+		mirrorVertically(img);
+	break;
+	case 5:
+		// mirror horizontal and rotate 270 CW
+		mirrorHorizontally(img);
+		rotate180(img);
+		img = rotate90(img);
+	break;
+	case 6:
+		// rotate 90 CW
+		img = rotate90(img);
+	break;
+	case 7:
+		// mirror horizontal and rotate 90 CW
+		mirrorHorizontally(img);
+		img = rotate90(img);
+	break;
+	case 8:
+		// rotate 270 CW aka 90 CCW
+		rotate180(img);
+		img = rotate90(img);
+	break;
+
+	default:
+		// unknown, just leave it alone
   }
 
   return img;
