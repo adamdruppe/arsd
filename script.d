@@ -2714,7 +2714,11 @@ Expression parsePart(MyTokenStreamHere)(ref MyTokenStreamHere tokens) {
 						auto parenthetical = new ParentheticalExpression(parseExpression(tokens));
 						tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 
-						return parenthetical;
+						if(tokens.peekNextToken(ScriptToken.Type.symbol, "(")) {
+							// we have a function call, e.g. (test)()
+							return parseFunctionCall(tokens, parenthetical);
+						} else
+							return parenthetical;
 					case "[":
 						// array literal
 						auto arr = new ArrayLiteralExpression();
@@ -2883,6 +2887,9 @@ Expression parseFunctionCall(MyTokenStreamHere)(ref MyTokenStreamHere tokens, Ex
 	assert(!tokens.empty);
 	auto peek = tokens.front;
 	auto exp = new CallExpression(ScriptLocation(peek.scriptFilename, peek.lineNumber), e);
+
+	assert(peek.str == "(");
+
 	tokens.popFront();
 	if(tokens.empty)
 		throw new ScriptCompileException("unexpected end of file when parsing call expression", peek.scriptFilename, peek.lineNumber);
@@ -3030,17 +3037,18 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 
 			auto e = new OpAssignExpression("~", new VariableExpression(i), literal);
 			ret = e;
-		} else if(tokens.peekNextToken(ScriptToken.Type.symbol, "(")) {
+		}/+ else if(tokens.peekNextToken(ScriptToken.Type.symbol, "(")) {
 			auto start = tokens.front;
 			tokens.popFront();
 			auto parenthetical = new ParentheticalExpression(parseExpression(tokens));
+
 			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 			if(tokens.peekNextToken(ScriptToken.Type.symbol, "(")) {
 				// we have a function call, e.g. (test)()
 				ret = parseFunctionCall(tokens, parenthetical);
 			} else
 				ret = parenthetical;
-		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "new")) {
+		}+/ else if(tokens.peekNextToken(ScriptToken.Type.keyword, "new")) {
 			auto start = tokens.front;
 			tokens.popFront();
 
@@ -3193,7 +3201,9 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "if")) {
 			tokens.popFront();
 			auto e = new IfExpression();
+			tokens.requireNextToken(ScriptToken.Type.symbol, "(");
 			e.condition = parseExpression(tokens);
+			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
 			e.ifTrue = parseExpression(tokens);
 			if(tokens.peekNextToken(ScriptToken.Type.symbol, ";")) {
 				tokens.popFront();
@@ -3301,8 +3311,13 @@ Expression parseExpression(MyTokenStreamHere)(ref MyTokenStreamHere tokens, bool
 		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "while")) {
 			tokens.popFront();
 			auto e = new ForExpression();
+
+			tokens.requireNextToken(ScriptToken.Type.symbol, "(");
 			e.condition = parseExpression(tokens);
+			tokens.requireNextToken(ScriptToken.Type.symbol, ")");
+
 			e.loopBody = parseExpression(tokens);
+
 			ret = e;
 			expectedEnd = "";
 		} else if(tokens.peekNextToken(ScriptToken.Type.keyword, "break") || tokens.peekNextToken(ScriptToken.Type.keyword, "continue")) {
@@ -3613,8 +3628,6 @@ Expression parseStatement(MyTokenStreamHere)(ref MyTokenStreamHere tokens, strin
 	assert(0);
 }
 
-// FIXME someday this should work, my parser is so bad
-// until then put parens around your == stuff.
 unittest {
 	interpret(q{
 		var a = 5;
@@ -3622,7 +3635,6 @@ unittest {
 		assert(a == 5 || b);
 	});
 }
-version(none)
 unittest {
 	interpret(q{
 		var a = 5;
@@ -3635,6 +3647,15 @@ unittest {
 	interpret(q{
 		var a = 10 - 5 - 5;
 		assert(a == 0);
+	});
+}
+
+unittest {
+	interpret(q{
+		var a = 5;
+		while(a > 0) { a-=1; }
+
+		if(a) { a } else { a }
 	});
 }
 
