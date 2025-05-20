@@ -156,7 +156,7 @@ class DiscordUser : DiscordMentionable {
 		// PUT /guilds/{guild.id}/members/{user.id}/roles/{role.id}
 
 		auto thing = api.rest.guilds[role.guild.id].members[this.id].roles[role.id];
-		writeln(thing.toUri);
+		//writeln(thing.toUri);
 
 		auto result = api.rest.guilds[role.guild.id].members[this.id].roles[role.id].PUT().result;
 	}
@@ -165,7 +165,7 @@ class DiscordUser : DiscordMentionable {
 		// DELETE /guilds/{guild.id}/members/{user.id}/roles/{role.id}
 
 		auto thing = api.rest.guilds[role.guild.id].members[this.id].roles[role.id];
-		writeln(thing.toUri);
+		//writeln(thing.toUri);
 
 		auto result = api.rest.guilds[role.guild.id].members[this.id].roles[role.id].DELETE().result;
 	}
@@ -296,10 +296,10 @@ class SlashCommandHandler {
 				var result = api.rest.
 					interactions[commandArgs.interactionId][commandArgs.interactionToken].callback
 					.POST(reply).result;
-				writeln(result.toString);
+				// writeln(result.toString);
 			} catch(Exception e) {
-				import std.stdio; writeln(commandArgs);
-				writeln(e.toString());
+				// import std.stdio; writeln(commandArgs);
+				logSwallowedException(e);
 			}
 		}
 	}
@@ -497,8 +497,7 @@ ync def something(interaction:discord.Interaction):
 		}
 
 		static void sendHandlerReply(T)(T ret, scope InteractionReplyHelper replyHelper, bool ephemeral) {
-			import std.conv; // FIXME
-			replyHelper.reply(to!string(ret), ephemeral);
+			replyHelper.reply(toStringInternal(ret), ephemeral);
 		}
 
 		void registerAll(T)(T t) {
@@ -665,7 +664,8 @@ class DiscordGatewayConnection {
 
 	+/
 	protected void handleWebsocketClose(WebSocket.CloseEvent closeEvent) {
-		import std.stdio; writeln(closeEvent);
+		logger.info(i"$(closeEvent.toString())");
+
 		if(heartbeatTimer)
 			heartbeatTimer.cancel();
 
@@ -730,12 +730,13 @@ class DiscordGatewayConnection {
 				mostRecentHeartbeatAckRecivedAt = MonoTime.currTime;
 			break;
 			case OpCode.Reconnect:
-				writeln("reconnecting");
+				logger.info(i"Reconnecting discord websocket");
+
 				this.close(4999, "Reconnect requested");
 				reconnectAndResume();
 			break;
 			case OpCode.InvalidSession:
-				writeln("starting new session");
+				logger.info(i"Starting new discord session");
 
 				close();
 				connect(); // try starting a brand new session
@@ -746,12 +747,7 @@ class DiscordGatewayConnection {
 	}
 
 	protected void reconnectAndResume() {
-		this.websocket_ = new WebSocket(Uri(this.resume_gateway_url));
-
-		websocket.onmessage = &handleWebsocketMessage;
-		websocket.onclose = &handleWebsocketClose;
-
-		websocketConnectInLoop();
+		websocketConnectInLoop(Uri(this.resume_gateway_url));
 
 		var resumeData = var.emptyObject;
 		resumeData.token = this.token;
@@ -861,7 +857,7 @@ class DiscordGatewayConnection {
 	private MonoTime mostRecentHeartbeatAckRecivedAt;
 
 	protected void sendHeartbeat() {
-	arsd.core.writeln("sendHeartbeat");
+		logger.info(i"heartbeat");
 		sendWebsocketCommand(OpCode.Heartbeat, var(lastSequenceNumberReceived));
 	}
 
@@ -894,8 +890,8 @@ class DiscordGatewayConnection {
 		// so we'll do that one-off (but with a non-zero time
 		// since my timers don't like being run twice in one loop
 		// iteration) then that first one will set the repeating time
-		import std.random;
-		auto firstBeat = std.random.uniform(10, msecs);
+		import arsd.random;
+		auto firstBeat = arsd.random.uniform(10, msecs);
 		heartbeatTimer.changeTime(firstBeat, false);
 	}
 
@@ -922,12 +918,7 @@ class DiscordGatewayConnection {
 			cachedGatewayUrl = obj.url.get!string;
 		}
 
-		this.websocket_ = new WebSocket(Uri(cachedGatewayUrl));
-
-		websocket.onmessage = &handleWebsocketMessage;
-		websocket.onclose = &handleWebsocketClose;
-
-		websocketConnectInLoop();
+		websocketConnectInLoop(Uri(cachedGatewayUrl));
 
 		var d = var.emptyObject;
 		d.token = token;
@@ -941,7 +932,11 @@ class DiscordGatewayConnection {
 		sendWebsocketCommand(OpCode.Identify, d);
 	}
 
-	void websocketConnectInLoop() {
+	/+
+		SocketOSException needs full reconnect
+	+/
+
+	void websocketConnectInLoop(Uri uri) {
 		// FIXME: if the connect fails we should set a timer and try
 		// again, but if it fails then, quit. at least if it is not a websocket reply
 		// cuz it could be discord went down or something.
@@ -952,9 +947,21 @@ class DiscordGatewayConnection {
 
 		try_again:
 
+		this.websocket_ = new WebSocket(uri);
+		websocket.onmessage = &handleWebsocketMessage;
+		websocket.onclose = &handleWebsocketClose;
+
 		try {
 			this.websocket_.connect();
 		} catch(Exception e) {
+			// it disconnects after 30 days rn w/
+			// std.socket.SocketOSException@std/socket.d(2897): Unable to connect socket: Transport endpoint is already connected
+			// and idk the root cause, it has invalid session at first
+
+			.destroy(this.websocket_);
+
+			logSwallowedException(e);
+
 			import core.thread;
 			Thread.sleep(d);
 			d *= 2;
