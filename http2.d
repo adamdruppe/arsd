@@ -4074,6 +4074,7 @@ version(use_openssl) {
 			OpenSSL.SSL_free(ssl);
 			OpenSSL.SSL_CTX_free(ctx);
 			ssl = null;
+			ctx = null;
 		}
 
 		~this() {
@@ -5423,6 +5424,10 @@ class WebSocket {
 			clientRequiredExtensionMissing = 1010, // only the client should send this
 			unnexpectedCondition = 1011,
 			unverifiedCertificate = 1015, // not set by client
+		}
+
+		string toString() {
+			return cast(string) (arsd.core.toStringInternal(code) ~ ": " ~ reason);
 		}
 	}
 
