@@ -29,13 +29,13 @@ struct TtfFont {
 
 	///
 	void load(in ubyte[] data) {
-   		if(stbtt_InitFont(&font, data.ptr, stbtt_GetFontOffsetForIndex(data.ptr, 0)) == 0)
+		if(stbtt_InitFont(&font, data.ptr, stbtt_GetFontOffsetForIndex(data.ptr, 0)) == 0)
 			throw new Exception("load font problem");
 	}
 
 	/// Note that you must stbtt_FreeBitmap(returnValue.ptr, null); this thing or it will leak!!!!
 	ubyte[] renderCharacter(dchar c, int size, out int width, out int height, float shift_x = 0.0, float shift_y = 0.0) {
-   		auto ptr = stbtt_GetCodepointBitmapSubpixel(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size),
+ 		auto ptr = stbtt_GetCodepointBitmapSubpixel(&font, 0.0,stbtt_ScaleForPixelHeight(&font, size),
 			shift_x, shift_y, c, &width, &height, null,null);
 		return ptr[0 .. width * height];
 	}
@@ -68,7 +68,7 @@ struct TtfFont {
 				xpos += scale*stbtt_GetCodepointKernAdvance(&font, ch,s[i+1]);
 		}
 
-   		width = maxWidth;
+		width = maxWidth;
 		height = size;
 	}
 
@@ -129,7 +129,7 @@ struct TtfFont {
 				xpos += scale*stbtt_GetCodepointKernAdvance(&font, ch,s[i+1]);
 		}
 
-   		width = swidth;
+		width = swidth;
 		height = sheight;
 
 		return screen;
@@ -448,8 +448,9 @@ abstract class OpenGlLimitedFontBase() {
 		Added April 24, 2020
 +/
 final class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old) : OpenGlLimitedFontBase!() {
-	import arsd.color;
 	import arsd.simpledisplay;
+	static if(OpenGlEnabled):
+		import arsd.color;
 
 	public this(const ubyte[] ttfData, float fontPixelHeight, dchar firstChar = 32, dchar lastChar = 127) {
 		super(ttfData, fontPixelHeight, firstChar, lastChar);
@@ -559,11 +560,11 @@ final class OpenGlLimitedFont(OpenGlFontGLVersion ver = OpenGlFontGLVersion.old)
 				idx + 3,
 			];
 		} else {
-			glBegin(GL_QUADS); 
+			glBegin(GL_QUADS);
 				glTexCoord2f(s0, t0); 		glVertex2f(x0, y0);
-				glTexCoord2f(s1, t0); 		glVertex2f(x1, y0); 
-				glTexCoord2f(s1, t1); 		glVertex2f(x1, y1); 
-				glTexCoord2f(s0, t1); 		glVertex2f(x0, y1); 
+				glTexCoord2f(s1, t0); 		glVertex2f(x1, y0);
+				glTexCoord2f(s1, t1); 		glVertex2f(x1, y1);
+				glTexCoord2f(s0, t1); 		glVertex2f(x0, y1);
 			glEnd();
 		}
 	}
@@ -599,7 +600,7 @@ import std.file;
 
    for (int j=0; j < h; ++j) {
       for (int i=0; i < w; ++i)
-      	img.putPixel(i, j, Color(0, (bitmap[j*w+i] > 128) ? 255 : 0, 0));
+         img.putPixel(i, j, Color(0, (bitmap[j*w+i] > 128) ? 255 : 0, 0));
    }
    img.displayImage();
    return 0;
