@@ -749,7 +749,7 @@ PNG* readPng(in ubyte[] data) {
 
 	size_t pos = 8;
 
-	while(pos < data.length) {
+	while(pos < data.length && data.length - pos >= 12) {
 		Chunk n;
 		n.size |= data[pos++] << 24;
 		n.size |= data[pos++] << 16;
@@ -771,6 +771,9 @@ PNG* readPng(in ubyte[] data) {
 		n.checksum |= data[pos++] << 0;
 
 		p.chunks ~= n;
+
+		if(n.type == "IEND")
+			break;
 	}
 
 	return p;
