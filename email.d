@@ -745,15 +745,32 @@ class MimePart {
 		if(type == "multipart/mixed" && stuff.length == 1)
 			return stuff[0].toMimeAttachment;
 
+		// just attach the preferred thing. i think this is never triggered since this is most likely handled by the text/html body scanner
+		if(type == "multipart/alternative" && stuff.length >= 1)
+			return stuff[0].toMimeAttachment;
+
 		MimeAttachment att;
 		att.type = type;
+		att.id = id;
 		if(filename.length == 0 && name.length > 0 ) {
 			att.filename = name;
 		} else {
 			att.filename = filename;
 		}
-		att.id = id;
-		att.content = content;
+
+		if(type == "multipart/related" && stuff.length >= 1) {
+			// super hack for embedded html for a special user; it is basically a mhtml attachment so we report the filename of the html part for the whole thing
+			// really, the code should understand the type itself but this is still better than nothing
+			if(att.filename.length == 0)
+				att.filename = stuff[0].filename;
+			if(att.filename.length == 0)
+				att.filename = stuff[0].name;
+			att.filename = att.filename.replace(".html", ".mhtml");
+			att.content = []; // FIXME: recreate the concat thing and put some headers on it to make a valid .mhtml file out of it
+		} else {
+			att.content = content;
+		}
+
 		return att;
 	}
 
@@ -1665,6 +1682,8 @@ unittest {
 	assert(result.textMessageBody.replace("\n", "\r\n").stripRight().equal(mail.textBody_));
 	assert(result.attachments.equal(mail.attachments));
 }
+
+// FIXME: add unittest with a pdf in first multipart/mixed position
 
 private bool hasAllPrintableAscii(in char[] s) {
 	foreach(ch; s) {
