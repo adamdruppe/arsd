@@ -3132,7 +3132,7 @@ struct Uri {
 
 	string scheme; /// e.g. "http" in "http://example.com/"
 	string userinfo; /// the username (and possibly a password) in the uri
-	string host; /// the domain name
+	string host; /// the domain name. note it may be an ip address or have percent encoding too.
 	int port; /// port number, if given. Will be zero if a port was not explicitly given
 	string path; /// e.g. "/folder/file.html" in "http://example.com/folder/file.html"
 	string query; /// the stuff after the ? in a uri
