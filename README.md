@@ -26,7 +26,10 @@ Please note that I DO consider changes to build process to be a breaking change,
 
 Future release, likely May 2026 or later.
 
-Nothing is planned for it at this time.
+Planned changes:
+
+    * Make arsd.http2 use arsd.core event loop by default (currently you still opt in with -version=use_arsd_core)
+    * Make arsd.cgi integrate with the arsd.core event loop
 
 ## 12.0
 
@@ -43,6 +46,12 @@ Go to the file+line number from the error message and change `Event` to `FocusIn
 arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
 arsd.ini was added.
+
+arsd.zip, arsd.xlsx, arsd.rtf, arsd.pptx, arsd.docx, all added.
+
+arsd.script's language now requires () around the if and while conditions. Its parser is still so bad, but this let me fix some other bugs without making it even worse.
+
+arsd.simpledisplay now uses the arsd.core event loop by default.
 
 ## 11.0
 
