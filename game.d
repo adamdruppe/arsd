@@ -1543,16 +1543,6 @@ void clearOpenGlScreen(SimpleWindow window) {
 
 
 /++
-	History:
-		Added August 26, 2024
-+/
-interface BasicDrawing {
-	void fillRectangle(Rectangle r, Color c);
-	void outlinePolygon(Point[] vertexes, Color c);
-	void drawText(Rectangle boundingBox, string text, Color c);
-}
-
-/++
 	NOT fully compatible with simpledisplay's screenpainter, but emulates some of its api.
 
 	I want it to be runtime swappable between the fancy opengl and a backup one for my remote X purposes.

@@ -1335,6 +1335,21 @@ interface MemoryImage {
 	alias fromImageFile = fromImage;
 }
 
+/++
+
+	This interface is likely going to grow, so if you implement it, expect to have to add more methods as you update the library.
+
+	History:
+		Added to arsd.game August 26, 2024, moved to arsd.color April 20, 2025
++/
+@system
+interface BasicDrawing {
+	void fillRectangle(Rectangle r, Color c);
+	void outlinePolygon(Point[] vertexes, Color c);
+	void drawText(Rectangle boundingBox, string text, Color c);
+}
+
+
 /// An image that consists of indexes into a color palette. Use [getAsTrueColorImage]() if you don't care about palettes
 class IndexedImage : MemoryImage {
 	bool hasAlpha;
