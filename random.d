@@ -1,6 +1,8 @@
 /++
 	A random number generator that can work with [std.random] but does not have to.
 
+	It is designed to be reasonably good and fast, more for fun than for security.
+
 
 	Authors:
 		Forked from Herringway's pcg.d file:
@@ -44,20 +46,304 @@ Herringway: like seeding with ranges instead of single values (mersenne twister 
 Herringway: as well as providing more sources of data to seed with, ike OS APIs n such
 +/
 
-
-alias reasonableDefault = PCG!(uint, ulong, xslrr);
-
 // desired functions:
 // https://phobos.dpldocs.info/source/std.random.d.html#L2119
-int uniform(int min, int max) { return 0; }
-// might do a long uniform and maybe float? but idk divide that mebbe
-void shuffle(T)(T[] array) {} // fisher-yates algorithm
-int weightedChoice(scope const int[] weights...) { return 0; } // std.random.dice
-// the normal / gaussian distribution
-int bellCurve(int median, int standardDeviation) { return 0; }
+
+/++
+	Gets a random number from a uniform distribution including min and up to (but not including) max from the reasonable default generator.
+
+	History:
+		Added April 17, 2025
++/
+int uniform(int min, int max) {
+	return uniform(getReasonableDefaultGenerator(), min, max);
+}
+
+/// ditto
+int uniform(Rng gen, int min, int max) {
+	auto f = cast(uint) gen.next;
+
+	// FIXME i think this is biased but also meh
+	return f % (max - min) + min;
+}
+
+/// ditto
+alias randomInteger = uniform;
+
+/+
+unittest {
+	import arsd.core;
+	writeln(uniform(-10, 0));
+}
++/
+
+/++
+	Gets a random number between 0.0 and 1.0, including 0.0, but not including 1.0.
+
+	History:
+		Added April 18, 2025
++/
+float randomFloat() {
+	return randomFloat(getReasonableDefaultGenerator());
+}
+
+/// ditto
+float randomFloat(Rng gen) {
+	auto max = (1 << float.mant_dig) - 1;
+	float n = uniform(gen, 0, max);
+	return n / max;
+}
+
+// might do a long uniform and maybe double too? idk
+
+/++
+	Shuffles the contents of the array, in place. Assumes elements can be easily swapped.
+	(the current implementation is an in-place Fisher-Yates algorithm)
+
+	History:
+		Added April 19, 2025
++/
+void shuffle(T)(T[] array) {
+	shuffle(getReasonableDefaultGenerator(), array);
+}
+
+/// ditto
+void shuffle(T)(Rng gen, T[] array) {
+	assert(array.length < int.max);
+
+	foreach(index, item; array) {
+		auto ridx = uniform(gen, cast(int) index, cast(int) array.length);
+		if(ridx == index)
+			continue;
+		array[index] = array[ridx];
+		array[ridx] = item;
+	}
+}
+
+version(arsd_random_unittest)
+unittest {
+	auto array = [1,2,3,4,5,6,7,8,9,0];
+	auto results = new int[](array.length);
+
+	foreach(i; 0 .. 1_000_000) {
+	shuffle(array);
+	auto searchingFor = 9;
+	foreach(where, item; array)
+		if(searchingFor == item)
+			results[where]++;
+	}
+
+	import arsd.core; writeln(results);
+}
+
+/++
+	Returns an index of the weights, with the proportional odds given by the weights.
+
+	So weightedChoice([1, 2, 1]) is twice as likely to return 1 as it is 0 or 2.
+
+	History:
+		Added April 19, 2025
++/
+int weightedChoice(scope const int[] weights...) {
+	return weightedChoice(getReasonableDefaultGenerator(), weights);
+}
+
+/// ditto
+int weightedChoice(Rng gen, scope const int[] weights...) {
+	int sum = 0;
+	foreach(weight; weights)
+		sum += weight;
+
+	int val = uniform(gen, 0, sum);
+
+	sum = 0;
+	foreach(idx, weight; weights) {
+		sum += weight;
+
+		if(val < sum)
+			return cast(int) idx;
+	}
+
+	assert(0);
+}
+
+/++
+	Pick a random number off the normal (aka gaussian) distribution bell curve.
+
+	Parameters:
+		median = median
+		standardDeviation = standard deviation
+		min = minimum value to ever return
+		max = one above the highest value to ever return; an exclusive endpoint
+
+	History:
+		Added April 18, 2025
++/
+int bellCurve(int median, int standardDeviation, int min = int.min, int max = int.max) {
+	return bellCurve(getReasonableDefaultGenerator(), median, standardDeviation, min, max);
+}
+
+/// ditto
+int bellCurve(Rng gen, int median, int standardDeviation, int min = int.min, int max = int.max) {
+	import core.stdc.math;
+
+	auto mag =  standardDeviation * sqrt(-2.0 * log(randomFloat(gen)));
+	int value = cast(int) (mag * cos(2 * 3.14159268f * randomFloat(gen)) + median);
+	if(value < min)
+		value = min;
+	if(value >= max)
+		value = max - 1;
+	return value;
+}
 // bimodal distribution?
 // maybe a pareto distribution too idk tho
 
+
+version(arsd_random_unittest)
+unittest {
+	int[21] results;
+	foreach(i; 0 .. 1_000_00) {
+		//results[uniform(0, cast(int) results.length)] += 1;
+		//results[bellCurve(10, 3, 0, cast(int) results.length)] += 1;
+
+		results[weightedChoice([0, 2, 1, 0, 2, 6, 0, 6, 6])] += 1;
+	}
+	import std.stdio; writeln(results);
+
+	// foreach(i; 0 .. 10) writeln(bellCurve(100, 10));
+}
+
+/++
+	A simple generic interface to a random number generator.
++/
+interface Rng {
+	/++
+		Seeds the generator, calling the delegate zero (if it is a true rng), one, or more times to get all the state it needs.
+	+/
+	void seed(scope ulong delegate() getEntropy);
+	/++
+		Get the next number in the sequence. Some may not actually use all 64 bits of the return type.
+	+/
+	ulong next();
+
+	/+
+	/++
+		Saves a copy of the current generator state to a fresh object.
+
+		See_Also:
+			[saveState], which returns an array of bytes you can save to a file (or whatever)
+	+/
+	Rng save() const;
+	+/
+}
+
+/+
+interface RestorableRng {
+	/++
+		Saves the rng state to an array.
+
+		To restore state, you must first construct an object of the same type, then call `restoreState`
+		on that fresh object. If you get the wrong type, it won't work right (and may or may not throw an exception).
+	+/
+	ubyte[] saveState() const;
+
+	/// ditto
+	void restoreState(in ubyte[]);
+}
++/
+
+class RngFromRange(R) : Rng {
+	private R r;
+
+	void seed(scope ulong delegate() getEntropy) {
+		r = R(getEntropy());
+	}
+	ulong next() {
+		auto f = r.front;
+		r.popFront;
+		return f;
+	}
+	Rng save() const {
+		auto t = new RngFromRange();
+		t.r = this.r.save;
+		return t;
+	}
+}
+
+alias reasonableDefault = PCG!(uint, ulong, xslrr);
+
+/++
+	Gets a "reasonable default" random number generator, one good enough
+	for my casual use. This is the object used by the other functions when
+	you don't explicitly use your own generator.
+
+	It will be automatically seeded from the operating system random number
+	pool if you don't pass one of your own.
+
+	History:
+		Added April 17, 2025
++/
+Rng getReasonableDefaultGenerator(lazy ulong seed) @trusted {
+	static Rng generator;
+	if(generator is null) {
+		generator = new RngFromRange!reasonableDefault();
+		generator.seed(&seed);
+	}
+	return generator;
+}
+
+/// ditto
+Rng getReasonableDefaultGenerator() {
+	return getReasonableDefaultGenerator(unpredictableSeed());
+}
+
+private ulong unpredictableSeed() {
+	ulong r;
+	osRandom(r);
+	return r;
+}
+
+version (none) {
+} else version (linux) {
+	private bool osRandom(out ulong result) @trusted {
+		import core.sys.posix.unistd;
+		import core.sys.posix.fcntl;
+		int fd = open("/dev/urandom", O_RDONLY);
+		if(fd == -1)
+			return false;
+		auto ret = read(fd, &result, typeof(result).sizeof);
+		if(ret != typeof(result).sizeof) {
+			close(fd);
+			return false;
+		}
+		close(fd);
+		return true;
+	}
+
+} else version (Windows) {
+	pragma(lib, "Bcrypt.lib");
+
+	private bool osRandom(out ulong result) @trusted {
+		import core.sys.windows.windef : PUCHAR, ULONG;
+		import core.sys.windows.ntdef : NT_SUCCESS;
+		import core.sys.windows.bcrypt : BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG;
+
+		const gotRandom = BCryptGenRandom(
+			null,
+			cast(PUCHAR) &result,
+			ULONG(typeof(result).sizeof),
+			BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+		);
+
+		return NT_SUCCESS(gotRandom);
+	}
+} else version (all) {
+	private bool osRandom(out ulong result) @trusted {
+		import std.random;
+		result = std.random.unpredictableSeed;
+		return false;
+	}
+}
 
 private V rotr(V)(V value, uint r) {
 	return cast(V)(value >> r | value << (-r & (V.sizeof * 8 - 1)));
@@ -276,7 +562,7 @@ struct PCG(T, S, alias func, S multiplier = DefaultPCGMultiplier!S, S increment 
 	T front() const @safe pure nothrow @nogc @property {
 		return func!T(state);
 	}
-	typeof(this) save() @safe pure nothrow @nogc {
+	typeof(this) save() @safe pure nothrow @nogc const {
 		return this;
 	}
 	enum bool empty = false;
