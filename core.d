@@ -26,6 +26,20 @@
 +/
 module arsd.core;
 
+/+
+	Intended to be Supported OSes:
+		* Windows (at least Vista, MAYBE XP)
+		* Linux
+		* FreeBSD 14 (maybe 13 too)
+		* Mac OS
+
+	Eventually also:
+		* ios
+		* OpenBSD
+		* Android
+		* maybe apple watch os?
++/
+
 
 static if(__traits(compiles, () { import core.interpolation; })) {
 	import core.interpolation;
@@ -40,6 +54,13 @@ static if(__traits(compiles, () { import core.interpolation; })) {
 	struct InterpolationFooter {}
 	struct InterpolatedLiteral(string literal) {}
 	struct InterpolatedExpression(string code) {}
+}
+
+// arsd core is now default but you can opt out for a lil while
+version(no_arsd_core) {
+
+} else {
+	version=use_arsd_core;
 }
 
 version(use_arsd_core)
@@ -127,8 +148,10 @@ import core.time;
 version(OSXCocoa) {
 	version(ArsdNoCocoa)
 		enum bool UseCocoa = false;
-	else
+	else {
+		version=UseCocoa;
 		enum bool UseCocoa = true;
+	}
 } else
 	enum bool UseCocoa = false;
 
@@ -190,11 +213,11 @@ version(Emscripten)  {
 	// THIS FILE DOESN'T ACTUALLY EXIST, WE NEED TO MAKE IT
 	import core.sys.openbsd.sys.event;
 } else version(OSX) {
-	version=Arsd_core_kqueue;
+	version=Arsd_core_dispatch;
 
 	import core.sys.darwin.sys.event;
 } else version(iOS) {
-	version=Arsd_core_kqueue;
+	version=Arsd_core_dispatch;
 
 	import core.sys.darwin.sys.event;
 }
@@ -1671,7 +1694,9 @@ inout(char)[] stripRightInternal(return inout(char)[] s) {
 +/
 string toStringInternal(T)(T t) {
 	char[32] buffer;
-	static if(is(T : string))
+	static if(is(typeof(t.toString) : string))
+		return t.toString();
+	else static if(is(T : string))
 		return t;
 	else static if(is(T == enum)) {
 		switch(t) {
@@ -1693,6 +1718,10 @@ string toStringInternal(T)(T t) {
 		}
 		ret ~= "]";
 		return ret;
+	} else static if(is(T : double)) {
+		import core.stdc.stdio;
+		auto ret = snprintf(buffer.ptr, buffer.length, "%f", t);
+		return buffer[0 .. ret].idup;
 	} else {
 		static assert(0, T.stringof ~ " makes compile too slow");
 		// import std.conv; return to!string(t);
@@ -2939,13 +2968,16 @@ interface ICoreEventLoop {
 				1: run before each loop OS wait call
 				2: run after each loop OS wait call
 				3: run both before and after each OS wait call
-				4: single shot?
-				8: no-coalesce? (if after was just run, it will skip the before loops unless this flag is set)
+				4: single shot? NOT IMPLEMENTED
+				8: no-coalesce? NOT IMPLEMENTED (if after was just run, it will skip the before loops unless this flag is set)
 
+		FIXME: it should return a handle you can use to unregister it
 	+/
 	void addDelegateOnLoopIteration(void delegate() dg, uint timingFlags);
 
 	final void addDelegateOnLoopIteration(void function() dg, uint timingFlags) {
+		if(timingFlags == 0)
+			assert(0, "would never run");
 		addDelegateOnLoopIteration(toDelegate(dg), timingFlags);
 	}
 
@@ -2969,6 +3001,8 @@ interface ICoreEventLoop {
 
 				version(Arsd_core_epoll) {
 					impl.unregisterFd(fd);
+				} else version(Arsd_core_dispatch) {
+					throw new NotYetImplementedException();
 				} else version(Arsd_core_kqueue) {
 					// intentionally blank - all registrations are one-shot there
 					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
@@ -2998,6 +3032,8 @@ interface ICoreEventLoop {
 
 				version(Arsd_core_epoll) {
 					impl.unregisterFd(fd);
+				} else version(Arsd_core_dispatch) {
+					throw new NotYetImplementedException();
 				} else version(Arsd_core_kqueue) {
 					// intentionally blank - all registrations are one-shot there
 					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
@@ -6467,14 +6503,98 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		}
 		LoopIterationDelegate[] loopIterationDelegates;
 
-		void runLoopIterationDelegates() {
+		void runLoopIterationDelegates(bool isAfter) {
 			foreach(lid; loopIterationDelegates)
-				lid.dg();
+				if((!isAfter && (lid.flags & 1)) || (isAfter && (lid.flags & 2)))
+					lid.dg();
 		}
 	}
 
 	void addDelegateOnLoopIteration(void delegate() dg, uint timingFlags) {
 		loopIterationDelegates ~= LoopIterationDelegate(dg, timingFlags);
+	}
+
+	version(Arsd_core_dispatch) {
+
+		private NSRunLoop ttrl;
+
+		private this() {
+			ttrl = NSRunLoop.currentRunLoop;
+		}
+
+			// FIXME: this lies!! it runs until completion
+		RunOnceResult runOnce(Duration timeout = Duration.max) {
+			scope(exit) eventLoopRound++;
+
+			// FIXME: autorelease pool
+
+			if(false /*isWorker*/) {
+				runLoopIterationDelegates(false);
+
+				// FIXME: timeout is wrong
+				auto retValue = ttrl.runMode(NSDefaultRunLoopMode, beforeDate: NSDate.distantFuture);
+				if(retValue == false)
+					throw new Exception("could not start run loop");
+
+				runLoopIterationDelegates(true);
+
+				// NSApp.run();
+				// exitApplication();
+				//return RunOnceResult(RunOnceResult.Possibilities.GlobalExit);
+				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+			} else {
+				// ui thread needs to pump nsapp events...
+				runLoopIterationDelegates(false);
+
+				auto timeoutNs = NSDate.distantFuture; // FIXME timeout here, future means no timeout
+
+				again:
+				NSEvent event = NSApp.nextEventMatchingMask(
+					NSEventMask.NSEventMaskAny,
+					timeoutNs,
+					NSDefaultRunLoopMode,
+					true
+				);
+				if(event !is null) {
+					NSApp.sendEvent(event);
+					timeoutNs = NSDate.distantPast; // only keep going if it won't block; we just want to clear the queue
+					goto again;
+				}
+
+				runLoopIterationDelegates(true);
+				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+			}
+		}
+
+		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb) {
+			auto input_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, dispatch_get_main_queue());
+			// FIXME: can the GC reap this prematurely?
+			auto b = block(() {
+				cb.call();
+			});
+			// FIXME: should prolly free it eventually idk
+			import core.memory;
+			GC.addRoot(b);
+
+			dispatch_source_set_event_handler(input_src, b);
+			// dispatch_source_set_cancel_handler(input_src,  ^{ close(my_file); });
+			dispatch_resume(input_src);
+
+			return UnregisterToken(this, fd, cb);
+
+		}
+		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb) {
+			throw new NotYetImplementedException();
+		}
+		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb) {
+			throw new NotYetImplementedException();
+		}
+		private void rearmFd(RearmToken token) {
+			if(token.readable)
+				cast(void) addCallbackOnFdReadableOneShot(token.fd, token.cb);
+			else
+				cast(void) addCallbackOnFdWritableOneShot(token.fd, token.cb);
+		}
 	}
 
 	version(Arsd_core_kqueue) {
@@ -6483,6 +6603,9 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			scope(exit) eventLoopRound++;
+
+			runLoopIterationDelegates(false);
+
 			kevent_t[16] ev;
 			//timespec tout = timespec(1, 0);
 			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, null/*&tout*/);
@@ -6505,7 +6628,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				}
 			}
 
-			runLoopIterationDelegates();
+			runLoopIterationDelegates(true);
 
 			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
@@ -6652,6 +6775,9 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			scope(exit) eventLoopRound++;
+
+			runLoopIterationDelegates(false);
+
 			if(isWorker) {
 				// this function is only supported on Windows Vista and up, so using this
 				// means dropping support for XP.
@@ -6702,7 +6828,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				}
 			}
 
-			runLoopIterationDelegates();
+			runLoopIterationDelegates(true);
 
 			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
@@ -6988,6 +7114,9 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			scope(exit) eventLoopRound++;
+
+			runLoopIterationDelegates(false);
+
 			epoll_event[16] events;
 			auto ret = epoll_wait(epollfd, events.ptr, cast(int) events.length, -1); // FIXME: timeout
 			if(ret == -1) {
@@ -7011,7 +7140,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				}
 			}
 
-			runLoopIterationDelegates();
+			runLoopIterationDelegates(true);
 
 			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
@@ -8291,7 +8420,7 @@ class LoggerOf(T, size_t bufferSize = 16) {
 						int missedMessages = 0;
 						long n;
 						synchronized(logger) {
-							while(logger.active && connected && logger.writeBufferPosition < readBufferPosition) {
+							while(logger.active && connected && logger.writeBufferPosition <= readBufferPosition) {
 								logger.condition.wait();
 							}
 
@@ -8475,6 +8604,16 @@ shared(LoggerOf!GenericEmbeddableInterpolatedSequence) logger() {
 	}
 
 	return _commonLogger;
+}
+
+/++
+	Makes note of an exception you catch and otherwise ignore.
+
+	History:
+		Added April 17, 2025
++/
+void logSwallowedException(Exception e) {
+	logger.error(i"$(e.toString())");
 }
 
 /+
@@ -9248,11 +9387,13 @@ package(arsd) version(Windows) extern(Windows) {
 	int WSARecvFrom(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, sockaddr*, LPINT, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
 }
 
-package(arsd) static if(UseCocoa) {
+package(arsd) version(UseCocoa) {
 
 /* Copy/paste chunk from Jacob Carlborg { */
 // from https://raw.githubusercontent.com/jacob-carlborg/druntime/550edd0a64f0eb2c4f35d3ec3d88e26b40ac779e/src/core/stdc/clang_block.d
 // with comments stripped (see docs in the original link), code reformatted, and some names changed to avoid potential conflicts
+
+// note these should always be passed by pointer!
 
 import core.stdc.config;
 struct ObjCBlock(R = void, Params...) {
@@ -9272,17 +9413,29 @@ private:
 		this.isa = isa;
 		this.flags = flags;
 		this.invoke = invoke;
-		this.dg = dg;
 		this.descriptor = &.objcblock_descriptor;
+
+		// FIXME: is this needed or not? it could be held by the OS and not be visible to GC i think
+		// import core.memory; GC.addRoot(dg.ptr);
+
+		this.dg = dg;
 	}
 }
-ObjCBlock!(R, Params) block(R, Params...)(R delegate(Params) dg) {
+ObjCBlock!(R, Params) blockOnStack(R, Params...)(R delegate(Params) dg) {
 	static if (Params.length == 0)
-	    enum flags = 0x50000000;
+		enum flags = 0x50000000;
 	else
 		enum flags = 0x40000000;
 
 	return ObjCBlock!(R, Params)(&_NSConcreteStackBlock, flags, &objcblock_invoke!(R, Params), dg);
+}
+ObjCBlock!(R, Params)* block(R, Params...)(R delegate(Params) dg) {
+	static if (Params.length == 0)
+		enum flags = 0x50000000;
+	else
+		enum flags = 0x40000000;
+
+	return new ObjCBlock!(R, Params)(&_NSConcreteStackBlock, flags, &objcblock_invoke!(R, Params), dg);
 }
 
 private struct Descriptor {
@@ -9374,7 +9527,18 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void getCharacters(wchar* buffer, NSRange range) @selector("getCharacters:range:");
 
 			bool getBytes(void* buffer, NSUInteger maxBufferCount, NSUInteger* usedBufferCount, NSStringEncoding encoding, NSStringEncodingConversionOptions options, NSRange range, NSRange* leftover) @selector("getBytes:maxLength:usedLength:encoding:options:range:remainingRange:");
+
+			CGSize sizeWithAttributes(NSDictionary attrs) @selector("sizeWithAttributes:");
 		}
+
+		// FIXME: it is a generic in objc with <KeyType, ObjectType>
+		extern class NSDictionary : NSObject {
+			static NSDictionary dictionaryWithObject(NSObject object, NSid key) @selector("dictionaryWithObject:forKey:");
+			// static NSDictionary initWithObjects(NSArray objects, NSArray forKeys) @selector("initWithObjects:forKeys:");
+		}
+
+		alias NSAttributedStringKey = NSString;
+		/* const */extern __gshared NSAttributedStringKey NSFontAttributeName;
 
 		struct NSRange {
 			NSUInteger loc;
@@ -9501,7 +9665,42 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 
 			void run() @selector("run");
 
+			void stop(NSid sender) @selector("stop:");
+
+			void finishLaunching() @selector("finishLaunching");
+
 			void terminate(void*) @selector("terminate:");
+
+			void sendEvent(NSEvent event) @selector("sendEvent:");
+			NSEvent nextEventMatchingMask(
+				NSEventMask mask,
+				NSDate untilDate,
+				NSRunLoopMode inMode,
+				bool dequeue
+			) @selector("nextEventMatchingMask:untilDate:inMode:dequeue:");
+		}
+
+		enum NSEventMask : ulong {
+			NSEventMaskAny = ulong.max
+		}
+
+		version(OSX)
+		extern class NSRunLoop : NSObject {
+			static @property NSRunLoop currentRunLoop() @selector("currentRunLoop");
+			static @property NSRunLoop mainRunLoop() @selector("mainRunLoop");
+			bool runMode(NSRunLoopMode mode, NSDate beforeDate) @selector("runMode:beforeDate:");
+		}
+
+		alias NSRunLoopMode = NSString;
+
+		extern __gshared NSRunLoopMode NSDefaultRunLoopMode;
+
+		version(OSX)
+		extern class NSDate : NSObject {
+			static @property NSDate distantFuture() @selector("distantFuture");
+			static @property NSDate distantPast() @selector("distantPast");
+			static @property NSDate now() @selector("now");
+
 		}
 
 		version(OSX)
@@ -9618,6 +9817,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			NSRect frame() @selector("frame");
 
 			NSRect contentRectForFrameRect(NSRect frameRect) @selector("contentRectForFrameRect:");
+			NSRect frameRectForContentRect(NSRect contentRect) @selector("frameRectForContentRect:");
 
 			NSString title() @selector("title");
 			void title(NSString value) @selector("setTitle:");
@@ -9628,6 +9828,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void delegate_(NSWindowDelegate) @selector("setDelegate:");
 
 			void setBackgroundColor(NSColor color) @selector("setBackgroundColor:");
+
+			void setIsVisible(bool b) @selector("setIsVisible:");
 		}
 
 		version(OSX)
@@ -9844,4 +10046,95 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 	extern(C) __gshared void* _D4arsd4core6NSView7__ClassZ = null;
 	extern(C) __gshared void* _D4arsd4core8NSWindow7__ClassZ = null;
 	}
+
+
+
+	extern(C) { // grand central dispatch bindings
+
+		// /Library/Developer/CommandLineTools/SDKs/MacOSX13.1.sdk/usr/include/dispatch
+		// https://swiftlang.github.io/swift-corelibs-libdispatch/tutorial/
+		// https://man.freebsd.org/cgi/man.cgi?query=dispatch_main&sektion=3&apropos=0&manpath=macOS+14.3.1
+
+		struct dispatch_source_type_s {}
+		private __gshared immutable extern {
+			dispatch_source_type_s _dispatch_source_type_timer;
+			dispatch_source_type_s _dispatch_source_type_proc;
+			dispatch_source_type_s _dispatch_source_type_signal;
+			dispatch_source_type_s _dispatch_source_type_read;
+			dispatch_source_type_s _dispatch_source_type_write;
+			dispatch_source_type_s _dispatch_source_type_vnode;
+			// also memory pressure and some others
+		}
+
+		immutable DISPATCH_SOURCE_TYPE_TIMER = &_dispatch_source_type_timer;
+		immutable DISPATCH_SOURCE_TYPE_PROC = &_dispatch_source_type_proc;
+		immutable DISPATCH_SOURCE_TYPE_SIGNAL = &_dispatch_source_type_signal;
+		immutable DISPATCH_SOURCE_TYPE_READ = &_dispatch_source_type_read;
+		immutable DISPATCH_SOURCE_TYPE_WRITE = &_dispatch_source_type_write;
+		immutable DISPATCH_SOURCE_TYPE_VNODE = &_dispatch_source_type_vnode;
+		// also are some for internal data change things and a couple others
+
+		enum DISPATCH_PROC_EXIT = 0x80000000; // process exited
+		enum DISPATCH_PROC_FORK = 0x40000000; // it forked
+		enum DISPATCH_PROC_EXEC = 0x20000000; // it execed
+		enum DISPATCH_PROC_SIGNAL = 0x08000000; // it received a signal
+
+		enum DISPATCH_VNODE_DELETE = 0x1;
+		enum DISPATCH_VNODE_WRITE = 0x2;
+		enum DISPATCH_VNODE_EXTEND = 0x4;
+		enum DISPATCH_VNODE_ATTRIB = 0x8;
+		enum DISPATCH_VNODE_LINK = 0x10;
+		enum DISPATCH_VNODE_RENAME = 0x20;
+		enum DISPATCH_VNODE_REVOKE = 0x40;
+		enum DISPATCH_VNODE_FUNLOCK = 0x100;
+
+		private struct dispatch_source_s;
+		private struct dispatch_queue_s {}
+
+		alias dispatch_source_type_t = const(dispatch_source_type_s)*;
+
+		alias dispatch_source_t = dispatch_source_s*; // NSObject<OS_dispatch_source>
+		alias dispatch_queue_t = dispatch_queue_s*; // NSObject<OS_dispatch_queue>
+		alias dispatch_object_t = void*; // actually a "transparent union" of the dispatch_source_t, dispatch_queue_t, and others
+		alias dispatch_block_t = ObjCBlock!(void)*;
+		static if(void*.sizeof == 8)
+			alias uintptr_t = ulong;
+		else
+			alias uintptr_t = uint;
+
+		dispatch_source_t dispatch_source_create(dispatch_source_type_t type, uintptr_t handle, c_ulong mask, dispatch_queue_t queue);
+		void dispatch_source_set_event_handler(dispatch_source_t source, dispatch_block_t handler);
+		void dispatch_source_set_cancel_handler(dispatch_source_t source, dispatch_block_t handler);
+		void dispatch_source_cancel(dispatch_source_t source);
+
+		// DISPATCH_DECL_SUBCLASS(dispatch_queue_main, dispatch_queue_serial);
+		// dispatch_queue_t dispatch_get_main_queue();
+
+		extern __gshared dispatch_queue_s _dispatch_main_q;
+
+		extern(D) dispatch_queue_t dispatch_get_main_queue() {
+			return &_dispatch_main_q;
+		}
+
+		// FIXME: what is dispatch_time_t ???
+		// dispatch_time
+		// dispatch_walltime
+
+		// void dispatch_source_set_timer(dispatch_source_t source, dispatch_time_t start, ulong interval, ulong leeway);
+
+		void dispatch_retain(dispatch_object_t object);
+		void dispatch_release(dispatch_object_t object);
+
+		void dispatch_resume(dispatch_object_t object);
+		void dispatch_pause(dispatch_object_t object);
+
+		void* dispatch_get_context(dispatch_object_t object);
+		void dispatch_set_context(dispatch_object_t object, void* context);
+
+		// sends a function to the given queue
+		void dispatch_sync(dispatch_queue_t queue, scope dispatch_block_t block);
+		void dispatch_async(dispatch_queue_t queue, dispatch_block_t block);
+
+	} // grand central dispatch bindings
+
 }

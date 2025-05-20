@@ -4542,6 +4542,11 @@ mixin template SdpyDraw() {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
 			if(!this.font.isNull && !this.font.isMonospace)
 				this.font.unload(); // non-monospace fonts are unusable here. This should never happen anyway though as Courier New comes with Windows
+		} else version(OSX) {
+			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
+			if(!this.font.isNull && !this.font.isMonospace)
+				throw new Exception("non monospace");
+				//this.font.unload();
 		}
 
 		if(font.isNull) {
@@ -4549,8 +4554,9 @@ mixin template SdpyDraw() {
 			fontWidth = size / 2;
 			fontHeight = size;
 		} else {
-			fontWidth = font.averageWidth;
-			fontHeight = font.height;
+			fontWidth = cast(int) font.averageWidth;
+			fontHeight = cast(int) font.height;
+			// import std.stdio; writeln(fontWidth, " x ", fontHeight);
 		}
 	}
 

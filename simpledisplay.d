@@ -810,6 +810,8 @@ interface->SetProgressValue(hwnd, 40, 100);
 		On March 4, 2023 (dub v11.0), it started importing [arsd.core] as well, making that a build-time requirement.
 
 		On October 5, 2024, apitrace support was added for Linux targets.
+
+		The ExperimentalTextComponent and ExperimentalTextComponent2 were both removed on April 12, 2025. Use [arsd.textlayouter] or the [arsd.minigui] widgets instead.
 +/
 module arsd.simpledisplay;
 
@@ -2872,14 +2874,12 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	void resize(int w, int h) {
 		if(!_closed && _fullscreen) fullscreen = false;
-		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.resize(w, h);
 	}
 
 	/// Move and resize window (this can be faster and more visually pleasant than doing it separately).
 	void moveResize (int x, int y, int w, int h) {
 		if(!_closed && _fullscreen) fullscreen = false;
-		version(OSXCocoa) throw new NotYetImplementedException(); else
 		if (!_closed) impl.moveResize(x, y, w, h);
 	}
 
@@ -2902,7 +2902,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			else
 				XMapWindow(impl.display, impl.window);
 		} else version(OSXCocoa) {
-			// throw new NotYetImplementedException();
+			impl.window.setIsVisible = !b;
+			if(!hidden)
+			impl.view.setNeedsDisplay(true);
 		} else version(Emscripten) {
 		} else static assert(0);
 	}
@@ -3057,18 +3059,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			scope(exit) clearInterval(handle);
 
 			loop();
-			return 0;
-		} else version(OSXCocoa) {
-			// FIXME
-			if (handlePulse !is null && pulseTimeout != 0) {
-				timer = NSTimer.schedule(pulseTimeout*1e-3,
-					cast(NSid) view, sel_registerName("simpledisplay_pulse:"),
-					null, true);
-			}
-
-			view.setNeedsDisplay(true);
-
-			NSApp.run();
 			return 0;
 		} else {
 			EventLoop el = EventLoop(pulseTimeout, handlePulse);
@@ -3356,7 +3346,6 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	+/
 	@property void title(string title) {
 		_title = title;
-		version(OSXCocoa) throw new NotYetImplementedException(); else
 		impl.setTitle(title);
 	}
 
@@ -4312,7 +4301,7 @@ struct EventLoop {
 	}
 
 	static void quitApplication() {
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			import arsd.core;
 			ICoreEventLoop.exitApplication();
 		}
@@ -4369,7 +4358,7 @@ struct EventLoop {
 		assert(impl !is null);
 		impl.notExited = false;
 
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			import arsd.core;
 			ICoreEventLoop.exitApplication();
 		}
@@ -4665,14 +4654,14 @@ struct EventLoopImpl {
 			insideXEventLoop = true;
 			scope(exit) insideXEventLoop = false;
 
-			version(use_arsd_core) {
+			static if(use_arsd_core) {
 				import arsd.core;
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
 
 				static bool loopInitialized = false;
 				if(!loopInitialized) {
-					el.addDelegateOnLoopIteration(&doXNextEventVoid, 0);
-					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 0);
+					el.addDelegateOnLoopIteration(&doXNextEventVoid, 3);
+					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 
 					if(customSignalFD != -1)
 					cast(void) el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
@@ -4733,6 +4722,9 @@ struct EventLoopImpl {
 
 					loopInitialized = true;
 				}
+
+				if(whileCondition is null)
+					whileCondition = () => true;
 
 				el.run(() => !whileCondition());
 			} else version(linux) {
@@ -4938,17 +4930,16 @@ struct EventLoopImpl {
 					}
 				}
 			}
-		}
-
+		} else
 		version(Windows) {
 
-			version(use_arsd_core) {
+			static if(use_arsd_core) {
 				import arsd.core;
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
 				static bool loopInitialized = false;
 				if(!loopInitialized) {
-					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 0);
-					el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 0);
+					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+					el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
 					loopInitialized = true;
 				}
 				el.run(() => !whileCondition());
@@ -5004,6 +4995,39 @@ struct EventLoopImpl {
 			}
 
 			// return message.wParam;
+			return 0;
+		} version (OSXCocoa) {
+
+			static assert(use_arsd_core);
+
+			/+
+			if (handlePulse !is null && pulseTimeout != 0) {
+				NSTimer timer = NSTimer.schedule(pulseTimeout*1e-3,
+					cast(NSid) view, sel_registerName("simpledisplay_pulse:"),
+					null, true);
+
+
+			if(timer)
+				timer.invalidate();
+			}
+			+/
+
+			import arsd.core;
+			auto el = getThisThreadEventLoop(EventLoopType.Ui);
+			static bool loopInitialized = false;
+			if(!loopInitialized) {
+				el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+				loopInitialized = true;
+				sdpyPrintDebugString("one");
+				NSApp.run();
+				sdpyPrintDebugString("here");
+			}
+
+				sdpyPrintDebugString("arsd.core loop starting");
+			el.run(() => !whileCondition());
+
+				sdpyPrintDebugString("kiio all done");
+
 			return 0;
 		} else {
 			return 0;
@@ -5369,6 +5393,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 
 			import core.sys.posix.unistd;
 			arch_ulong pid = getpid();
+
+			// XSetCommand(display, nativeWindow, ["sdpy".ptr].ptr, 1);
 
 			XChangeProperty(
 				display,
@@ -5985,9 +6011,9 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 		with the requested interval.
 */
 version(with_timer) {
-version(use_arsd_core)
+static if(use_arsd_core) {
 	alias Timer = arsd.core.Timer; // FIXME should probably wrap it for a stable api
-else
+} else
 class Timer {
 // FIXME: needs pause and unpause
 	// FIXME: I might add overloads for ones that take a count of
@@ -6210,12 +6236,12 @@ class WindowsHandleReader {
 		enable();
 	}
 
-	version(use_arsd_core)
+	static if(use_arsd_core)
 		ICoreEventLoop.UnregisterToken unregisterToken;
 
 	///
 	void enable() {
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnHandleReady(handle, new CallbackHelper(&ready));
 		} else {
 			auto el = EventLoop.get().impl;
@@ -6225,7 +6251,7 @@ class WindowsHandleReader {
 
 	///
 	void disable() {
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			unregisterToken.unregister();
 		} else {
 			auto el = EventLoop.get().impl;
@@ -6290,7 +6316,7 @@ class PosixFdReader {
 	bool captureReads;
 	bool captureWrites;
 
-	version(use_arsd_core) {
+	static if(use_arsd_core) {
 		import arsd.core;
 		ICoreEventLoop.UnregisterToken unregisterToken;
 	}
@@ -6300,7 +6326,7 @@ class PosixFdReader {
 	void enable() @system {
 		enabled = true;
 
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnFdReadable(fd, new CallbackHelper(
 				() { onReady(fd, true, false); }
 			));
@@ -6324,7 +6350,7 @@ class PosixFdReader {
 	void disable() @system {
 		enabled = false;
 
-		version(use_arsd_core) {
+		static if(use_arsd_core) {
 			unregisterToken.unregister();
 		} else
 		version(linux) {
@@ -6497,7 +6523,9 @@ void setClipboardText(SimpleWindow clipboardOwner, string text) {
 			SetClipboardData(CF_UNICODETEXT, handle);
 		}
 	} else version(X11) {
+		// we set BOTH clipboard and primary on an explicit action
 		setX11Selection!"CLIPBOARD"(clipboardOwner, text);
+		setX11Selection!"PRIMARY"(clipboardOwner, text);
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
 	} else version(Emscripten) {
@@ -6578,7 +6606,9 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 			}
 		}
 
-		setX11Selection!"CLIPBOARD"(clipboardOwner, new X11SetSelectionHandler_Image(img));
+		auto handler = new X11SetSelectionHandler_Image(img);
+		setX11Selection!"PRIMARY"(clipboardOwner, handler);
+		setX11Selection!"CLIPBOARD"(clipboardOwner, handler);
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
 	} else version(Emscripten) {
@@ -8085,7 +8115,9 @@ struct MouseEvent {
 
 			return p;
 		} else version(OSXCocoa) {
-			throw new NotYetImplementedException();
+			auto rect = window.window.frame;
+			// FIXME: mapped right?
+			return Point(cast(int) rect.origin.x + x, cast(int) rect.origin.y + y);
 		} else version(Emscripten) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
@@ -8751,6 +8783,16 @@ enum FontWeight : int {
 +/
 interface MeasurableFont {
 	/++
+		History:
+			Added April 12, 2025
+	+/
+	//version(OSXCocoa)
+		alias fnum = float;
+	//else
+		//alias fnum = int;
+
+
+	/++
 		Returns true if it is a monospace font, meaning each of the
 		glyphs (at least the ascii characters) have matching width
 		and no kerning, so you can determine the display width of some
@@ -8768,31 +8810,38 @@ interface MeasurableFont {
 
 		Given in pixels.
 	+/
-	int averageWidth();
+	fnum averageWidth();
 	/++
 		The height of the bounding box of a line.
 	+/
-	int height();
+	fnum height();
 	/++
 		The maximum ascent of a glyph above the baseline.
 
 		Given in pixels.
 	+/
-	int ascent();
+	fnum ascent();
 	/++
 		The maximum descent of a glyph below the baseline. For example, how low the g might go.
 
 		Given in pixels.
 	+/
-	int descent();
+	fnum descent();
 	/++
 		The display width of the given string, and if you provide a window, it will use it to
 		make the pixel count on screen more accurate too, but this shouldn't generally be necessary.
 
 		Given in pixels.
 	+/
-	int stringWidth(scope const(char)[] s, SimpleWindow window = null);
+	fnum stringWidth(scope const(char)[] s, SimpleWindow window = null);
 
+}
+
+int castFnumToCnum(MeasurableFont.fnum i) {
+	static if(is(MeasurableFont.fnum : long))
+		return cast(int) i;
+	else
+		return cast(int) (i + 0.9);
 }
 
 // FIXME: i need a font cache and it needs to handle disconnects.
@@ -9254,6 +9303,7 @@ class OperatingSystemFont : MeasurableFont {
 		unload();
 
 		font = NSFont.fontWithName(MacString(name).borrow, size); // FIXME: weight and italic?
+		font.retain();
 		prepareFontInfo();
 
 		return !isNull();
@@ -9266,6 +9316,8 @@ class OperatingSystemFont : MeasurableFont {
 		bool italic;
 	}
 	private LoadedInfo loadedInfo;
+
+	// int size() { return loadedInfo.size; }
 
 	///
 	void unload() {
@@ -9321,7 +9373,7 @@ class OperatingSystemFont : MeasurableFont {
 			Added March 26, 2020
 			Documented January 16, 2021
 	+/
-	int averageWidth() {
+	fnum averageWidth() {
 		version(X11) {
 			return stringWidth("x");
 		} version(OSXCocoa) {
@@ -9337,7 +9389,7 @@ class OperatingSystemFont : MeasurableFont {
 		History:
 			Added January 16, 2021
 	+/
-	int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+	fnum stringWidth(scope const(char)[] s, SimpleWindow window = null) {
 	// FIXME: what about tab?
 		if(isNull)
 			return 0;
@@ -9383,8 +9435,17 @@ class OperatingSystemFont : MeasurableFont {
 
 			dim = CGSizeMake(totalwidth, maxheight);
 			+/
+			MacString str = MacString(s);
+			NSDictionary dict = NSDictionary.dictionaryWithObject(
+				font,
+				/*forKey:*/cast(void*) NSFontAttributeName
+			);
+			// scope(exit) dict.release();
+			NSSize size = str.borrow.sizeWithAttributes(dict);
 
-			return 16; // FIXME
+			// import std.stdio; writeln(s, " ", size);
+
+			return size.width; // cast(int) (size.width + 0.9 /* to round up */); // FIXME
 		}
 		else assert(0);
 	}
@@ -9462,7 +9523,7 @@ class OperatingSystemFont : MeasurableFont {
 			Added March 26, 2020
 			Documented January 16, 2021
 	+/
-	int height() {
+	fnum height() {
 		version(X11) {
 			version(with_xft)
 				if(isXft && xftFont !is null) {
@@ -9476,13 +9537,15 @@ class OperatingSystemFont : MeasurableFont {
 		} else version(OSXCocoa) {
 			if(font is null)
 				return 0;
-			return cast(int) (font.ascender + font.descender + 0.9 /* to round up */); // font.capHeight
+			// the descender likely negative so minus means we actually add
+			return cast(int) (font.ascender - font.descender + 0.9 /* to round up */);
+			// return cast(int) font.capHeight;
 		}
 		else assert(0);
 	}
 
-	private int ascent_;
-	private int descent_;
+	private fnum ascent_;
+	private fnum descent_;
 
 	/++
 		Max ascent above the baseline.
@@ -9490,7 +9553,7 @@ class OperatingSystemFont : MeasurableFont {
 		History:
 			Added January 22, 2021
 	+/
-	int ascent() {
+	fnum ascent() {
 		return ascent_;
 	}
 
@@ -9500,7 +9563,7 @@ class OperatingSystemFont : MeasurableFont {
 		History:
 			Added January 22, 2021
 	+/
-	int descent() {
+	fnum descent() {
 		return descent_;
 	}
 
@@ -9541,6 +9604,7 @@ class OperatingSystemFont : MeasurableFont {
 			return this;
 		} else version(OSXCocoa) {
 			this.font = NSFont.systemFontOfSize(15);
+			font.retain();
 
 			prepareFontInfo();
 
@@ -16863,6 +16927,8 @@ extern(C) nothrow @nogc {
 	int XFree(void*);
 	int XDeleteProperty(Display *display, Window w, Atom property);
 
+	// int XSetCommand(Display*, Window, const char**, int);
+
 	int XChangeProperty(Display *display, Window w, Atom property, Atom type, int format, int mode, scope const void *data, int nelements);
 
 	int XGetWindowProperty(Display *display, Window w, Atom property, arch_long
@@ -18633,7 +18699,11 @@ struct Visual
 		}
 
 		override void applicationDidFinishLaunching(NSNotification notification) @selector("applicationDidFinishLaunching:") {
-			NSApplication.shared_.activateIgnoringOtherApps(true);
+			NSApplication.shared_.activateIgnoringOtherApps(false);
+
+			sdpyPrintDebugString("before");
+			NSApp.stop(cast(void*) NSApp); // stop NSApp.run and let arsd.core event loop take over...
+			sdpyPrintDebugString("after");
 		}
 		override bool applicationShouldTerminateAfterLastWindowClosed(NSNotification notification) @selector("applicationShouldTerminateAfterLastWindowClosed:") {
 			return true;
@@ -18651,7 +18721,28 @@ struct Visual
 			auto window = cast(void*) notification.object;
 
 			// FIXME: do i need to release it?
-			SimpleWindow.nativeMapping.remove(window);
+			if(auto swp = window in SimpleWindow.nativeMapping) {
+				auto sw = *swp;
+
+				sw._closed = true;
+
+				if (sw.visibilityChanged !is null && sw._visible) sw.visibilityChanged(false);
+
+				if (sw.onDestroyed !is null) try { sw.onDestroyed(); } catch (Exception e) {} // sorry
+				SimpleWindow.nativeMapping.remove(window);
+				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(cast(NSWindow) window);
+
+				bool anyImportant = false;
+				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+					if(w.beingOpenKeepsAppOpen) {
+						anyImportant = true;
+						break;
+					}
+				if(!anyImportant) {
+					EventLoop.quitApplication();
+				}
+
+			}
 		}
 
 		override NSSize windowWillResize(NSWindow sender, NSSize frameSize) @selector("windowWillResize:toSize:") {
@@ -18716,6 +18807,8 @@ struct Visual
 			auto pos = event.locationInWindow;
 
 			me.x = cast(int) pos.x;
+
+			// FIXME: 1-based things here might need fixup
 			me.y = cast(int) (simpleWindow.height - pos.y);
 
 			me.dx = 0; // FIXME
@@ -18831,7 +18924,7 @@ private:
 	alias const(void)* CGColorSpaceRef;
 	alias const(void)* CGImageRef;
 	alias ulong CGBitmapInfo;
-	alias NSGraphicsContext CGContextRef;
+	alias NSGraphicsContext CGContextRef; // actually CGContextRef should be a subclass...
 
 	alias NSPoint CGPoint;
 	alias NSSize CGSize;
@@ -18898,6 +18991,14 @@ private:
 
 		CGColorSpaceRef CGColorSpaceCreateDeviceRGB();
 		void CGColorSpaceRelease(CGColorSpaceRef cs);
+
+		alias void* CGFontRef;
+		alias CTFontRef = NSFont;
+		CGFontRef CTFontCopyGraphicsFont(CTFontRef font, void  /*CTFontDescriptorRef*/ * attributes);
+
+
+		void CGContextSetFont(CGContextRef c, CGFontRef font);
+		void CGContextSetFontSize(CGContextRef c, CGFloat size);
 
 		void CGContextSetRGBStrokeColor(CGContextRef c, double red, double green, double blue, double alpha);
 		void CGContextSetRGBFillColor(CGContextRef c, double red, double green, double blue, double alpha);
@@ -19068,16 +19169,31 @@ version(OSXCocoa) {
 		}
 		Size textSize(in char[] txt) {
 			auto font = getFont();
-			return Size(font.stringWidth(txt), font.height());
+			return Size(castFnumToCnum(font.stringWidth(txt)), castFnumToCnum(font.height()));
 		}
 
 		void setFont(OperatingSystemFont font) {
 			_font = font;
-			//font.font.setInContext(context);
+			// font.font.setInContext(context);
+			if(font) {
+				// FIXME: should i free this thing?
+				/+
+				auto f = CTFontCopyGraphicsFont(font.font, null);
+				if(font.font is null)
+					sdpyPrintDebugString("input is null");
+				if(f is null)
+					sdpyPrintDebugString("f is null");
+				CGContextSetFont(context, f);
+				+/
+				// CGContextSetFontSize(context, font.size);
+
+				// FIXME kinda hacky
+				CGContextSelectFont(context, (font.loadedInfo.name ~ "\0").ptr, font.loadedInfo.size, 1);
+			} else {} // FIMXE
 		}
 		int fontHeight() {
 			auto font = getFont();
-			return font.height;
+			return castFnumToCnum(font.height);
 		}
 
 		// end
@@ -19236,7 +19352,8 @@ version(OSXCocoa) {
 
 		void drawRectangle(int x, int y, int width, int height) {
 			CGContextBeginPath(context);
-			auto rect = CGRect(CGPoint(x, y), CGSize(width, height));
+			// trying to align with actual pixels...
+			auto rect = CGRect(CGPoint(x + 0.5, y + 0.5), CGSize(width - 1, height - 1));
 			CGContextAddRect(context, rect);
 			CGContextDrawPath(context, CGPathDrawingMode.kCGPathFillStroke);
 		}
@@ -19299,6 +19416,21 @@ version(OSXCocoa) {
 	}
 
 	mixin template NativeSimpleWindowImplementation() {
+		void setTitle(string title) {
+			window.title = MacString(title).borrow;
+		}
+
+		void moveResize (int x, int y, int w, int h) {
+			//auto f = window.frame;
+			// FIXME: finish
+			sdpyPrintDebugString("moveResize not implemented");
+		}
+
+		void resize(int w, int h) {
+			// FIXME: finish
+			sdpyPrintDebugString("resize not implemented");
+		}
+
 		void createWindow(int width, int height, string title, OpenGlOptions opengl, SimpleWindow parent) {
 			initializeApp();
 
@@ -19335,6 +19467,16 @@ version(OSXCocoa) {
 			createNewDrawingContext(width, height);
 
 			window.setBackgroundColor(NSColor.whiteColor);
+
+			if ((customizationFlags&WindowFlags.dontAutoShow) == 0) {
+				// show it
+				view.setNeedsDisplay(true);
+			} else {
+
+				view.setNeedsDisplay(true);
+				// hide it
+				//window.setIsVisible = false;
+			}
 		}
 
 		void createNewDrawingContext(int width, int height) {
@@ -19357,8 +19499,6 @@ version(OSXCocoa) {
 			// window.release(); // closing the window does this automatically i think
 		}
 		void closeWindow() {
-			if(timer)
-				timer.invalidate();
 			window.close();
 		}
 
@@ -19367,7 +19507,6 @@ version(OSXCocoa) {
 		}
 
 		NSWindow window;
-		NSTimer timer;
 		NSView view;
 		CGContextRef drawingContext;
 	}
@@ -20579,1302 +20718,6 @@ version(X11) {
 		}
 		//{ import core.stdc.stdio : stderr, fprintf; fprintf(stderr, "UTF8: %s\n", sdx_isUTF8Locale ? "tan".ptr : "ona".ptr); }
 	}
-}
-
-class ExperimentalTextComponent2 {
-	/+
-		Stage 1: get it working monospace
-		Stage 2: use proportional font
-		Stage 3: allow changes in inline style
-		Stage 4: allow new fonts and sizes in the middle
-		Stage 5: optimize gap buffer
-		Stage 6: optimize layout
-		Stage 7: word wrap
-		Stage 8: justification
-		Stage 9: editing, selection, etc.
-
-			Operations:
-				insert text
-				overstrike text
-				select
-				cut
-				modify
-	+/
-
-	/++
-		It asks for a window so it can translate abstract font sizes to actual on-screen values depending on the window's current dpi, scaling settings, etc.
-	+/
-	this(SimpleWindow window) {
-		this.window = window;
-	}
-
-	private SimpleWindow window;
-
-
-	/++
-		When you render a [ComponentInFlow], it returns an arbitrary number of these interfaces
-		representing the internal parts. The first pass is focused on the x parameter, then the
-		renderer is responsible for going back to the parts in the current line and calling
-		adjustDownForAscent to change the y params.
-	+/
-	static interface ComponentRenderHelper {
-
-		/+
-			When you do an edit, possibly stuff on the same line previously need to move (to adjust
-			the baseline), stuff subsequent needs to move (adjust x) and possibly stuff below needs
-			to move (adjust y to make room for new line) until you get back to the same position,
-			then you can stop - if one thing is unchanged, nothing after it is changed too.
-
-			Word wrap might change this as if can rewrap tons of stuff, but the same idea applies,
-			once you reach something that is unchanged, you can stop.
-		+/
-
-		void adjustDownForAscent(int amount); // at the end of the line it needs to do these
-
-		int ascent() const;
-		int descent() const;
-
-		int advance() const;
-
-		bool endsWithExplititLineBreak() const;
-	}
-
-	static interface RenderResult {
-		/++
-			This is responsible for using what space is left (your object is responsible for keeping its own state after getting it updated from [repositionForNextLine]) and not going over if at all possible. If you can word wrap, you should when space is out. Otherwise, you can keep going if it means overflow hidden or scroll.
-		+/
-		void popFront();
-		@property bool empty() const;
-		@property ComponentRenderHelper front() const;
-
-		void repositionForNextLine(Point baseline, int availableWidth);
-	}
-
-	static interface ComponentInFlow {
-		void draw(ScreenPainter painter);
-		//RenderResult render(Point baseline, int availableWidth); // FIXME: it needs to be able to say "my cache is good, nothing different"
-
-		bool startsWithExplicitLineBreak() const;
-	}
-
-	static class TextFlowComponent : ComponentInFlow {
-		bool startsWithExplicitLineBreak() const { return false; } // FIXME: if it is block this can return true
-
-		Color foreground;
-		Color background;
-
-		OperatingSystemFont font; // should NEVER be null
-
-		ubyte attributes; // underline, strike through, display on new block
-
-		version(Windows)
-			const(wchar)[] content;
-		else
-			const(char)[] content; // this should NEVER have a newline, except at the end
-
-		RenderedComponent[] rendered; // entirely controlled by [rerender]
-
-		// could prolly put some spacing around it too like margin / padding
-
-		this(Color f, Color b, OperatingSystemFont font, ubyte attr, const(char)[] c)
-			in { assert(font !is null);
-			     assert(!font.isNull); }
-			do
-		{
-			this.foreground = f;
-			this.background = b;
-			this.font = font;
-
-			this.attributes = attr;
-			version(Windows) {
-				auto conversionFlags = 0;//WindowsStringConversionFlags.convertNewLines;
-				auto sz = sizeOfConvertedWstring(c, conversionFlags);
-				auto buffer = new wchar[](sz);
-				this.content = makeWindowsString(c, buffer, conversionFlags);
-			} else {
-				this.content = c.dup;
-			}
-		}
-
-		void draw(ScreenPainter painter) {
-			painter.setFont(this.font);
-			painter.outlineColor = this.foreground;
-			painter.fillColor = Color.transparent;
-			foreach(rendered; this.rendered) {
-				// the component works in term of baseline,
-				// but the painter works in term of upper left bounding box
-				// so need to translate that
-
-				if(this.background.a) {
-					painter.fillColor = this.background;
-					painter.outlineColor = this.background;
-
-					painter.drawRectangle(Point(rendered.startX, rendered.startY - this.font.ascent), Size(rendered.width, this.font.height));
-
-					painter.outlineColor = this.foreground;
-					painter.fillColor = Color.transparent;
-				}
-
-				painter.drawText(Point(rendered.startX, rendered.startY - this.font.ascent), rendered.slice);
-
-				// FIXME: strike through, underline, highlight selection, etc.
-			}
-		}
-	}
-
-	// I could split the parts into words on render
-	// for easier word-wrap, each one being an unbreakable "inline-block"
-	private TextFlowComponent[] parts;
-	private int needsRerenderFrom;
-
-	void addPart(Color f, Color b, OperatingSystemFont font, ubyte attr, const(char)[] c) {
-		// FIXME: needsRerenderFrom. Basically if the bounding box and baseline is the same as the previous thing, it can prolly just stop.
-		parts ~= new TextFlowComponent(f, b, font, attr, c);
-	}
-
-	static struct RenderedComponent {
-		int startX;
-		int startY;
-		short width;
-		// height is always from the containing part's font. This saves some space and means recalculations need not continue past the current line, unless a new part is added with a different font!
-		// for individual chars in here you've gotta process on demand
-		version(Windows)
-			const(wchar)[] slice;
-		else
-			const(char)[] slice;
-	}
-
-
-	void rerender(Rectangle boundingBox) {
-		Point baseline = boundingBox.upperLeft;
-
-		this.boundingBox.left = boundingBox.left;
-		this.boundingBox.top = boundingBox.top;
-
-		auto remainingParts = parts;
-
-		int largestX;
-
-
-		foreach(part; parts)
-			part.font.prepareContext(window);
-		scope(exit)
-		foreach(part; parts)
-			part.font.releaseContext();
-
-		calculateNextLine:
-
-		int nextLineHeight = 0;
-		int nextBiggestDescent = 0;
-
-		foreach(part; remainingParts) {
-			auto height = part.font.ascent;
-			if(height > nextLineHeight)
-				nextLineHeight = height;
-			if(part.font.descent > nextBiggestDescent)
-				nextBiggestDescent = part.font.descent;
-			if(part.content.length && part.content[$-1] == '\n')
-				break;
-		}
-
-		baseline.y += nextLineHeight;
-		auto lineStart = baseline;
-
-		while(remainingParts.length) {
-			remainingParts[0].rendered = null;
-
-			bool eol;
-			if(remainingParts[0].content.length && remainingParts[0].content[$-1] == '\n')
-				eol = true;
-
-			// FIXME: word wrap
-			auto font = remainingParts[0].font;
-			auto slice = remainingParts[0].content[0 .. $ - (eol ? 1 : 0)];
-			auto width = font.stringWidth(slice, window);
-			remainingParts[0].rendered ~= RenderedComponent(baseline.x, baseline.y, cast(short) width, slice);
-
-			remainingParts = remainingParts[1 .. $];
-			baseline.x += width;
-
-			if(eol) {
-				baseline.y += nextBiggestDescent;
-				if(baseline.x > largestX)
-					largestX = baseline.x;
-				baseline.x = lineStart.x;
-				goto calculateNextLine;
-			}
-		}
-
-		if(baseline.x > largestX)
-			largestX = baseline.x;
-
-		this.boundingBox.right = largestX;
-		this.boundingBox.bottom = baseline.y;
-	}
-
-	// you must call rerender first!
-	void draw(ScreenPainter painter) {
-		foreach(part; parts) {
-			part.draw(painter);
-		}
-	}
-
-	struct IdentifyResult {
-		TextFlowComponent part;
-		int charIndexInPart;
-		int totalCharIndex = -1; // if this is -1, it just means the end
-
-		Rectangle boundingBox;
-	}
-
-	IdentifyResult identify(Point pt, bool exact = false) {
-		if(parts.length == 0)
-			return IdentifyResult(null, 0);
-
-		if(pt.y < boundingBox.top) {
-			if(exact)
-				return IdentifyResult(null, 1);
-			return IdentifyResult(parts[0], 0);
-		}
-		if(pt.y > boundingBox.bottom) {
-			if(exact)
-				return IdentifyResult(null, 2);
-			return IdentifyResult(parts[$-1], cast(int) parts[$-1].content.length);
-		}
-
-		int tci = 0;
-
-		// I should probably like binary search this or something...
-		foreach(ref part; parts) {
-			foreach(rendered; part.rendered) {
-				auto rect = Rectangle(rendered.startX, rendered.startY - part.font.ascent, rendered.startX + rendered.width, rendered.startY + part.font.descent);
-				if(rect.contains(pt)) {
-					auto x = pt.x - rendered.startX;
-					auto estimatedIdx = x / part.font.averageWidth;
-
-					if(estimatedIdx < 0)
-						estimatedIdx = 0;
-
-					if(estimatedIdx > rendered.slice.length)
-						estimatedIdx = cast(int) rendered.slice.length;
-
-					int idx;
-					int x1, x2;
-					if(part.font.isMonospace) {
-						auto w = part.font.averageWidth;
-						if(!exact && x > (estimatedIdx + 1) * w)
-							return IdentifyResult(null, 4);
-						idx = estimatedIdx;
-						x1 = idx * w;
-						x2 = (idx + 1) * w;
-					} else {
-						idx = estimatedIdx;
-
-						part.font.prepareContext(window);
-						scope(exit) part.font.releaseContext();
-
-						// int iterations;
-
-						while(true) {
-							// iterations++;
-							x1 = idx ? part.font.stringWidth(rendered.slice[0 .. idx - 1]) : 0;
-							x2 = part.font.stringWidth(rendered.slice[0 .. idx]); // should be the maximum since `averageWidth` kinda lies.
-
-							x1 += rendered.startX;
-							x2 += rendered.startX;
-
-							if(pt.x < x1) {
-								if(idx == 0) {
-									if(exact)
-										return IdentifyResult(null, 6);
-									else
-										break;
-								}
-								idx--;
-							} else if(pt.x > x2) {
-								idx++;
-								if(idx > rendered.slice.length) {
-									if(exact)
-										return IdentifyResult(null, 5);
-									else
-										break;
-								}
-							} else if(pt.x >= x1 && pt.x <= x2) {
-								if(idx)
-									idx--; // point it at the original index
-								break; // we fit
-							}
-						}
-
-						// writeln(iterations)
-					}
-
-
-					return IdentifyResult(part, idx, tci + idx, Rectangle(x1, rect.top, x2, rect.bottom)); // FIXME: utf-8?
-				}
-			}
-			tci += cast(int) part.content.length; // FIXME: utf-8?
-		}
-		return IdentifyResult(null, 3);
-	}
-
-	Rectangle boundingBox; // only set after [rerender]
-
-	// text will be positioned around the exclusion zone
-	static struct ExclusionZone {
-
-	}
-
-	ExclusionZone[] exclusionZones;
-}
-
-
-// Don't use this yet. When I'm happy with it, I will move it to the
-// regular module namespace.
-mixin template ExperimentalTextComponent() {
-
-static:
-
-	alias Rectangle = arsd.color.Rectangle;
-
-	struct ForegroundColor {
-		Color color;
-		alias color this;
-
-		this(Color c) {
-			color = c;
-		}
-
-		this(int r, int g, int b, int a = 255) {
-			color = Color(r, g, b, a);
-		}
-
-		static ForegroundColor opDispatch(string s)() if(__traits(compiles, ForegroundColor(mixin("Color." ~ s)))) {
-			return ForegroundColor(mixin("Color." ~ s));
-		}
-	}
-
-	struct BackgroundColor {
-		Color color;
-		alias color this;
-
-		this(Color c) {
-			color = c;
-		}
-
-		this(int r, int g, int b, int a = 255) {
-			color = Color(r, g, b, a);
-		}
-
-		static BackgroundColor opDispatch(string s)() if(__traits(compiles, BackgroundColor(mixin("Color." ~ s)))) {
-			return BackgroundColor(mixin("Color." ~ s));
-		}
-	}
-
-	static class InlineElement {
-		string text;
-
-		BlockElement containingBlock;
-
-		Color color = Color.black;
-		Color backgroundColor = Color.transparent;
-		ushort styles;
-
-		string font;
-		int fontSize;
-
-		int lineHeight;
-
-		void* identifier;
-
-		Rectangle boundingBox;
-		int[] letterXs; // FIXME: maybe i should do bounding boxes for every character
-
-		bool isMergeCompatible(InlineElement other) {
-			return
-				containingBlock is other.containingBlock &&
-				color == other.color &&
-				backgroundColor == other.backgroundColor &&
-				styles == other.styles &&
-				font == other.font &&
-				fontSize == other.fontSize &&
-				lineHeight == other.lineHeight &&
-				true;
-		}
-
-		int xOfIndex(size_t index) {
-			if(index < letterXs.length)
-				return letterXs[index];
-			else
-				return boundingBox.right;
-		}
-
-		InlineElement clone() {
-			auto ie = new InlineElement();
-			ie.tupleof = this.tupleof;
-			return ie;
-		}
-
-		InlineElement getPreviousInlineElement() {
-			InlineElement prev = null;
-			foreach(ie; this.containingBlock.parts) {
-				if(ie is this)
-					break;
-				prev = ie;
-			}
-			if(prev is null) {
-				BlockElement pb;
-				BlockElement cb = this.containingBlock;
-				moar:
-				foreach(ie; this.containingBlock.containingLayout.blocks) {
-					if(ie is cb)
-						break;
-					pb = ie;
-				}
-				if(pb is null)
-					return null;
-				if(pb.parts.length == 0) {
-					cb = pb;
-					goto moar;
-				}
-
-				prev = pb.parts[$-1];
-
-			}
-			return prev;
-		}
-
-		InlineElement getNextInlineElement() {
-			InlineElement next = null;
-			foreach(idx, ie; this.containingBlock.parts) {
-				if(ie is this) {
-					if(idx + 1 < this.containingBlock.parts.length)
-						next = this.containingBlock.parts[idx + 1];
-					break;
-				}
-			}
-			if(next is null) {
-				BlockElement n;
-				foreach(idx, ie; this.containingBlock.containingLayout.blocks) {
-					if(ie is this.containingBlock) {
-						if(idx + 1 < this.containingBlock.containingLayout.blocks.length)
-							n = this.containingBlock.containingLayout.blocks[idx + 1];
-						break;
-					}
-				}
-				if(n is null)
-					return null;
-
-				if(n.parts.length)
-					next = n.parts[0];
-				else {} // FIXME
-
-			}
-			return next;
-		}
-
-	}
-
-	// Block elements are used entirely for positioning inline elements,
-	// which are the things that are actually drawn.
-	class BlockElement {
-		InlineElement[] parts;
-		uint alignment;
-
-		int whiteSpace; // pre, pre-wrap, wrap
-
-		TextLayout containingLayout;
-
-		// inputs
-		Point where;
-		Size minimumSize;
-		Size maximumSize;
-		Rectangle[] excludedBoxes; // like if you want it to write around a floated image or something. Coordinates are relative to the bounding box.
-		void* identifier;
-
-		Rectangle margin;
-		Rectangle padding;
-
-		// outputs
-		Rectangle[] boundingBoxes;
-	}
-
-	struct TextIdentifyResult {
-		InlineElement element;
-		int offset;
-
-		private TextIdentifyResult fixupNewline() {
-			if(element !is null && offset < element.text.length && element.text[offset] == '\n') {
-				offset--;
-			} else if(element !is null && offset == element.text.length && element.text.length > 1 && element.text[$-1] == '\n') {
-				offset--;
-			}
-			return this;
-		}
-	}
-
-	class TextLayout {
-		BlockElement[] blocks;
-		Rectangle boundingBox_;
-		Rectangle boundingBox() { return boundingBox_; }
-		void boundingBox(Rectangle r) {
-			if(r != boundingBox_) {
-				boundingBox_ = r;
-				layoutInvalidated = true;
-			}
-		}
-
-		Rectangle contentBoundingBox() {
-			Rectangle r;
-			foreach(block; blocks)
-			foreach(ie; block.parts) {
-				if(ie.boundingBox.right > r.right)
-					r.right = ie.boundingBox.right;
-				if(ie.boundingBox.bottom > r.bottom)
-					r.bottom = ie.boundingBox.bottom;
-			}
-			return r;
-		}
-
-		BlockElement[] getBlocks() {
-			return blocks;
-		}
-
-		InlineElement[] getTexts() {
-			InlineElement[] elements;
-			foreach(block; blocks)
-				elements ~= block.parts;
-			return elements;
-		}
-
-		string getPlainText() {
-			string text;
-			foreach(block; blocks)
-				foreach(part; block.parts)
-					text ~= part.text;
-			return text;
-		}
-
-		string getHtml() {
-			return null; // FIXME
-		}
-
-		this(Rectangle boundingBox) {
-			this.boundingBox = boundingBox;
-		}
-
-		BlockElement addBlock(InlineElement after = null, Rectangle margin = Rectangle(0, 0, 0, 0), Rectangle padding = Rectangle(0, 0, 0, 0)) {
-			auto be = new BlockElement();
-			be.containingLayout = this;
-			if(after is null)
-				blocks ~= be;
-			else {
-				foreach(idx, b; blocks) {
-					if(b is after.containingBlock) {
-						blocks = blocks[0 .. idx + 1] ~  be ~ blocks[idx + 1 .. $];
-						break;
-					}
-				}
-			}
-			return be;
-		}
-
-		void clear() {
-			blocks = null;
-			selectionStart = selectionEnd = caret = Caret.init;
-		}
-
-		void addText(Args...)(Args args) {
-			if(blocks.length == 0)
-				addBlock();
-
-			InlineElement ie = new InlineElement();
-			foreach(idx, arg; args) {
-				static if(is(typeof(arg) == ForegroundColor))
-					ie.color = arg;
-				else static if(is(typeof(arg) == TextFormat)) {
-					if(arg & 0x8000) // ~TextFormat.something turns it off
-						ie.styles &= arg;
-					else
-						ie.styles |= arg;
-				} else static if(is(typeof(arg) == string)) {
-					static if(idx == 0 && args.length > 1)
-						static assert(0, "Put styles before the string.");
-					size_t lastLineIndex;
-					foreach(cidx, char a; arg) {
-						if(a == '\n') {
-							ie.text = arg[lastLineIndex .. cidx + 1];
-							lastLineIndex = cidx + 1;
-							ie.containingBlock = blocks[$-1];
-							blocks[$-1].parts ~= ie.clone;
-							ie.text = null;
-						} else {
-
-						}
-					}
-
-					ie.text = arg[lastLineIndex .. $];
-					ie.containingBlock = blocks[$-1];
-					blocks[$-1].parts ~= ie.clone;
-					caret = Caret(this, blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length);
-				}
-			}
-
-			invalidateLayout();
-		}
-
-		void tryMerge(InlineElement into, InlineElement what) {
-			if(!into.isMergeCompatible(what)) {
-				return; // cannot merge, different configs
-			}
-
-			// cool, can merge, bring text together...
-			into.text ~= what.text;
-
-			// and remove what
-			for(size_t a = 0; a < what.containingBlock.parts.length; a++) {
-				if(what.containingBlock.parts[a] is what) {
-					for(size_t i = a; i < what.containingBlock.parts.length - 1; i++)
-						what.containingBlock.parts[i] = what.containingBlock.parts[i + 1];
-					what.containingBlock.parts = what.containingBlock.parts[0 .. $-1];
-
-				}
-			}
-
-			// FIXME: ensure no other carets have a reference to it
-		}
-
-		/// exact = true means return null if no match. otherwise, get the closest one that makes sense for a mouse click.
-		TextIdentifyResult identify(int x, int y, bool exact = false) {
-			TextIdentifyResult inexactMatch;
-			foreach(block; blocks) {
-				foreach(part; block.parts) {
-					if(x >= part.boundingBox.left && x < part.boundingBox.right && y >= part.boundingBox.top && y < part.boundingBox.bottom) {
-
-						// FIXME binary search
-						int tidx;
-						int lastX;
-						foreach_reverse(idxo, lx; part.letterXs) {
-							int idx = cast(int) idxo;
-							if(lx <= x) {
-								if(lastX && lastX - x < x - lx)
-									tidx = idx + 1;
-								else
-									tidx = idx;
-								break;
-							}
-							lastX = lx;
-						}
-
-						return TextIdentifyResult(part, tidx).fixupNewline;
-					} else if(!exact) {
-						// we're not in the box, but are we on the same line?
-						if(y >= part.boundingBox.top && y < part.boundingBox.bottom)
-							inexactMatch = TextIdentifyResult(part, x == 0 ? 0 : cast(int) part.text.length);
-					}
-				}
-			}
-
-			if(!exact && inexactMatch is TextIdentifyResult.init && blocks.length && blocks[$-1].parts.length)
-				return TextIdentifyResult(blocks[$-1].parts[$-1], cast(int) blocks[$-1].parts[$-1].text.length).fixupNewline;
-
-			return exact ? TextIdentifyResult.init : inexactMatch.fixupNewline;
-		}
-
-		void moveCaretToPixelCoordinates(int x, int y) {
-			auto result = identify(x, y);
-			caret.inlineElement = result.element;
-			caret.offset = result.offset;
-		}
-
-		void selectToPixelCoordinates(int x, int y) {
-			auto result = identify(x, y);
-
-			if(y < caretLastDrawnY1) {
-				// on a previous line, carat is selectionEnd
-				selectionEnd = caret;
-
-				selectionStart = Caret(this, result.element, result.offset);
-			} else if(y > caretLastDrawnY2) {
-				// on a later line
-				selectionStart = caret;
-
-				selectionEnd = Caret(this, result.element, result.offset);
-			} else {
-				// on the same line...
-				if(x <= caretLastDrawnX) {
-					selectionEnd = caret;
-					selectionStart = Caret(this, result.element, result.offset);
-				} else {
-					selectionStart = caret;
-					selectionEnd = Caret(this, result.element, result.offset);
-				}
-
-			}
-		}
-
-
-		/// Call this if the inputs change. It will reflow everything
-		void redoLayout(ScreenPainter painter) {
-			//painter.setClipRectangle(boundingBox);
-			auto pos = Point(boundingBox.left, boundingBox.top);
-
-			int lastHeight;
-			void nl() {
-				pos.x = boundingBox.left;
-				pos.y += lastHeight;
-			}
-			foreach(block; blocks) {
-				nl();
-				foreach(part; block.parts) {
-					part.letterXs = null;
-
-					auto size = painter.textSize(part.text);
-					version(Windows)
-						if(part.text.length && part.text[$-1] == '\n')
-							size.height /= 2; // windows counts the new line at the end, but we don't want that
-
-					part.boundingBox = Rectangle(pos.x, pos.y, pos.x + size.width, pos.y + size.height);
-
-					foreach(idx, char c; part.text) {
-							// FIXME: unicode
-						part.letterXs ~= painter.textSize(part.text[0 .. idx]).width + pos.x;
-					}
-
-					pos.x += size.width;
-					if(pos.x >= boundingBox.right) {
-						pos.y += size.height;
-						pos.x = boundingBox.left;
-						lastHeight = 0;
-					} else {
-						lastHeight = size.height;
-					}
-
-					if(part.text.length && part.text[$-1] == '\n')
-						nl();
-				}
-			}
-
-			layoutInvalidated = false;
-		}
-
-		bool layoutInvalidated = true;
-		void invalidateLayout() {
-			layoutInvalidated = true;
-		}
-
-// FIXME: caret can remain sometimes when inserting
-// FIXME: inserting at the beginning once you already have something can eff it up.
-		void drawInto(ScreenPainter painter, bool focused = false) {
-			if(layoutInvalidated)
-				redoLayout(painter);
-			foreach(block; blocks) {
-				foreach(part; block.parts) {
-					painter.outlineColor = part.color;
-					painter.fillColor = part.backgroundColor;
-
-					auto pos = part.boundingBox.upperLeft;
-					auto size = part.boundingBox.size;
-
-					painter.drawText(pos, part.text);
-					if(part.styles & TextFormat.underline)
-						painter.drawLine(Point(pos.x, pos.y + size.height - 4), Point(pos.x + size.width, pos.y + size.height - 4));
-					if(part.styles & TextFormat.strikethrough)
-						painter.drawLine(Point(pos.x, pos.y + size.height/2), Point(pos.x + size.width, pos.y + size.height/2));
-				}
-			}
-
-			// on every redraw, I will force the caret to be
-			// redrawn too, in order to eliminate perceived lag
-			// when moving around with the mouse.
-			eraseCaret(painter);
-
-			if(focused) {
-				highlightSelection(painter);
-				drawCaret(painter);
-			}
-		}
-
-		Color selectionXorColor = Color(255, 255, 127);
-
-		void highlightSelection(ScreenPainter painter) {
-			if(selectionStart is selectionEnd)
-				return; // no selection
-
-			if(selectionStart.inlineElement is null) return;
-			if(selectionEnd.inlineElement is null) return;
-
-			assert(selectionStart.inlineElement !is null);
-			assert(selectionEnd.inlineElement !is null);
-
-			painter.rasterOp = RasterOp.xor;
-			painter.outlineColor = Color.transparent;
-			painter.fillColor = selectionXorColor;
-
-			auto at = selectionStart.inlineElement;
-			auto atOffset = selectionStart.offset;
-			bool done;
-			while(at) {
-				auto box = at.boundingBox;
-				if(atOffset < at.letterXs.length)
-					box.left = at.letterXs[atOffset];
-
-				if(at is selectionEnd.inlineElement) {
-					if(selectionEnd.offset < at.letterXs.length)
-						box.right = at.letterXs[selectionEnd.offset];
-					done = true;
-				}
-
-				painter.drawRectangle(box.upperLeft, box.width, box.height);
-
-				if(done)
-					break;
-
-				at = at.getNextInlineElement();
-				atOffset = 0;
-			}
-		}
-
-		int caretLastDrawnX, caretLastDrawnY1, caretLastDrawnY2;
-		bool caretShowingOnScreen = false;
-		void drawCaret(ScreenPainter painter) {
-			//painter.setClipRectangle(boundingBox);
-			int x, y1, y2;
-			if(caret.inlineElement is null) {
-				x = boundingBox.left;
-				y1 = boundingBox.top + 2;
-				y2 = boundingBox.top + painter.fontHeight;
-			} else {
-				x = caret.inlineElement.xOfIndex(caret.offset);
-				y1 = caret.inlineElement.boundingBox.top + 2;
-				y2 = caret.inlineElement.boundingBox.bottom - 2;
-			}
-
-			if(caretShowingOnScreen && (x != caretLastDrawnX || y1 != caretLastDrawnY1 || y2 != caretLastDrawnY2))
-				eraseCaret(painter);
-
-			painter.pen = Pen(Color.white, 1);
-			painter.rasterOp = RasterOp.xor;
-			painter.drawLine(
-				Point(x, y1),
-				Point(x, y2)
-			);
-			painter.rasterOp = RasterOp.normal;
-			caretShowingOnScreen = !caretShowingOnScreen;
-
-			if(caretShowingOnScreen) {
-				caretLastDrawnX = x;
-				caretLastDrawnY1 = y1;
-				caretLastDrawnY2 = y2;
-			}
-		}
-
-		Rectangle caretBoundingBox() {
-			int x, y1, y2;
-			if(caret.inlineElement is null) {
-				x = boundingBox.left;
-				y1 = boundingBox.top + 2;
-				y2 = boundingBox.top + 16;
-			} else {
-				x = caret.inlineElement.xOfIndex(caret.offset);
-				y1 = caret.inlineElement.boundingBox.top + 2;
-				y2 = caret.inlineElement.boundingBox.bottom - 2;
-			}
-
-			return Rectangle(x, y1, x + 1, y2);
-		}
-
-		void eraseCaret(ScreenPainter painter) {
-			//painter.setClipRectangle(boundingBox);
-			if(!caretShowingOnScreen) return;
-			painter.pen = Pen(Color.white, 1);
-			painter.rasterOp = RasterOp.xor;
-			painter.drawLine(
-				Point(caretLastDrawnX, caretLastDrawnY1),
-				Point(caretLastDrawnX, caretLastDrawnY2)
-			);
-
-			caretShowingOnScreen = false;
-			painter.rasterOp = RasterOp.normal;
-		}
-
-		/// Caret movement api
-		/// These should give the user a logical result based on what they see on screen...
-		/// thus they locate predominately by *pixels* not char index. (These will generally coincide with monospace fonts tho!)
-		void moveUp() {
-			if(caret.inlineElement is null) return;
-			auto x = caret.inlineElement.xOfIndex(caret.offset);
-			auto y = caret.inlineElement.boundingBox.top + 2;
-
-			y -= caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
-			if(y < 0)
-				return;
-
-			auto i = identify(x, y);
-
-			if(i.element) {
-				caret.inlineElement = i.element;
-				caret.offset = i.offset;
-			}
-		}
-		void moveDown() {
-			if(caret.inlineElement is null) return;
-			auto x = caret.inlineElement.xOfIndex(caret.offset);
-			auto y = caret.inlineElement.boundingBox.bottom - 2;
-
-			y += caret.inlineElement.boundingBox.bottom - caret.inlineElement.boundingBox.top;
-
-			auto i = identify(x, y);
-			if(i.element) {
-				caret.inlineElement = i.element;
-				caret.offset = i.offset;
-			}
-		}
-		void moveLeft() {
-			if(caret.inlineElement is null) return;
-			if(caret.offset)
-				caret.offset--;
-			else {
-				auto p = caret.inlineElement.getPreviousInlineElement();
-				if(p) {
-					caret.inlineElement = p;
-					if(p.text.length && p.text[$-1] == '\n')
-						caret.offset = cast(int) p.text.length - 1;
-					else
-						caret.offset = cast(int) p.text.length;
-				}
-			}
-		}
-		void moveRight() {
-			if(caret.inlineElement is null) return;
-			if(caret.offset < caret.inlineElement.text.length && caret.inlineElement.text[caret.offset] != '\n') {
-				caret.offset++;
-			} else {
-				auto p = caret.inlineElement.getNextInlineElement();
-				if(p) {
-					caret.inlineElement = p;
-					caret.offset = 0;
-				}
-			}
-		}
-		void moveHome() {
-			if(caret.inlineElement is null) return;
-			auto x = 0;
-			auto y = caret.inlineElement.boundingBox.top + 2;
-
-			auto i = identify(x, y);
-
-			if(i.element) {
-				caret.inlineElement = i.element;
-				caret.offset = i.offset;
-			}
-		}
-		void moveEnd() {
-			if(caret.inlineElement is null) return;
-			auto x = int.max;
-			auto y = caret.inlineElement.boundingBox.top + 2;
-
-			auto i = identify(x, y);
-
-			if(i.element) {
-				caret.inlineElement = i.element;
-				caret.offset = i.offset;
-			}
-
-		}
-		void movePageUp(ref Caret caret) {}
-		void movePageDown(ref Caret caret) {}
-
-		void moveDocumentStart(ref Caret caret) {
-			if(blocks.length && blocks[0].parts.length)
-				caret = Caret(this, blocks[0].parts[0], 0);
-			else
-				caret = Caret.init;
-		}
-
-		void moveDocumentEnd(ref Caret caret) {
-			if(blocks.length) {
-				auto parts = blocks[$-1].parts;
-				if(parts.length) {
-					caret = Caret(this, parts[$-1], cast(int) parts[$-1].text.length);
-				} else {
-					caret = Caret.init;
-				}
-			} else
-				caret = Caret.init;
-		}
-
-		void deleteSelection() {
-			if(selectionStart is selectionEnd)
-				return;
-
-			if(selectionStart.inlineElement is null) return;
-			if(selectionEnd.inlineElement is null) return;
-
-			assert(selectionStart.inlineElement !is null);
-			assert(selectionEnd.inlineElement !is null);
-
-			auto at = selectionStart.inlineElement;
-
-			if(selectionEnd.inlineElement is at) {
-				// same element, need to chop out
-				at.text = at.text[0 .. selectionStart.offset] ~ at.text[selectionEnd.offset .. $];
-				at.letterXs = at.letterXs[0 .. selectionStart.offset] ~ at.letterXs[selectionEnd.offset .. $];
-				selectionEnd.offset -= selectionEnd.offset - selectionStart.offset;
-			} else {
-				// different elements, we can do it with slicing
-				at.text = at.text[0 .. selectionStart.offset];
-				if(selectionStart.offset < at.letterXs.length)
-					at.letterXs = at.letterXs[0 .. selectionStart.offset];
-
-				at = at.getNextInlineElement();
-
-				while(at) {
-					if(at is selectionEnd.inlineElement) {
-						at.text = at.text[selectionEnd.offset .. $];
-						if(selectionEnd.offset < at.letterXs.length)
-							at.letterXs = at.letterXs[selectionEnd.offset .. $];
-						selectionEnd.offset = 0;
-						break;
-					} else {
-						auto cfd = at;
-						cfd.text = null; // delete the whole thing
-
-						at = at.getNextInlineElement();
-
-						if(cfd.text.length == 0) {
-							// and remove cfd
-							for(size_t a = 0; a < cfd.containingBlock.parts.length; a++) {
-								if(cfd.containingBlock.parts[a] is cfd) {
-									for(size_t i = a; i < cfd.containingBlock.parts.length - 1; i++)
-										cfd.containingBlock.parts[i] = cfd.containingBlock.parts[i + 1];
-									cfd.containingBlock.parts = cfd.containingBlock.parts[0 .. $-1];
-
-								}
-							}
-						}
-					}
-				}
-			}
-
-			caret = selectionEnd;
-			selectNone();
-
-			invalidateLayout();
-
-		}
-
-		/// Plain text editing api. These work at the current caret inside the selected inline element.
-		void insert(in char[] text) {
-			foreach(dchar ch; text)
-				insert(ch);
-		}
-		/// ditto
-		void insert(dchar ch) {
-
-			bool selectionDeleted = false;
-			if(selectionStart !is selectionEnd) {
-				deleteSelection();
-				selectionDeleted = true;
-			}
-
-			if(ch == 127) {
-				delete_();
-				return;
-			}
-			if(ch == 8) {
-				if(!selectionDeleted)
-					backspace();
-				return;
-			}
-
-			invalidateLayout();
-
-			if(ch == 13) ch = 10;
-			auto e = caret.inlineElement;
-			if(e is null) {
-				addText("" ~ cast(char) ch) ; // FIXME
-				return;
-			}
-
-			if(caret.offset == e.text.length) {
-				e.text ~= cast(char) ch; // FIXME
-				caret.offset++;
-				if(ch == 10) {
-					auto c = caret.inlineElement.clone;
-					c.text = null;
-					c.letterXs = null;
-					insertPartAfter(c,e);
-					caret = Caret(this, c, 0);
-				}
-			} else {
-				// FIXME cast char sucks
-				if(ch == 10) {
-					auto c = caret.inlineElement.clone;
-					c.text = e.text[caret.offset .. $];
-					if(caret.offset < c.letterXs.length)
-						c.letterXs = e.letterXs[caret.offset .. $]; // FIXME boundingBox
-					e.text = e.text[0 .. caret.offset] ~ cast(char) ch;
-					if(caret.offset <= e.letterXs.length) {
-						e.letterXs = e.letterXs[0 .. caret.offset] ~ 0; // FIXME bounding box
-					}
-					insertPartAfter(c,e);
-					caret = Caret(this, c, 0);
-				} else {
-					e.text = e.text[0 .. caret.offset] ~ cast(char) ch ~ e.text[caret.offset .. $];
-					caret.offset++;
-				}
-			}
-		}
-
-		void insertPartAfter(InlineElement what, InlineElement where) {
-			foreach(idx, p; where.containingBlock.parts) {
-				if(p is where) {
-					if(idx + 1 == where.containingBlock.parts.length)
-						where.containingBlock.parts ~= what;
-					else
-						where.containingBlock.parts = where.containingBlock.parts[0 .. idx + 1] ~ what ~ where.containingBlock.parts[idx + 1 .. $];
-					return;
-				}
-			}
-		}
-
-		void cleanupStructures() {
-			for(size_t i = 0; i < blocks.length; i++) {
-				auto block = blocks[i];
-				for(size_t a = 0; a < block.parts.length; a++) {
-					auto part = block.parts[a];
-					if(part.text.length == 0) {
-						for(size_t b = a; b < block.parts.length - 1; b++)
-							block.parts[b] = block.parts[b+1];
-						block.parts = block.parts[0 .. $-1];
-					}
-				}
-				if(block.parts.length == 0) {
-					for(size_t a = i; a < blocks.length - 1; a++)
-						blocks[a] = blocks[a+1];
-					blocks = blocks[0 .. $-1];
-				}
-			}
-		}
-
-		void backspace() {
-			try_again:
-			auto e = caret.inlineElement;
-			if(e is null)
-				return;
-			if(caret.offset == 0) {
-				auto prev = e.getPreviousInlineElement();
-				if(prev is null)
-					return;
-				auto newOffset = cast(int) prev.text.length;
-				tryMerge(prev, e);
-				caret.inlineElement = prev;
-				caret.offset = prev is null ? 0 : newOffset;
-
-				goto try_again;
-			} else if(caret.offset == e.text.length) {
-				e.text = e.text[0 .. $-1];
-				caret.offset--;
-			} else {
-				e.text = e.text[0 .. caret.offset - 1] ~ e.text[caret.offset .. $];
-				caret.offset--;
-			}
-			//cleanupStructures();
-
-			invalidateLayout();
-		}
-		void delete_() {
-			if(selectionStart !is selectionEnd)
-				deleteSelection();
-			else {
-				auto before = caret;
-				moveRight();
-				if(caret != before) {
-					backspace();
-				}
-			}
-
-			invalidateLayout();
-		}
-		void overstrike() {}
-
-		/// Selection API. See also: caret movement.
-		void selectAll() {
-			moveDocumentStart(selectionStart);
-			moveDocumentEnd(selectionEnd);
-		}
-		bool selectNone() {
-			if(selectionStart != selectionEnd) {
-				selectionStart = selectionEnd = Caret.init;
-				return true;
-			}
-			return false;
-		}
-
-		/// Rich text editing api. These allow you to manipulate the meta data of the current element and add new elements.
-		/// They will modify the current selection if there is one and will splice one in if needed.
-		void changeAttributes() {}
-
-
-		/// Text search api. They manipulate the selection and/or caret.
-		void findText(string text) {}
-		void findIndex(size_t textIndex) {}
-
-		// sample event handlers
-
-		void handleEvent(KeyEvent event) {
-			//if(event.type == KeyEvent.Type.KeyPressed) {
-
-			//}
-		}
-
-		void handleEvent(dchar ch) {
-
-		}
-
-		void handleEvent(MouseEvent event) {
-
-		}
-
-		bool contentEditable; // can it be edited?
-		bool contentCaretable; // is there a caret/cursor that moves around in there?
-		bool contentSelectable; // selectable?
-
-		Caret caret;
-		Caret selectionStart;
-		Caret selectionEnd;
-
-		bool insertMode;
-	}
-
-	struct Caret {
-		TextLayout layout;
-		InlineElement inlineElement;
-		int offset;
-	}
-
-	enum TextFormat : ushort {
-		// decorations
-		underline = 1,
-		strikethrough = 2,
-
-		// font selectors
-
-		bold = 0x4000 | 1, // weight 700
-		light = 0x4000 | 2, // weight 300
-		veryBoldOrLight = 0x4000 | 4, // weight 100 with light, weight 900 with bold
-		// bold | light is really invalid but should give weight 500
-		// veryBoldOrLight without one of the others should just give the default for the font; it should be ignored.
-
-		italic = 0x4000 | 8,
-		smallcaps = 0x4000 | 16,
-	}
-
-	void* findFont(string family, int weight, TextFormat formats) {
-		return null;
-	}
-
 }
 
 /++

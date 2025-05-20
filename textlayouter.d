@@ -132,6 +132,8 @@ import arsd.simpledisplay;
 
 // You can do the caret by any time it gets drawn, you set the flag that it is on, then you can xor it to turn it off and keep track of that at top level.
 
+alias width_t = float;// short;
+
 
 // FIXME: might want to be able to swap out all styles at once and trigger whole relayout, as if a document theme changed wholesale, without changing the saved style handles
 // FIXME: line and paragrpah numbering options while drawing
@@ -227,13 +229,13 @@ class TerminalFontRepresentation : MeasurableFont {
 	}
 
 	bool isMonospace() { return true; }
-	int averageWidth() { return 1; }
-	int height() { return 1; }
+	fnum averageWidth() { return 1; }
+	fnum height() { return 1; }
 	/// since it is a grid this is a bit bizarre to translate.
-	int ascent() { return 1; }
-	int descent() { return 0; }
+	fnum ascent() { return 1; }
+	fnum descent() { return 0; }
 
-	int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+	fnum stringWidth(scope const(char)[] s, SimpleWindow window = null) {
 		int count;
 		foreach(dchar ch; s)
 			count++;
@@ -1424,7 +1426,7 @@ class TextLayouter {
 			auto w = segmentsWidths[segmentIndex][codepointCounter];
 
 			if(thing + segment.textBeginOffset == idx) {
-				bb.right = bb.left + w;
+				bb.right = cast(typeof(bb.right))(bb.left + w);
 				return bb;
 			}
 
@@ -1511,7 +1513,7 @@ class TextLayouter {
 			// the rest of this might need splitting based on selections
 
 			DrawingInformation di;
-			di.boundingBox = Rectangle(segment.upperLeft, Size(segment.width, segment.height));
+			di.boundingBox = Rectangle(segment.upperLeft, Size(castFnumToCnum(segment.width), segment.height));
 			di.selections = 0;
 
 			// di.initialBaseline = Point(x, y); // FIXME
@@ -1650,7 +1652,7 @@ class TextLayouter {
 
 		// the layout function calculates these
 		Segment[] segments;
-		short[][] segmentsWidths;
+		width_t[][] segmentsWidths;
 	}
 
 	/++
@@ -1715,7 +1717,7 @@ class TextLayouter {
 		int styleInformationIndex;
 
 		// calculated values after iterating through the segment
-		int width; // short
+		MeasurableFont.fnum width; // short
 		int height; // short
 
 		Point upperLeft;
@@ -1729,7 +1731,7 @@ class TextLayouter {
 		*/
 
 		Rectangle boundingBox() {
-			return Rectangle(upperLeft, Size(width, height));
+			return Rectangle(upperLeft, Size(castFnumToCnum(width), height));
 		}
 	}
 
@@ -1776,7 +1778,7 @@ class TextLayouter {
 			idx = segment.textBeginOffset;
 			// FIXME: this all assumes ltr
 
-			auto boundingBox = Rectangle(segment.upperLeft, Size(segment.width, segment.height));
+			auto boundingBox = Rectangle(segment.upperLeft, Size(castFnumToCnum(segment.width), segment.height));
 			if(boundingBox.contains(p)) {
 				int x = segment.upperLeft.x;
 				int codePointIndex = 0;
@@ -2118,12 +2120,15 @@ class TextLayouter {
 		Segment segment;
 
 		Segment previousOldSavedSegment;
-		short[] previousOldSavedWidths;
+		width_t[] previousOldSavedWidths;
 		TextStyle currentStyle = null;
 		int currentStyleIndex = 0;
 		MeasurableFont font;
 		bool glyphCacheValid;
-		ubyte[128] glyphWidths;
+		version(OSX)
+			float[128] glyphWidths;
+		else
+			ubyte[128] glyphWidths;
 		void loadNewFont(MeasurableFont what) {
 			font = what;
 
@@ -2135,7 +2140,10 @@ class TextLayouter {
 					glyphCacheValid = false;
 					break;
 				}
-				glyphWidths[c] = cast(ubyte) w; // FIXME: what if it doesn't fit?
+				version(OSX)
+					glyphWidths[c] = w;
+				else
+					glyphWidths[c] = cast(ubyte) w; // FIXME: what if it doesn't fit?
 			}
 		}
 
@@ -2164,7 +2172,7 @@ class TextLayouter {
 
 		assert(offsetToNextStyle >= 0);
 
-		short[] widths;
+		width_t[] widths;
 
 		size_t segmentBegan = invalidStart;
 		void finishSegment(size_t idx) {
@@ -2193,8 +2201,8 @@ class TextLayouter {
 		}
 
 		// FIXME: when we start in an invalidated thing this is not necessarily right, it should be calculated above
-		int biggestDescent = font.descent;
-		int lineHeight = font.height;
+		auto biggestDescent = font.descent;
+		auto lineHeight = font.height;
 
 		bool finishLine(size_t idx, MeasurableFont outerFont) {
 			if(segment.textBeginOffset == idx)
@@ -2227,7 +2235,7 @@ class TextLayouter {
 				auto baseline = thisLineHeight - biggestDescent;
 
 				seg.upperLeft.y += baseline - font.ascent;
-				seg.height = thisLineHeight - (baseline - font.ascent);
+				seg.height = castFnumToCnum(thisLineHeight - (baseline - font.ascent));
 			}
 
 			// now need to check if we can finish relayout early
@@ -2375,7 +2383,7 @@ class TextLayouter {
 
 
 
-			int thisWidth = 0;
+			MeasurableFont.fnum thisWidth = 0;
 
 			// FIXME: delegate private-use area to their own segments
 			// FIXME: line separator, paragraph separator, form feed
@@ -2456,7 +2464,7 @@ class TextLayouter {
 
 			advance:
 			if(segment.textBeginOffset != -1) {
-				widths ~= cast(short) thisWidth;
+				widths ~= cast(width_t) thisWidth;
 			}
 		}
 

@@ -1007,7 +1007,7 @@ class Widget : ReflectableProperties {
 	protected final int defaultLineHeight() {
 		auto cs = getComputedStyle();
 		if(cs.font && !cs.font.isNull)
-			return cs.font.height() * 5 / 4;
+			return castFnumToCnum(cs.font.height() * 5 / 4);
 		else
 			return scaleWithDpi(Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * 5/4);
 	}
@@ -1020,7 +1020,7 @@ class Widget : ReflectableProperties {
 	protected final int defaultTextHeight(int numberOfLines = 1) {
 		auto cs = getComputedStyle();
 		if(cs.font && !cs.font.isNull)
-			return cs.font.height() * numberOfLines;
+			return castFnumToCnum(cs.font.height() * numberOfLines);
 		else
 			return Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * numberOfLines;
 	}
@@ -1028,7 +1028,7 @@ class Widget : ReflectableProperties {
 	protected final int defaultTextWidth(const(char)[] text) {
 		auto cs = getComputedStyle();
 		if(cs.font && !cs.font.isNull)
-			return cs.font.stringWidth(text);
+			return castFnumToCnum(cs.font.stringWidth(text));
 		else
 			return scaleWithDpi(Window.lineHeightNotDeprecatedButShouldBeSinceItIsJustAFallback * cast(int) text.length / 2);
 	}
@@ -1875,7 +1875,10 @@ class Widget : ReflectableProperties {
 			x = pt.x;
 			y = pt.y;
 		} else {
-			featureNotImplemented();
+			auto rect = this.parentWindow.win.impl.window.frame;
+			// FIXME: confirm?
+			x += cast(int) rect.origin.x;
+			y += cast(int) rect.origin.y;
 		}
 
 		return Point(x, y);
@@ -9261,12 +9264,12 @@ class Window : Widget {
 			if(defaultHeightCache == 0) {
 				font = new OperatingSystemFont;
 				font.loadDefault;
-				defaultHeightCache = font.height();// * 5 / 4;
+				defaultHeightCache = castFnumToCnum(font.height());// * 5 / 4;
 			}
 			return defaultHeightCache;
 		}
 
-		return font.height();// * 5 / 4;
+		return castFnumToCnum(font.height());// * 5 / 4;
 	}
 
 	Widget focusedWidget;
@@ -12221,7 +12224,7 @@ class StatusBar : Widget {
 					auto cs = getComputedStyle();
 					auto font = cs.font;
 
-					part.currentlyAssignedWidth = font.averageWidth * this.width;
+					part.currentlyAssignedWidth = castFnumToCnum(font.averageWidth * this.width);
 					remainingLength -= part.currentlyAssignedWidth;
 				break;
 				case Proportional:
@@ -14642,12 +14645,12 @@ class TextDisplayHelper : Widget {
 		}
 
 		bool isMonospace() { return false; }
-		int averageWidth() { return image_.width; }
-		int height() { return image_.height; }
-		int ascent() { return image_.height; }
-		int descent() { return 0; }
+		fnum averageWidth() { return image_.width; }
+		fnum height() { return image_.height; }
+		fnum ascent() { return image_.height; }
+		fnum descent() { return 0; }
 
-		int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+		fnum stringWidth(scope const(char)[] s, SimpleWindow window = null) {
 			return image_.width;
 		}
 
@@ -15083,7 +15086,7 @@ class PasswordEdit : EditableTextWidget {
 			this() {
 				super(cs.font);
 			}
-			override int stringWidth(scope const(char)[] text, SimpleWindow window = null) {
+			override fnum stringWidth(scope const(char)[] text, SimpleWindow window = null) {
 				int count = 0;
 				foreach(dchar ch; text)
 					count++;

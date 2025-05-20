@@ -34,6 +34,9 @@ class TerminalEmulatorWidget : Widget {
 		super(parent);
 	}
 
+	mixin Observable!(MemoryImage, "icon"); // please note it can be changed to null!
+	mixin Observable!(string, "title");
+
 	this(string[] args, Widget parent) {
 		version(Windows) {
 			import core.sys.windows.windows : HANDLE;
@@ -102,23 +105,38 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 	protected override void changeCursorStyle(CursorStyle s) { }
 
 	protected override void changeWindowTitle(string t) {
-		//if(window && t.length)
-			//window.title = t;
+		widget.title = t;
 	}
+
+	// FIXME: minigui TabWidget ought to be able to accept icons too.
 	protected override void changeWindowIcon(IndexedImage t) {
-		//if(window && t)
-			//window.icon = t;
+		widget.icon = t;
 	}
-	protected override void changeIconTitle(string) {}
-	protected override void changeTextAttributes(TextAttributes) {}
+
+	// FIXME: should we be able to delegate this up the chain too?
 	protected override void soundBell() {
 		static if(UsingSimpledisplayX11)
 			XBell(XDisplayConnection.get(), 50);
 	}
 
 	protected override void demandAttention() {
-		//window.requestAttention();
+		// to trigger:  echo -e '\033]5001;1\007'
+
+		widget.emitCommand!"requestAttention";
+
+		// to acknowledge:
+		// attentionReceived();
 	}
+
+	override void requestExit() {
+	sdpyPrintDebugString("exit");
+		widget.emitCommand!"requestExit";
+		// FIXME
+	}
+
+
+	protected override void changeIconTitle(string) {}
+	protected override void changeTextAttributes(TextAttributes) {}
 
 	protected override void copyToClipboard(string text) {
 		setClipboardText(widget.parentWindow.win, text);
@@ -147,10 +165,6 @@ class TerminalEmulatorInsideWidget : TerminalEmulator {
 	protected override void pasteFromPrimary(void delegate(in char[]) dg) {
 		static if(UsingSimpledisplayX11)
 			getPrimarySelection(widget.parentWindow.win, dg);
-	}
-
-	override void requestExit() {
-		// FIXME
 	}
 
 
