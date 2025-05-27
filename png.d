@@ -2109,11 +2109,11 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			return assumeUnique(arr);
 		case 3:
 			auto arr = data.dup;
-			if(previousLine.length)
 			foreach(i; 0 .. arr.length) {
-				auto prev = i < bpp ? 0 : arr[i - bpp];
-				arr[i] += cast(ubyte)
-					/*std.math.floor*/( cast(int) (prev + (previousLine.length ? previousLine[i] : 0)) / 2);
+				auto left = i < bpp ? 0 : arr[i - bpp];
+				auto above = previousLine.length ? previousLine[i] : 0;
+
+				arr[i] += cast(ubyte) ((left + above) / 2);
 			}
 
 			return assumeUnique(arr);
