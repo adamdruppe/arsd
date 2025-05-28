@@ -388,6 +388,16 @@ version(Posix) {
 
 	import core.sys.posix.sys.ioctl;
 }
+version(CRuntime_Musl) {
+	// Druntime currently doesn't have bindings for termios on Musl.
+	// We define our own bindings whenever the import fails.
+	// When druntime catches up, this block can slowly be removed,
+	// although for backward compatibility we might want to keep it.
+	static if (!__traits(compiles, import core.sys.posix.termios : tcgetattr)) {
+		int tcgetattr (int, struct termios *);
+		int tcsetattr (int, int, const struct termios *);
+	}
+}
 
 version(VtEscapeCodes) {
 
