@@ -393,9 +393,11 @@ version(CRuntime_Musl) {
 	// We define our own bindings whenever the import fails.
 	// When druntime catches up, this block can slowly be removed,
 	// although for backward compatibility we might want to keep it.
-	static if (!__traits(compiles, import core.sys.posix.termios : tcgetattr)) {
-		int tcgetattr (int, struct termios *);
-		int tcsetattr (int, int, const struct termios *);
+	static if (!__traits(compiles, { import core.sys.posix.termios : tcgetattr; })) {
+		extern (C) {
+			int tcgetattr (int, termios *);
+			int tcsetattr (int, int, const termios *);
+		}
 	}
 }
 
