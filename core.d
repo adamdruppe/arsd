@@ -1034,7 +1034,7 @@ struct LimitedVariant {
 				auto d = getDouble();
 
 				import core.stdc.stdio;
-				char[128] buffer;
+				char[64] buffer;
 				auto count = snprintf(buffer.ptr, buffer.length, "%.17lf", d);
 				return buffer[0 .. count].idup;
 			case invalid:
@@ -1378,6 +1378,7 @@ struct CharzBuffer {
 
 		buffer[0 .. data.length] = data[];
 		buffer[data.length] = 0;
+		buffer = buffer[0 .. data.length + 1];
 	}
 }
 
@@ -1558,19 +1559,31 @@ char[] intToString(long value, char[] buffer, IntToStringArgs args = IntToString
 
 	int start = pos;
 	int digitCount;
+	int groupCount;
 
 	do {
 		auto remainder = value % radix;
 		value = value / radix;
 
+		if(groupSize && groupCount == groupSize) {
+			buffer[pos++] = args.separator;
+			groupCount = 0;
+		}
+
 		buffer[pos++] = cast(char) (remainder < 10 ? (remainder + '0') : (remainder - 10 + args.ten));
+		groupCount++;
 		digitCount++;
 	} while(value);
 
 	if(digitsPad > 0) {
 		while(digitCount < digitsPad) {
+			if(groupSize && groupCount == groupSize) {
+				buffer[pos++] = args.separator;
+				groupCount = 0;
+			}
 			buffer[pos++] = args.padWith;
 			digitCount++;
+			groupCount++;
 		}
 	}
 
@@ -1621,6 +1634,105 @@ struct IntToStringArgs {
 	}
 }
 
+struct FloatToStringArgs {
+	private {
+		// whole number component
+		ubyte padTo;
+		char padWith;
+		ubyte groupSize;
+		char separator;
+
+		// for the fractional component
+		ubyte minimumPrecision =  0; // will always show at least this many digits after the decimal (if it is 0 there may be no decimal)
+		ubyte maximumPrecision = 32; // will round to this many after the decimal
+
+		bool useScientificNotation; // if this is true, note the whole number component will always be exactly one digit, so the pad stuff applies to the exponent only and it assumes pad with zero's to two digits
+	}
+
+	FloatToStringArgs withPadding(int padTo, char padWith = '0') {
+		FloatToStringArgs args = this;
+		args.padTo = cast(ubyte) padTo;
+		args.padWith = padWith;
+		return args;
+	}
+
+	FloatToStringArgs withGroupSeparator(int groupSize, char separator = '_') {
+		FloatToStringArgs args = this;
+		args.groupSize = cast(ubyte) groupSize;
+		args.separator = separator;
+		return args;
+	}
+
+	FloatToStringArgs withPrecision(int minDigits, int maxDigits = 0) {
+		FloatToStringArgs args = this;
+		args.minimumPrecision = cast(ubyte) minDigits;
+		if(maxDigits < minDigits)
+			maxDigits = minDigits;
+		args.maximumPrecision = cast(ubyte) maxDigits;
+		return args;
+	}
+
+	FloatToStringArgs withScientificNotation(bool enabled) {
+		FloatToStringArgs args = this;
+		args.useScientificNotation = enabled;
+		return args;
+	}
+}
+
+char[] floatToString(double value, char[] buffer, FloatToStringArgs args = FloatToStringArgs.init) {
+	// actually doing this is pretty painful, so gonna pawn it off on the C lib
+	import core.stdc.stdio;
+	// FIXME: what if there's a locale in place that changes the decimal point?
+	auto ret = snprintf(buffer.ptr, buffer.length, args.useScientificNotation ? "%.*e" : "%.*f", args.maximumPrecision, value);
+	if(!args.useScientificNotation && (args.padTo || args.groupSize)) {
+		char[32] scratch = void;
+		auto idx = buffer[0 .. ret].indexOf(".");
+
+		int digitsOutput = 0;
+		int digitsGrouped = 0;
+		if(idx > 0) {
+			// there is a whole number component
+			int pos = cast(int) scratch.length;
+
+			auto splitPoint = idx;
+
+			while(idx) {
+				if(args.groupSize && digitsGrouped == args.groupSize) {
+					scratch[--pos] = args.separator;
+					digitsGrouped = 0;
+				}
+				scratch[--pos] = buffer[--idx];
+
+				digitsOutput++;
+				digitsGrouped++;
+			}
+
+			if(args.padTo)
+			while(digitsOutput < args.padTo) {
+				if(args.groupSize && digitsGrouped == args.groupSize) {
+					scratch[--pos] = args.separator;
+					digitsGrouped = 0;
+				}
+
+				scratch[--pos] = args.padWith;
+
+				digitsOutput++;
+				digitsGrouped++;
+			}
+
+			char[32] remainingBuffer;
+			remainingBuffer[0 .. ret - splitPoint]= buffer[splitPoint .. ret];
+
+			buffer[0 .. scratch.length - pos] = scratch[pos .. $];
+			buffer[scratch.length - pos .. scratch.length - pos + ret - splitPoint] = remainingBuffer[0 .. ret - splitPoint];
+
+			ret = cast(int) scratch.length - pos + ret - splitPoint;
+		}
+	}
+	// FIXME: if maximum precision....?
+	return buffer[0 .. ret];
+}
+
 unittest {
 	char[32] buffer;
 	assert(intToString(0, buffer[]) == "0");
@@ -1638,6 +1750,24 @@ unittest {
 	assert(intToString(0xef1, buffer[], IntToStringArgs().withRadix(16).withPadding(8)) == "00000ef1");
 	assert(intToString(-0xef1, buffer[], IntToStringArgs().withRadix(16).withPadding(8)) == "-00000ef1");
 	assert(intToString(-0xef1, buffer[], IntToStringArgs().withRadix(16, 'A').withPadding(8, ' ')) == "-     EF1");
+
+	assert(intToString(4000, buffer[], IntToStringArgs().withPadding(4).withGroupSeparator(3, ',')) == "4,000");
+	assert(intToString(400, buffer[], IntToStringArgs().withPadding(4).withGroupSeparator(3, ',')) == "0,400");
+
+	const pi = 3.14159256358979;
+	assert(floatToString(pi, buffer[], FloatToStringArgs().withPrecision(3)) == "3.142");
+	assert(floatToString(pi, buffer[], FloatToStringArgs().withPrecision(2)) == "3.14");
+	assert(floatToString(pi, buffer[], FloatToStringArgs().withPrecision(0)) == "3");
+
+	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPrecision(0)) == "4");
+	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPrecision(3)) == "4.000");
+
+	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPadding(3).withPrecision(3)) == "004.000");
+	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPadding(3).withGroupSeparator(3, ',').withPrecision(3)) == "004.000");
+	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPadding(4).withGroupSeparator(3, ',').withPrecision(3)) == "0,004.000");
+	assert(floatToString(4000.0, buffer[], FloatToStringArgs().withPadding(4).withGroupSeparator(3, ',').withPrecision(3)) == "4,000.000");
+
+	assert(floatToString(pi*10, buffer[], FloatToStringArgs().withPrecision(2).withScientificNotation(true)) == "3.14e+01");
 }
 
 /++
@@ -1693,7 +1823,9 @@ inout(char)[] stripRightInternal(return inout(char)[] s) {
 		Moved from color.d to core.d in March 2023 (dub v11.0).
 +/
 string toStringInternal(T)(T t) {
-	char[32] buffer;
+	return writeGuts(null, null, null, false, &makeString, t);
+	/+
+	char[64] buffer;
 	static if(is(typeof(t.toString) : string))
 		return t.toString();
 	else static if(is(T : string))
@@ -1726,6 +1858,7 @@ string toStringInternal(T)(T t) {
 		static assert(0, T.stringof ~ " makes compile too slow");
 		// import std.conv; return to!string(t);
 	}
+	+/
 }
 
 /++
@@ -4015,20 +4148,51 @@ else class AsyncFile {
 
 	Tip: prefer the callback ones. If settings where async is possible, it will do async, and if not, it will sync.
 
-	NOT IMPLEMENTED
+	NOT FULLY IMPLEMENTED
 +/
 void writeFile(string filename, const(void)[] contents) {
-
-}
-
-/// ditto
-string readTextFile(string filename, string fileEncoding = null) {
-	return null;
+	// FIXME: stop using the C lib and start error checking
+	import core.stdc.stdio;
+	CharzBuffer fn = filename;
+	auto file = fopen(fn.ptr, "wb");
+	if(file is null)
+		throw new ErrnoApiException("fopen", errno, [SavedArgument("filename", LimitedVariant(filename))]);
+	fwrite(contents.ptr, 1, contents.length, file);
+	fclose(file);
 }
 
 /// ditto
 const(ubyte[]) readBinaryFile(string filename) {
-	return null;
+	// FIXME: stop using the C lib and check for more errors
+
+	import core.stdc.stdio;
+	CharzBuffer fn = filename;
+	auto file = fopen(fn.ptr, "rb");
+	if(file is null)
+		throw new ErrnoApiException("fopen", errno, [SavedArgument("filename", LimitedVariant(filename))]);
+	ubyte[] buffer = new ubyte[](64 * 1024);
+	ubyte[] contents;
+
+	while(true) {
+		auto ret = fread(buffer.ptr, 1, buffer.length, file);
+		if(ret < buffer.length) {
+			if(contents is null)
+				contents = buffer[0 .. ret];
+			else
+				contents ~= buffer[0 .. ret];
+			break;
+		} else {
+			contents ~= buffer[0 .. ret];
+		}
+	}
+	fclose(file);
+
+	return contents;
+}
+
+/// ditto
+string readTextFile(string filename, string fileEncoding = null) {
+	return cast(string) readBinaryFile(filename);
 }
 
 /+
@@ -8613,7 +8777,7 @@ shared(LoggerOf!GenericEmbeddableInterpolatedSequence) logger() {
 		Added April 17, 2025
 +/
 void logSwallowedException(Exception e) {
-	logger.error(i"$(e.toString())");
+	logger.error(InterpolationHeader(), e.toString(), InterpolationFooter());
 }
 
 /+
@@ -8883,10 +9047,33 @@ private void appendToBuffer(ref char[] buffer, ref int pos, scope const(char)[] 
 }
 
 private void appendToBuffer(ref char[] buffer, ref int pos, long what) {
-	if(buffer.length < pos + 16)
-		buffer.length = pos + 16;
+	if(buffer.length < pos + 32)
+		buffer.length = pos + 32;
 	auto sliced = intToString(what, buffer[pos .. $]);
 	pos += sliced.length;
+}
+
+private void appendToBuffer(ref char[] buffer, ref int pos, double what) {
+	if(buffer.length < pos + 32)
+		buffer.length = pos + 32;
+	auto sliced = floatToString(what, buffer[pos .. $]);
+	pos += sliced.length;
+}
+
+
+/++
+	You can use `mixin(dumpParams);` to put out a debug print of your current function call w/ params.
++/
+enum string dumpParams = q{
+	{
+		import arsd.core;
+		arsd.core.dumpParamsImpl(__FUNCTION__, __traits(parameters));
+	}
+};
+
+/// Don't call this directly, use `mixin(dumpParams);` instead
+public void dumpParamsImpl(T...)(string func, T args) {
+	writeGuts(func ~ "(", ")\n", ", ", false, &actuallyWriteToStdout, args);
 }
 
 /++
@@ -8896,16 +9083,52 @@ private void appendToBuffer(ref char[] buffer, ref int pos, long what) {
 
 	This always does text. See also WritableStream and WritableTextStream when they are implemented.
 +/
-void writeln(bool printInterpolatedCode = false, T...)(T t) {
+void writeln(T...)(T t) {
+	writeGuts(null, "\n", null, false, &actuallyWriteToStdout, t);
+}
+
+///
+void writelnStderr(T...)(T t) {
+	writeGuts(null, "\n", null, false, &actuallyWriteToStderr, t);
+}
+
+/++
+
++/
+package(arsd) string enumNameForValue(T)(T t) {
+	switch(t) {
+		foreach(memberName; __traits(allMembers, T)) {
+			case __traits(getMember, T, memberName):
+				return memberName;
+		}
+		default:
+			return "<unknown>";
+	}
+}
+
+/+
+	Purposes:
+		* debugging
+		* writing
+		* converting single value to string?
++/
+private string writeGuts(T...)(string prefix, string suffix, string argSeparator, bool printInterpolatedCode, string function(scope char[] result) writer, T t) {
 	char[256] bufferBacking;
 	char[] buffer = bufferBacking[];
 	int pos;
 
-	foreach(arg; t) {
+	if(prefix.length)
+		appendToBuffer(buffer, pos, prefix);
+
+	foreach(i, arg; t) {
+		static if(i)
+		if(argSeparator.length)
+			appendToBuffer(buffer, pos, argSeparator);
+
 		static if(is(typeof(arg) Base == enum)) {
 			appendToBuffer(buffer, pos, typeof(arg).stringof);
 			appendToBuffer(buffer, pos, ".");
-			appendToBuffer(buffer, pos, toStringInternal(arg));
+			appendToBuffer(buffer, pos, enumNameForValue(arg));
 			appendToBuffer(buffer, pos, "(");
 			appendToBuffer(buffer, pos, cast(Base) arg);
 			appendToBuffer(buffer, pos, ")");
@@ -8916,13 +9139,9 @@ void writeln(bool printInterpolatedCode = false, T...)(T t) {
 		} else static if(is(typeof(arg) : long)) {
 			appendToBuffer(buffer, pos, arg);
 		} else static if(is(typeof(arg) : double)) {
-			import core.stdc.stdio;
-			char[128] fb;
-			auto count = snprintf(fb.ptr, fb.length, "%.4lf", arg);
-
-			appendToBuffer(buffer, pos, fb[0 .. count]);
+			appendToBuffer(buffer, pos, arg);
 		} else static if(is(typeof(arg) == InterpolatedExpression!code, string code)) {
-			static if(printInterpolatedCode) {
+			if(printInterpolatedCode) {
 				appendToBuffer(buffer, pos, code);
 				appendToBuffer(buffer, pos, " = ");
 			}
@@ -8952,29 +9171,46 @@ void writeln(bool printInterpolatedCode = false, T...)(T t) {
 		}
 	}
 
-	appendToBuffer(buffer, pos, "\n");
+	if(suffix.length)
+		appendToBuffer(buffer, pos, suffix);
 
-	actuallyWriteToStdout(buffer[0 .. pos]);
+	return writer(buffer[0 .. pos]);
 }
 
 debug void dump(T...)(T t, string file = __FILE__, size_t line = __LINE__) {
-	writeln!true(file, ":", line, ": ", t);
+	string separator;
+	static if(T.length && is(T[0] == InterpolationHeader))
+		separator = null;
+	else
+		separator = "; ";
+
+	writeGuts(file ~ ":" ~ toStringInternal(line) ~ ": ", "\n", separator, true, &actuallyWriteToStdout, t);
 }
 
-private void actuallyWriteToStdout(scope char[] buffer) @trusted {
-
+private string makeString(scope char[] buffer) @safe {
+	return buffer.idup;
+}
+private string actuallyWriteToStdout(scope char[] buffer) @safe {
+	return actuallyWriteToStdHandle(1, buffer);
+}
+private string actuallyWriteToStderr(scope char[] buffer) @safe {
+	return actuallyWriteToStdHandle(2, buffer);
+}
+private string actuallyWriteToStdHandle(int whichOne, scope char[] buffer) @trusted {
 	version(UseStdioWriteln)
 	{
 		import std.stdio;
-		writeln(buffer);
+		(whichOne == 1 ? stdout : stderr).writeln(buffer);
 	}
 	else version(Windows) {
 		import core.sys.windows.wincon;
 
-		auto hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		auto h = whichOne == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE;
+
+		auto hStdOut = GetStdHandle(h);
 		if(hStdOut == null || hStdOut == INVALID_HANDLE_VALUE) {
 			AllocConsole();
-			hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+			hStdOut = GetStdHandle(h);
 		}
 
 		if(GetFileType(hStdOut) == FILE_TYPE_CHAR) {
@@ -8989,8 +9225,10 @@ private void actuallyWriteToStdout(scope char[] buffer) @trusted {
 		}
 	} else {
 		import unix = core.sys.posix.unistd;
-		unix.write(1, buffer.ptr, buffer.length);
+		unix.write(whichOne, buffer.ptr, buffer.length);
 	}
+
+	return null;
 }
 
 /+

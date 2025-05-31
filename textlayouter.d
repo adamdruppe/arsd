@@ -991,7 +991,7 @@ public struct Selection {
 					// need to find the exact thing in here
 
 					auto hit = segment.textBeginOffset;
-					auto ul = segment.upperLeft;
+					MeasurableFont.fnum ulx = segment.upperLeft.x;
 
 					bool found;
 					auto txt = layouter.text[segment.textBeginOffset .. segment.textEndOffset];
@@ -1001,11 +1001,11 @@ public struct Selection {
 
 						hit = segment.textBeginOffset + cast(int) idx;
 
-						auto distanceToLeft = ul.x - idealX;
+						auto distanceToLeft = ulx - idealX;
 						if(distanceToLeft < 0) distanceToLeft = -distanceToLeft;
 						if(distanceToLeft < bestHitDistance) {
 							bestHit = hit;
-							bestHitDistance = distanceToLeft;
+							bestHitDistance = castFnumToCnum(distanceToLeft);
 						} else {
 							// getting further away = no help
 							break;
@@ -1013,13 +1013,13 @@ public struct Selection {
 
 						/*
 						// FIXME: I probably want something slightly different
-						if(ul.x >= idealX) {
+						if(ulx >= idealX) {
 							found = true;
 							break;
 						}
 						*/
 
-						ul.x += width;
+						ulx += width;
 						codepoint++;
 					}
 
@@ -1422,18 +1422,22 @@ class TextLayouter {
 
 		int codepointCounter = 0;
 		auto bb = segment.boundingBox;
+		MeasurableFont.fnum widthSum = 0;
 		foreach(thing, dchar cp; text[segment.textBeginOffset .. segment.textEndOffset]) {
 			auto w = segmentsWidths[segmentIndex][codepointCounter];
 
 			if(thing + segment.textBeginOffset == idx) {
+				bb.left = castFnumToCnum(widthSum);
 				bb.right = cast(typeof(bb.right))(bb.left + w);
 				return bb;
 			}
 
-			bb.left += w;
+			widthSum += w;
 
 			codepointCounter++;
 		}
+
+		bb.left = castFnumToCnum(widthSum);
 
 		bb.right = bb.left + 1;
 
@@ -1499,11 +1503,11 @@ class TextLayouter {
 
 						auto bb = boundingBoxOfGlyph(segmentIndex, selection.focus);
 
-						bb.top += glyphStyle.font.ascent;
-						bb.bottom -= glyphStyle.font.descent;
+						bb.top += castFnumToCnum(glyphStyle.font.ascent);
+						bb.bottom -= castFnumToCnum(glyphStyle.font.descent);
 
-						bb.top -= insertionStyle.font.ascent;
-						bb.bottom += insertionStyle.font.descent;
+						bb.top -= castFnumToCnum(insertionStyle.font.ascent);
+						bb.bottom += castFnumToCnum(insertionStyle.font.descent);
 
 						caretInformation[cic++] = CaretInformation(cast(int) si, bb);
 					}
@@ -1541,21 +1545,21 @@ class TextLayouter {
 
 					Rectangle bbOriginal = di.boundingBox;
 
-					int segmentWidth;
+					MeasurableFont.fnum segmentWidth = 0;
 
 					foreach(width; segmentsWidths[segmentIndex][codepointStart .. codepointEnd]) {
 						segmentWidth += width;
 					}
 
 					auto diFragment = di;
-					diFragment.boundingBox.right = diFragment.boundingBox.left + segmentWidth;
+					diFragment.boundingBox.right = castFnumToCnum(diFragment.boundingBox.left + segmentWidth);
 
 					// FIXME: adjust the rest of di for this
 					// FIXME: the caretInformation arguably should be truncated for those not in this particular sub-segment
 					exit = !dg(txt[start .. end], style, diFragment, caretInformation[0 .. cic]);
 
-					di.initialBaseline.x += segmentWidth;
-					di.boundingBox.left += segmentWidth;
+					di.initialBaseline.x += castFnumToCnum(segmentWidth);
+					di.boundingBox.left += castFnumToCnum(segmentWidth);
 
 					lastSelPos = end;
 					lastSelCodepoint = codepointEnd;
@@ -1717,7 +1721,7 @@ class TextLayouter {
 		int styleInformationIndex;
 
 		// calculated values after iterating through the segment
-		MeasurableFont.fnum width; // short
+		MeasurableFont.fnum width = 0; // short
 		int height; // short
 
 		Point upperLeft;
@@ -1780,7 +1784,7 @@ class TextLayouter {
 
 			auto boundingBox = Rectangle(segment.upperLeft, Size(castFnumToCnum(segment.width), segment.height));
 			if(boundingBox.contains(p)) {
-				int x = segment.upperLeft.x;
+				MeasurableFont.fnum x = segment.upperLeft.x;
 				int codePointIndex = 0;
 
 				int bestHit = int.max;
@@ -1790,7 +1794,7 @@ class TextLayouter {
 					const width = segmentsWidths[segmentIndex][codePointIndex];
 					idx = segment.textBeginOffset + cast(int) i; // can't just idx++ since it needs utf-8 stride
 
-					auto distanceToLeft = p.x - x;
+					auto distanceToLeft = castFnumToCnum(p.x - x);
 					if(distanceToLeft < 0) distanceToLeft = -distanceToLeft;
 
 					//auto distanceToRight = p.x - (x + width);
@@ -2214,7 +2218,7 @@ class TextLayouter {
 			auto thisLineY = currentCorner.y;
 
 			auto thisLineHeight = lineHeight;
-			currentCorner.y += lineHeight;
+			currentCorner.y += castFnumToCnum(lineHeight);
 			currentCorner.x = 0;
 
 			finishSegment(idx); // i use currentCorner in there! so this must be after that
@@ -2234,7 +2238,7 @@ class TextLayouter {
 
 				auto baseline = thisLineHeight - biggestDescent;
 
-				seg.upperLeft.y += baseline - font.ascent;
+				seg.upperLeft.y += castFnumToCnum(baseline - font.ascent);
 				seg.height = castFnumToCnum(thisLineHeight - (baseline - font.ascent));
 			}
 
@@ -2415,7 +2419,7 @@ class TextLayouter {
 					thisWidth = 16 + tabStop - currentCorner.x % tabStop;
 
 					segment.width += thisWidth;
-					currentCorner.x += thisWidth;
+					currentCorner.x += castFnumToCnum(thisWidth);
 
 					endSegment = true;
 					goto advance;
@@ -2442,7 +2446,7 @@ class TextLayouter {
 					}
 
 					segment.width += thisWidth;
-					currentCorner.x += thisWidth;
+					currentCorner.x += castFnumToCnum(thisWidth);
 
 					version(try_kerning_hack) {
 						lastWidth = thisWidth;

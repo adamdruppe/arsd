@@ -486,6 +486,8 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		cef_window_info_t window_info;
 		window_info.parent_window = containerWindow.nativeWindowHandle;
 
+		writeln(cast(long) containerWindow.nativeWindowHandle);
+
 		cef_string_t cef_url = cef_string_t(url);//"http://arsdnet.net/test.html");
 
 		cef_browser_settings_t browser_settings;

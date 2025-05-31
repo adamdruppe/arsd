@@ -59,6 +59,15 @@ unittest {
 	version(arsd_http2_integration_test) main(); // exclude from docs
 }
 
+/+
+// arsd core is now default but you can opt out for a lil while
+version(no_arsd_core) {
+
+} else {
+	version=use_arsd_core;
+}
++/
+
 static import arsd.core;
 
 // FIXME: I think I want to disable sigpipe here too.

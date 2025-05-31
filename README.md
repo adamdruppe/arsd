@@ -29,7 +29,8 @@ Future release, likely May 2026 or later.
 Planned changes:
 
     * Make arsd.http2 use arsd.core event loop by default (currently you still opt in with -version=use_arsd_core)
-    * Make arsd.cgi integrate with the arsd.core event loop
+    * Make arsd.terminal use the arsd.core event loop sometimes. This might not be a breaking change since it might be a new function and thus may come early.
+    * Make arsd.cgi integrate with the arsd.core event loop in some mode. Again, unlikely to be an actual break so may come early.
 
 ## 12.0
 
@@ -38,7 +39,7 @@ Released: Planned for some time between January and May 2025
 minigui's `defaultEventHandler_*` functions take more specific objects. So if you see errors like:
 
 ```
-Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusin(Event foe)` does not override any function, did you mean to override `void arsd.minigui.Widget.defaultEventHandler_focusin(arsd.minigui.FocusInEvent event)`?
+Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusin(Event event)` does not override any function, did you mean to override `void arsd.minigui.Widget.defaultEventHandler_focusin(arsd.minigui.FocusInEvent event)`?
 ```
 
 Go to the file+line number from the error message and change `Event` to `FocusInEvent` (or whatever one it tells you in the "did you mean" part of the error) and recompile. No other changes should be necessary, however if you constructed your own `Event` object and dispatched it with the loosely typed `"focus"`, etc., strings, it may not trigger the default handlers anymore. To fix this, change any `new Event` to use the appropriate subclass, when available, like old `new Event("focus", widget);` changes to `new FocusEvent(widget)`. This only applies to ones that trigger default handlers present in `Widget` base class; your custom events still work the same way.
@@ -48,6 +49,8 @@ arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 arsd.ini was added.
 
 arsd.zip, arsd.xlsx, arsd.rtf, arsd.pptx, arsd.docx, all added.
+
+arsd.conv added.
 
 arsd.script's language now requires () around the if and while conditions. Its parser is still so bad, but this let me fix some other bugs without making it even worse.
 
