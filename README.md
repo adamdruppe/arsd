@@ -44,6 +44,8 @@ Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusi
 
 Go to the file+line number from the error message and change `Event` to `FocusInEvent` (or whatever one it tells you in the "did you mean" part of the error) and recompile. No other changes should be necessary, however if you constructed your own `Event` object and dispatched it with the loosely typed `"focus"`, etc., strings, it may not trigger the default handlers anymore. To fix this, change any `new Event` to use the appropriate subclass, when available, like old `new Event("focus", widget);` changes to `new FocusEvent(widget)`. This only applies to ones that trigger default handlers present in `Widget` base class; your custom events still work the same way.
 
+The font functions in simpledisplay and textlayouter tend to use floats instead of ints. You may want to cast it, or use the `castFnumToCnum` function to convert to get the old code working again.
+
 arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
 
 arsd.ini was added.
