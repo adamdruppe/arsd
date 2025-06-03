@@ -111,6 +111,16 @@ else
 			version=OSXCocoa;
 		version(iOS)
 			version=OSXCocoa;
+	} else version(DigitalMars) {
+		version(OSX)
+			version=OSXCocoa;
+		version(iOS)
+			version=OSXCocoa;
+	} else version(LDC) {
+		version(OSX)
+			version=OSXCocoa;
+		version(iOS)
+			version=OSXCocoa;
 	}
 
 	version = HasFile;
