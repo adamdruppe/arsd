@@ -9224,8 +9224,7 @@ private string actuallyWriteToStdHandle(int whichOne, scope char[] buffer) @trus
 		}
 
 		if(GetFileType(hStdOut) == FILE_TYPE_CHAR) {
-			wchar[256] wbuffer;
-			auto toWrite = makeWindowsString(buffer, wbuffer, WindowsStringConversionFlags.convertNewLines);
+			WCharzBuffer toWrite = WCharzBuffer(buffer, WindowsStringConversionFlags.convertNewLines);
 
 			DWORD written;
 			WriteConsoleW(hStdOut, toWrite.ptr, cast(DWORD) toWrite.length, &written, null);

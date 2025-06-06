@@ -241,8 +241,9 @@ class SqliteResult :  ResultSet {
 			else if (auto d = c.peek!double)
 				// 17 significant decimal digits are enough to not lose precision (IEEE 754 section 5.12.2)
 				r.row ~= DatabaseDatum(format!"%.17s"(*d));
-			else
+			else {
 				r.row ~= DatabaseDatum(c.coerce!(string));
+			}
 		}
 
 		return r;

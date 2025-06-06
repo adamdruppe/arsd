@@ -207,6 +207,7 @@ struct DatabaseDatum {
 	string toString() {
 		if(isNull())
 			return null;
+
 		return storage.toString();
 	}
 	/++
@@ -217,7 +218,6 @@ struct DatabaseDatum {
 	alias toString this;
 
 	/// ditto
-	version(D_OpenD) {} else // opend enables -preview=rvaluerefparam which makes this conflict with the rvalue toString in matching to!T stuff
 	T opCast(T)() {
 		import std.conv;
 		return to!T(this.toString);
@@ -225,6 +225,12 @@ struct DatabaseDatum {
 
 	/// ditto
 	string toArsdJsVar() { return this.toString; }
+}
+
+unittest {
+	// tbh this is more of a phobos test but rvaluerefparam has messed it up before
+	auto db = DatabaseDatum("1234567");
+	assert(to!int(db) == 1234567);
 }
 
 /++
