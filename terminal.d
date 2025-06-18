@@ -2582,6 +2582,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		lineGetter.prompt = prompt;
 		if(prefilledData) {
+			lineGetter.clear();
 			lineGetter.addString(prefilledData);
 			lineGetter.maintainBuffer = true;
 		}
@@ -6540,16 +6541,11 @@ class LineGetter {
 	void startGettingLine() {
 		// reset from any previous call first
 		if(!maintainBuffer) {
-			cursorPosition = 0;
-			horizontalScrollPosition = 0;
-			verticalScrollPosition = 0;
-			justHitTab = false;
+			clear();
 			currentHistoryViewPosition = 0;
-			if(line.length) {
-				line = line[0 .. 0];
-				line.assumeSafeAppend();
-			}
 		}
+
+		justHitTab = false;
 
 		maintainBuffer = false;
 
@@ -6796,6 +6792,22 @@ class LineGetter {
 	}
 
 	/++
+		Clears the buffer.
+
+		History:
+			Added June 18, 2025 (dub v12.1)
+	+/
+	void clear() {
+		cursorPosition = 0;
+		horizontalScrollPosition = 0;
+		verticalScrollPosition = 0;
+		if(line.length) {
+			line = line[0 .. 0];
+			line.assumeSafeAppend();
+		}
+	}
+
+	/++
 		Cancels an in-progress history search immediately, discarding the result, returning
 		to the normal prompt.
 
@@ -6974,10 +6986,7 @@ class LineGetter {
 						if(multiLineMode)
 							multiLineMode = false;
 						else {
-							cursorPosition = 0;
-							horizontalScrollPosition = 0;
-							line = line[0 .. 0];
-							line.assumeSafeAppend();
+							clear();
 						}
 						redraw();
 					break;
