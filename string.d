@@ -31,12 +31,12 @@ alias indexOf = arsd.core.indexOf;
 /// Strips (aka trims) leading and/or trailing whitespace from the string.
 alias strip = arsd.core.stripInternal;
 /// ditto
-@deprecated("D calls this `strip` instead") alias trim = strip;
+deprecated("D calls this `strip` instead") alias trim = strip;
 
 /// ditto
 alias stripRight = arsd.core.stripInternal;
 /// ditto
-@deprecated("D calls this `stripRight` instead") alias trimRight = stripRight;
+deprecated("D calls this `stripRight` instead") alias trimRight = stripRight;
 
 // stripLeft? variants where you can list the chars to strip?
 
