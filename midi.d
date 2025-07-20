@@ -312,13 +312,6 @@ static struct PlayStreamEvent {
 
 static immutable(PlayStreamEvent)[] longWait = [{wait: 1.weeks, event: {status: 0xff, data1: 0x01, meta: null}}];
 
-
-private alias extern(C) int function(scope const void*, scope const void*) @system Comparator;
-private @trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
-	import core.stdc.stdlib;
-	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
-}
-
 struct FlattenedTrackStream {
 
 	FlattenedTrackStream save() {
@@ -332,9 +325,11 @@ struct FlattenedTrackStream {
 		this.file = file;
 		this.trackPositions.length = file.tracks.length;
 		foreach(idx, ref tp; this.trackPositions) {
-			tp.remaining = file.tracks[idx].events.dup;
+			tp.remaining = file.tracks[idx].events[];
 
 			{
+				bool copyPerformed = false;
+
 				// some midis do weird things
 				// see: https://github.com/adamdruppe/arsd/issues/508
 				// to correct:
@@ -342,38 +337,83 @@ struct FlattenedTrackStream {
 				// then inside the same timestamp segments, put the note off (or note on with data2 == 0) first in the stream
 				// make sure the first item has the non-zero deltaTime for the segment, then all others have 0.
 
-				void sortSegment(MidiEvent[] events) {
+				// returns true if you need to copy then try again
+				bool sortSegment(MidiEvent[] events) {
 					if(events.length <= 1)
-						return;
+						return false;
+
+					bool hasNoteOn = true;
+					bool needsChange = false;
+					foreach(event; events) {
+						if(hasNoteOn)
+							if(event.isNoteOff) {
+								needsChange = true;
+								break;
+							}
+						else if(event.isNoteOn)
+							hasNoteOn = true;
+					}
+
+					if(!needsChange)
+						return false;
+
+					if(!copyPerformed) {
+						// so we don't modify the original file unnecessarily...
+						return true;
+					}
 
 					auto dt = events[0].deltaTime;
 
-					extern(C) int comparator(scope const void* p1, scope const void* p2) {
-						MidiEvent* e1 = cast(MidiEvent*) p1;
-						MidiEvent* e2 = cast(MidiEvent*) p2;
+					MidiEvent[8] staticBuffer;
+					MidiEvent[] buffer;
+					if(events.length < staticBuffer.length)
+						buffer = staticBuffer[0 .. events.length];
+					else
+						buffer = new MidiEvent[](events.length);
 
-						auto no1 = (*e1).event == MIDI_EVENT_NOTE_OFF || ((*e1).event == MIDI_EVENT_NOTE_ON && (*e1).data2 == 0);
-						auto no2 = (*e2).event == MIDI_EVENT_NOTE_OFF || ((*e2).event == MIDI_EVENT_NOTE_ON && (*e2).data2 == 0);
+					size_t bufferPos;
 
-						return no2 - no1;
+					// first pass, keep the note offs
+					foreach(event; events) {
+						if(event.isNoteOff)
+							buffer[bufferPos++] = event;
 					}
 
-					nonPhobosSort(events, &comparator);
+					// second pass, keep the rest
+					foreach(event; events) {
+						if(!event.isNoteOff)
+							buffer[bufferPos++] = event;
+					}
+
+					assert(bufferPos == events.length);
+					events[] = buffer[];
 
 					foreach(ref e; events)
 						e.deltaTime = 0;
 					events[0].deltaTime = dt;
+
+					return false;
 				}
 
 				size_t first = 0;
 				foreach(sortIndex, f; tp.remaining) {
 					if(f.deltaTime != 0) {
-						sortSegment(tp.remaining[first .. sortIndex]);
+						if(sortSegment(tp.remaining[first .. sortIndex])) {
+							//  if it returns true, it needs to modify the array
+							// but it doesn't change the iteration result, just we need to send it the copy after making it
+							tp.remaining = tp.remaining.dup;
+							copyPerformed = true;
+							sortSegment(tp.remaining[first .. sortIndex]);
+						}
 						first = sortIndex;
 					}
 				}
 
-				sortSegment(tp.remaining[first .. $]);
+				if(sortSegment(tp.remaining[first .. $])) {
+					tp.remaining = tp.remaining.dup;
+					copyPerformed = true;
+					sortSegment(tp.remaining[first .. $]);
+				}
 			}
 
 			tp.track = file.tracks[idx];
@@ -663,6 +703,28 @@ struct MidiEvent {
 	///
 	ubyte channel() const {
 		return status & 0x0f;
+	}
+
+	/++
+		Returns true if it is either note off or note on with zero velocity, both of which should silence the note.
+
+		History:
+			Added July 20, 2025
+	+/
+	bool isNoteOff() const {
+		// data1 is the note fyi
+		return this.event == MIDI_EVENT_NOTE_OFF || (this.event == MIDI_EVENT_NOTE_ON && this.data2 == 0);
+	}
+
+	/++
+		Returns true if it is a note on with non-zero velocity, which should sound a note.
+
+		History:
+			Added July 20, 2025
+
+	+/
+	bool isNoteOn() const {
+		return this.event == MIDI_EVENT_NOTE_ON && this.data2 != 0;
 	}
 
 	///
