@@ -312,6 +312,13 @@ static struct PlayStreamEvent {
 
 static immutable(PlayStreamEvent)[] longWait = [{wait: 1.weeks, event: {status: 0xff, data1: 0x01, meta: null}}];
 
+
+private alias extern(C) int function(scope const void*, scope const void*) @system Comparator;
+private @trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
+	import core.stdc.stdlib;
+	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
+}
+
 struct FlattenedTrackStream {
 
 	FlattenedTrackStream save() {
@@ -325,7 +332,50 @@ struct FlattenedTrackStream {
 		this.file = file;
 		this.trackPositions.length = file.tracks.length;
 		foreach(idx, ref tp; this.trackPositions) {
-			tp.remaining = file.tracks[idx].events[];
+			tp.remaining = file.tracks[idx].events.dup;
+
+			{
+				// some midis do weird things
+				// see: https://github.com/adamdruppe/arsd/issues/508
+				// to correct:
+				// first need to segment by the deltaTime - a non-zero, then all zeros that follow it.
+				// then inside the same timestamp segments, put the note off (or note on with data2 == 0) first in the stream
+				// make sure the first item has the non-zero deltaTime for the segment, then all others have 0.
+
+				void sortSegment(MidiEvent[] events) {
+					if(events.length <= 1)
+						return;
+
+					auto dt = events[0].deltaTime;
+
+					extern(C) int comparator(scope const void* p1, scope const void* p2) {
+						MidiEvent* e1 = cast(MidiEvent*) p1;
+						MidiEvent* e2 = cast(MidiEvent*) p2;
+
+						auto no1 = (*e1).event == MIDI_EVENT_NOTE_OFF || ((*e1).event == MIDI_EVENT_NOTE_ON && (*e1).data2 == 0);
+						auto no2 = (*e2).event == MIDI_EVENT_NOTE_OFF || ((*e2).event == MIDI_EVENT_NOTE_ON && (*e2).data2 == 0);
+
+						return no2 - no1;
+					}
+
+					nonPhobosSort(events, &comparator);
+
+					foreach(ref e; events)
+						e.deltaTime = 0;
+					events[0].deltaTime = dt;
+				}
+
+				size_t first = 0;
+				foreach(sortIndex, f; tp.remaining) {
+					if(f.deltaTime != 0) {
+						sortSegment(tp.remaining[first .. sortIndex]);
+						first = sortIndex;
+					}
+				}
+
+				sortSegment(tp.remaining[first .. $]);
+			}
+
 			tp.track = file.tracks[idx];
 		}
 
@@ -350,6 +400,8 @@ struct FlattenedTrackStream {
 				if(tp.remaining.length == 0 || tp.remaining[0].deltaTime > 0) {
 					currentTrack += 1;
 				}
+
+				// import arsd.core; debug writeln(c, " ", f);
 
 				pending = PlayStreamEvent(0.seconds, f, file, tp.track, midiClock);
 				processPending();
