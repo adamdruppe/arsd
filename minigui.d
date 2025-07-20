@@ -7555,6 +7555,11 @@ class HorizontalScrollbar : ScrollbarBase {
 		}
 	}
 
+	version(custom_widgets)
+	override void dpiChanged() {
+		thumb.thumbHeight = scaleWithDpi(16);
+	}
+
 	override int minHeight() { return scaleWithDpi(16); }
 	override int maxHeight() { return scaleWithDpi(16); }
 	override int minWidth() { return scaleWithDpi(48); }
@@ -7675,6 +7680,11 @@ class VerticalScrollbar : ScrollbarBase {
 			downButton.tabStop = false;
 			thumb.tabStop = false;
 		}
+	}
+
+	version(custom_widgets)
+	override void dpiChanged() {
+		thumb.thumbWidth = scaleWithDpi(16);
 	}
 
 	override int minWidth() { return scaleWithDpi(16); }

@@ -671,6 +671,9 @@ class DiscordGatewayConnection {
 
 		if(closeEvent.code == 1006 || closeEvent.code == 1001) {
 			reconnectAndResume();
+		} else if(closeEvent.code == 4004) {
+			// auth failed
+			throw new Exception("Authentication failed");
 		} else {
 			// otherwise, unless we were asked by the api user to close, let's try reconnecting
 			// since discord just does discord things.
