@@ -2735,7 +2735,7 @@ class Cgi {
 		}
 
 		// closing the last chunk...
-		if(nph && rawDataOutput !is null && responseChunked)
+		if(requestMethod != RequestMethod.HEAD && nph && rawDataOutput !is null && responseChunked)
 			rawDataOutput(cast(const(ubyte)[]) "0\r\n\r\n");
 
 		if(flushDelegate)
