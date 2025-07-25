@@ -77,8 +77,8 @@
 
 	Use [IniParser.isDestructive] to check for the operating mode.
 
-	The construct a non-destructive parser despite a mutable input data,
-	specify `const(char)[]` as the value of the `string` template parameter.
+	To construct a non-destructive parser despite mutable input data,
+	pass type `const(char)[]` to the template parameter named `string`.
 
 	---
 	char[] mutableInput = [ /* … */ ];
