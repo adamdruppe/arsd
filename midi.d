@@ -342,16 +342,17 @@ struct FlattenedTrackStream {
 					if(events.length <= 1)
 						return false;
 
-					bool hasNoteOn = true;
+					bool hasNoteOn = false;
 					bool needsChange = false;
 					foreach(event; events) {
-						if(hasNoteOn)
+						if(hasNoteOn) {
 							if(event.isNoteOff) {
 								needsChange = true;
 								break;
 							}
-						else if(event.isNoteOn)
+						} else if(event.isNoteOn) {
 							hasNoteOn = true;
+						}
 					}
 
 					if(!needsChange)
