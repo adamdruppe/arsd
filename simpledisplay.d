@@ -2367,11 +2367,18 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			nativeMapping[cast(void*) nativeWindow] = this;
 
 		beingOpenKeepsAppOpen = false;
+		useDirectDraw = true;
 
-		if(nativeWindow)
-			CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+		if(nativeWindow) {
+			version(OSXCocoa)
+				CapableOfHandlingNativeEvent.nativeHandleMapping[cast(void*) nativeWindow] = this;
+			else
+				CapableOfHandlingNativeEvent.nativeHandleMapping[nativeWindow] = this;
+		}
 		_suppressDestruction = true; // so it doesn't try to close
 	}
+
+	private bool useDirectDraw;
 
 	/++
 		Used iff [WindowFlags.managesChildWindowFocus] is set when the window is created.
@@ -11162,6 +11169,9 @@ void runInWorkerThread(T)(T delegate(Task) work, void delegate(T) uponCompletion
 interface CapableOfHandlingNativeEvent {
 	NativeEventHandler getNativeEventHandler();
 
+	version(OSXCocoa)
+	/*private*//*protected*/ __gshared CapableOfHandlingNativeEvent[void*] nativeHandleMapping; // to avoid typeinfo problems
+	else
 	/*private*//*protected*/ __gshared CapableOfHandlingNativeEvent[NativeWindowHandle] nativeHandleMapping;
 
 	version(X11) {
@@ -13456,9 +13466,12 @@ version(X11) {
 
 			Drawable buffer = None;
 			if(auto sw = cast(SimpleWindow) this.window) {
+				if(sw.useDirectDraw)
+					goto direct_draw;
 				buffer = sw.impl.buffer;
 				this.destiny = cast(Drawable) window;
 			} else {
+				direct_draw:
 				buffer = cast(Drawable) window;
 				this.destiny = None;
 			}
@@ -18645,6 +18658,8 @@ struct Visual
 	DON'T FORGET TO MARK THE CLASSES `extern`!! can cause "unrecognized selector sent to class" errors if you do.
 +/
 
+	import core.attribute;
+
 	private __gshared AppDelegate globalAppDelegate;
 
 	extern(Objective-C)
@@ -18730,7 +18745,8 @@ struct Visual
 
 				if (sw.onDestroyed !is null) try { sw.onDestroyed(); } catch (Exception e) {} // sorry
 				SimpleWindow.nativeMapping.remove(window);
-				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(cast(NSWindow) window);
+				// FIXME: this makes a ref to typeinfo apparently
+				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(window);
 
 				bool anyImportant = false;
 				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
@@ -19499,7 +19515,8 @@ version(OSXCocoa) {
 			// window.release(); // closing the window does this automatically i think
 		}
 		void closeWindow() {
-			window.close();
+			if(window)
+				window.close();
 		}
 
 		ScreenPainter getPainter(bool manualInvalidations) {
