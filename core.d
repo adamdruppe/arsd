@@ -8634,7 +8634,7 @@ class LoggerOf(T, size_t bufferSize = 16) {
 					logger.condition.notifyAll();
 				}
 				// mark us as complete for other listeners waiting as well
-				event.set();
+				event.setIfInitialized();
 
 			}
 
