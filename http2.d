@@ -1361,7 +1361,7 @@ class HttpRequest {
 		}
 
 		if(advance)
-			HttpRequest.advanceConnections(requestParameters.timeoutFromInactivity);
+			HttpRequest.advanceConnections(0.seconds);//requestParameters.timeoutFromInactivity); // doing async so no block here
 	}
 
 
@@ -1717,7 +1717,6 @@ class HttpRequest {
 				It should tell the thing if the buffer is reused or not
 		+/
 
-
 		/++
 			This is made public for rudimentary event loop integration, but is still
 			basically an internal detail. Try not to use it if you have another way.
@@ -1842,8 +1841,10 @@ class HttpRequest {
 			}
 
 			import std.algorithm : remove;
-			foreach(rp; removeFromPending[0 .. removeFromPendingCount])
+			foreach(rp; removeFromPending[0 .. removeFromPendingCount]) {
+				if(rp.onDataReceived) rp.onDataReceived(rp);
 				pending = pending.remove!((a) => a is rp)();
+			}
 
 			tryAgain:
 
@@ -1874,6 +1875,7 @@ class HttpRequest {
 					sock.close();
 					loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 					hadAbortedRequest = true;
+					if(request.onDataReceived) request.onDataReceived(request);
 					continue;
 				}
 
@@ -1923,6 +1925,8 @@ class HttpRequest {
 						sock.close();
 						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
 						anyWorkDone = true;
+
+						if(request.onDataReceived) request.onDataReceived(request);
 					}
 				}
 				killInactives();
@@ -1966,6 +1970,7 @@ class HttpRequest {
 						inactive[inactiveCount++] = s;
 						s.close();
 						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, s);
+						if(request.onDataReceived) request.onDataReceived(request);
 					}
 				}
 
@@ -1992,6 +1997,7 @@ class HttpRequest {
 							inactive[inactiveCount++] = sock;
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+							if(request.onDataReceived) request.onDataReceived(request);
 							continue;
 						} else {
 							if(auto s = cast(SslClientSocket) sock) {
@@ -2031,6 +2037,7 @@ class HttpRequest {
 							inactive[inactiveCount++] = sock;
 							sock.close();
 							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
+							if(request.onDataReceived) request.onDataReceived(request);
 							continue;
 
 						}
@@ -2040,6 +2047,7 @@ class HttpRequest {
 
 							debug(arsd_http2_verbose) writeln("all sent");
 						}
+						if(request.onDataReceived) request.onDataReceived(request);
 					}
 
 
@@ -2047,7 +2055,7 @@ class HttpRequest {
 						keep_going:
 						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
 						auto got = sock.receive(buffer);
-						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
+						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError(sock)); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
 						if(got < 0) {
 							if(wouldHaveBlocked())
 								continue;
@@ -3623,8 +3631,8 @@ version(use_openssl) {
 			int function(SSL*, const void*, int) SSL_write;
 			int function(SSL*, void*, int) SSL_read;
 			@trusted nothrow @nogc int function(SSL*) SSL_shutdown;
-			void function(SSL*) SSL_free;
-			void function(SSL_CTX*) SSL_CTX_free;
+			void function(SSL*) @nogc nothrow SSL_free;
+			void function(SSL_CTX*) @nogc nothrow SSL_CTX_free;
 
 			int function(const SSL*) SSL_pending;
 			int function (const SSL *ssl, int ret) SSL_get_error;
@@ -3691,6 +3699,11 @@ version(use_openssl) {
 	struct OpenSSL {
 		static:
 
+		static Error notLoadedError;
+		static this() {
+			notLoadedError = new object.Error("will be overwritten");
+		}
+
 		template opDispatch(string name) {
 			auto opDispatch(T...)(T t) {
 				static if(__traits(hasMember, ossllib, name)) {
@@ -3699,8 +3712,10 @@ version(use_openssl) {
 					auto ptr = __traits(getMember, eallib, name);
 				} else static assert(0);
 
-				if(ptr is null)
-					throw new Exception(name ~ " not loaded");
+				if(ptr is null) {
+					notLoadedError.msg = name;
+					throw notLoadedError;//(name ~ " not loaded");
+				}
 				return ptr(t);
 			}
 		}
@@ -4067,9 +4082,10 @@ version(use_openssl) {
 			initSsl(verifyPeer, hostname);
 		}
 
-		override void close() scope {
+		override void close() scope @trusted {
 			if(ssl) OpenSSL.SSL_shutdown(ssl);
 			super.close();
+			freeSsl();
 		}
 
 		this(socket_t sock, AddressFamily af, string hostname, bool verifyPeer = true) {
@@ -4077,7 +4093,7 @@ version(use_openssl) {
 			initSsl(verifyPeer, hostname);
 		}
 
-		void freeSsl() {
+		void freeSsl() @nogc nothrow {
 			if(ssl is null)
 				return;
 			OpenSSL.SSL_free(ssl);
