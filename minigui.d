@@ -16385,7 +16385,7 @@ class Event : ReflectableProperties {
 		dchar character() {
 			if(auto ce = cast(CharEvent) this)
 				return ce.character;
-			return dchar.init;
+			return dchar_invalid;
 		}
 	}
 

@@ -1784,7 +1784,7 @@ float[2] getDpi() {
 		}
 
 		auto xft = getXftDpi();
-		if(xft is float.init)
+		if(xft is float.nan)
 			fallback();
 		else {
 			dpi[0] = xft;
@@ -1814,7 +1814,7 @@ float getXftDpi() {
 		}
 	}
 
-	return float.init;
+	return float.nan;
 }
 
 /++
@@ -2012,6 +2012,7 @@ enum CornerStyle {
 	will need to destroy it yourself.
 +/
 class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
+	version(D_OpenD) mixin EnableSynchronization;
 
 	/++
 		Copies the window's current state into a [TrueColorImage].
@@ -4315,7 +4316,7 @@ struct EventLoop {
 		EventLoop.get().exit();
 	}
 
-	private __gshared static Object monitor = new Object(); // deliberate CTFE usage here fyi
+	private __gshared static SynchronizableObject monitor = new SynchronizableObject(); // deliberate CTFE usage here fyi
 
 	/// Construct an application-global event loop for yourself
 	/// See_Also: [SimpleWindow.setEventHandlers]
@@ -10980,7 +10981,7 @@ private struct RunQueueMember {
 }
 
 private __gshared RunQueueMember*[] runInGuiThreadQueue;
-private __gshared Object runInGuiThreadLock = new Object; // intentional CTFE
+private __gshared SynchronizableObject runInGuiThreadLock = new SynchronizableObject; // intentional CTFE
 private bool thisIsGuiThread = false;
 private shared bool guiThreadExists_ = false;
 private shared bool guiThreadTerminating = false;

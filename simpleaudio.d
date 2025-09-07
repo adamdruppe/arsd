@@ -367,13 +367,13 @@ class DummySample : SampleController {
 	void pause() {}
 	void resume() {}
 	void stop() {}
-	float position() { return float.init; }
+	float position() { return float.nan; }
 	bool finished() { return true; }
 	bool paused() { return true; }
 
-	float duration() { return float.init; }
+	float duration() { return float.nan; }
 	float volume() { return 1.0; }
-	float volume(float v) { return float.init; }
+	float volume(float v) { return float.nan; }
 
 	float playbackSpeed() { return 1.0; }
 	void playbackSpeed(float v) { }
@@ -397,18 +397,18 @@ private final class SampleControlFlags : SampleController {
 	void seek(float where) { synchronized(this) {if(where < 0) where = 0; requestedSeek = where;} }
 
 	float currentPosition = 0.0;
-	float requestedSeek = float.init;
+	float requestedSeek = float.nan;
 
-	float detectedDuration;
+	float detectedDuration = float.nan;
 	float duration() { return detectedDuration; }
 
 	// FIXME: these aren't implemented
 	float volume() { return 1.0; }
-	float volume(float v) { return float.init; }
+	float volume(float v) { return float.nan; }
 
 	float playbackSpeed_ = 1.0;
 
-	float requestedPlaybackSpeed;
+	float requestedPlaybackSpeed = float.nan;
 
 	float playbackSpeed() { return playbackSpeed_; }
 	void playbackSpeed(float v) { requestedPlaybackSpeed = v; }
@@ -420,18 +420,18 @@ private final class SampleControlFlags : SampleController {
 	) {
 		// should I synchronize it after all?
 		synchronized(this) {
-			if(this.requestedSeek !is float.init) {
+			if(this.requestedSeek !is float.nan) {
 				if(executeSeek !is null && executeSeek(this.requestedSeek)) {
 					this.currentPosition = this.requestedSeek;
 				}
 
-				this.requestedSeek = float.init;
+				this.requestedSeek = float.nan;
 			}
-			if(this.requestedPlaybackSpeed !is float.init) {
+			if(this.requestedPlaybackSpeed !is float.nan) {
 				if(executePlaybackSpeed !is null && executePlaybackSpeed(this.playbackSpeed_)) {
 					this.playbackSpeed_ = this.requestedPlaybackSpeed;
 				}
-				this.requestedPlaybackSpeed = float.init;
+				this.requestedPlaybackSpeed = float.nan;
 			}
 		}
 

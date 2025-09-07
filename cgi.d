@@ -606,6 +606,8 @@ unittest {
 static import std.file;
 
 static import arsd.core;
+import arsd.core : EnableSynchronization; // polyfill for opend with removed monitor
+
 version(Posix)
 import arsd.core : makeNonBlocking;
 
@@ -1883,7 +1885,7 @@ class Cgi {
 
 				// not using maxContentLength because that might be cranked up to allow
 				// large file uploads. We can handle them, but a huge post[] isn't any good.
-			if(pps.buffer.length + chunk.length > 8 * 1024 * 1024) // surely this is plenty big enough
+			if(pps.buffer.length + chunk.length > 24 * 1024 * 1024) // surely this is plenty big enough
 				throw new Exception("wtf is up with such a gigantic form submission????");
 
 			pps.buffer ~= chunk;
@@ -2289,12 +2291,26 @@ class Cgi {
 		     ```
 
 		To ensure the necessary data is available to cgi.d.
+
+		History:
+			The overload with the `checker` callback was added July 29, 2025.
 	+/
 	void requireBasicAuth(string user, string pass, string message = null, string file = __FILE__, size_t line = __LINE__) {
 		if(authorization != "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (user ~ ":" ~ pass))) {
 			throw new AuthorizationRequiredException("Basic", message, file, line);
 		}
 	}
+
+	/// ditto
+	void requireBasicAuth(scope bool delegate(string user, string pass) checker, string message = null, string file = __FILE__, size_t line = __LINE__) {
+		// FIXME
+		/+
+		if(authorization != "Basic " ~ Base64.encode(cast(immutable(ubyte)[]) (user ~ ":" ~ pass))) {
+			throw new AuthorizationRequiredException("Basic", message, file, line);
+		}
+		+/
+	}
+
 
 	/// Very simple caching controls - setCache(false) means it will never be cached. Good for rapidly updated or sensitive sites.
 	/// setCache(true) means it will always be cached for as long as possible. Best for static content.
@@ -5959,6 +5975,8 @@ import core.atomic;
 	FIXME: should I offer an event based async thing like netman did too? Yeah, probably.
 */
 class ListeningConnectionManager {
+	version(D_OpenD) mixin EnableSynchronization;
+
 	Semaphore semaphore;
 	Socket[256] queue;
 	shared(ubyte) nextIndexFront;
@@ -12130,8 +12148,10 @@ auto handleWith(alias handler)(string urlPrefix) {
 	// cuz I'm too lazy to do it better right now
 	static class Hack : WebObject {
 		static import std.traits;
+		static if(is(typeof(handler) Params == __parameters))
+		@(__traits(getAttributes, handler))
 		@UrlName("")
-		auto handle(std.traits.Parameters!handler args) {
+		auto handle(Params args) {
 			return handler(args);
 		}
 	}

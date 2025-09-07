@@ -56,6 +56,18 @@ static if(__traits(compiles, () { import core.interpolation; })) {
 	struct InterpolatedExpression(string code) {}
 }
 
+static if(!__traits(hasMember, object, "SynchronizableObject")) {
+	alias SynchronizableObject = Object;
+	mixin template EnableSynchronization() {}
+} else {
+	alias EnableSynchronization = Object.EnableSynchronization;
+}
+
+// the old char.inits if you need them
+enum  char  char_invalid = '\xFF';
+enum wchar wchar_invalid = '\uFFFF';
+enum dchar dchar_invalid = '\U0000FFFF';
+
 // arsd core is now default but you can opt out for a lil while
 version(no_arsd_core) {
 
@@ -7152,7 +7164,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		}
 
 
-		private static final class CallbackQueue {
+		private static final class CallbackQueue : SynchronizableObject {
 			int fd = -1;
 			string name;
 			CallbackHelper callback;
@@ -7489,14 +7501,14 @@ struct SynchronizedCircularBuffer(T, size_t maxSize = 128) {
 	private int front;
 	private int back;
 
-	private Object synchronizedOn;
+	private SynchronizableObject synchronizedOn;
 
 	@disable this();
 
 	/++
 		The Object's monitor is used to synchronize the methods in here.
 	+/
-	this(Object synchronizedOn) {
+	this(SynchronizableObject synchronizedOn) {
 		this.synchronizedOn = synchronizedOn;
 	}
 
@@ -8481,6 +8493,8 @@ unittest {
 		Not actually implemented until February 6, 2025, when it changed from mixin template to class.
 +/
 class LoggerOf(T, size_t bufferSize = 16) {
+	version(D_OpenD) mixin EnableSynchronization;
+
 	private LoggedMessage!T[bufferSize] ring;
 	private ulong writeBufferPosition;
 

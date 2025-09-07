@@ -269,6 +269,8 @@ __gshared void delegate() nothrow @nogc sigIntExtension;
 
 static import arsd.core;
 
+public import arsd.core : dchar_invalid;
+
 import core.stdc.stdio;
 
 version(TerminalDirectToEmulator) {
@@ -2543,7 +2545,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		Params:
 			prompt = the prompt to give the user. For example, `"Your name: "`.
-			echoChar = the character to show back to the user as they type. The default value of `dchar.init` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
+			echoChar = the character to show back to the user as they type. The default value of `dchar_invalid` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
 			prefilledData = the initial data to populate the edit buffer
 
 		History:
@@ -2557,7 +2559,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			On November 7, 2023 (dub v11.3), this function started returning stdin.readln in the event that the instance is not connected to a terminal.
 	+/
-	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
+	string getline(string prompt = null, dchar echoChar = dchar_invalid, string prefilledData = null) {
 		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
 		if(!stdoutIsTerminal || !stdinIsTerminal) {
 			import std.stdio;
@@ -2601,7 +2603,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	/// ditto
-	string getline(string prompt, string prefilledData, dchar echoChar = dchar.init) {
+	string getline(string prompt, string prefilledData, dchar echoChar = dchar_invalid) {
 		return getline(prompt, echoChar, prefilledData);
 	}
 
@@ -2697,14 +2699,17 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					throw new Exception("terminal reply timed out");
 				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
 				if(len == -1) {
-					if(errno == EINTR)
+					if(errno == EINTR) {
+						tries++;
 						goto try_again;
+					}
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
 						import core.thread;
 						Thread.sleep(10.msecs);
 						tries++;
 						goto try_again;
 					}
+					throw new Exception("Other error in read cursor position");
 				} else if(len == 0) {
 					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 				}
@@ -3304,7 +3309,7 @@ struct RealTimeConsoleInput {
 	bool kbhit() {
 		auto got = getch(true);
 
-		if(got == dchar.init)
+		if(got == dchar_invalid)
 			return false;
 
 		getchBuffer = got;
@@ -3385,21 +3390,21 @@ struct RealTimeConsoleInput {
 		}
 	}
 
-	private dchar getchBuffer;
+	private dchar getchBuffer = dchar_invalid;
 
 	/// Get one key press from the terminal, discarding other
-	/// events in the process. Returns dchar.init upon receiving end-of-file.
+	/// events in the process. Returns dchar_invalid upon receiving end-of-file.
 	///
 	/// Be aware that this may return non-character key events, like F1, F2, arrow keys, etc., as private use Unicode characters. Check them against KeyboardEvent.Key if you like.
 	dchar getch(bool nonblocking = false) {
-		if(getchBuffer != dchar.init) {
+		if(getchBuffer != dchar_invalid) {
 			auto a = getchBuffer;
-			getchBuffer = dchar.init;
+			getchBuffer = dchar_invalid;
 			return a;
 		}
 
 		if(nonblocking && !anyInput_internal())
-			return dchar.init;
+			return dchar_invalid;
 
 		auto event = nextEvent();
 		while(event.type != InputEvent.Type.KeyboardEvent || event.keyboardEvent.pressed == false) {
@@ -3408,10 +3413,10 @@ struct RealTimeConsoleInput {
 			if(event.type == InputEvent.Type.HangupEvent)
 				throw new HangupException();
 			if(event.type == InputEvent.Type.EndOfFileEvent)
-				return dchar.init;
+				return dchar_invalid;
 
 			if(nonblocking && !anyInput_internal())
-				return dchar.init;
+				return dchar_invalid;
 
 			event = nextEvent();
 		}
@@ -6190,7 +6195,7 @@ class LineGetter {
 
 		Possible values are:
 
-			`dchar.init` = normal; user can see their input.
+			`dchar_invalid` = normal; user can see their input.
 
 			`'\0'` = nothing; the cursor does not visually move as they edit. Similar to Unix style password prompts.
 
@@ -6198,8 +6203,10 @@ class LineGetter {
 
 		History:
 			Added October 11, 2021 (dub v10.4)
+
+			OpenD changed `dchar.init` from an invalid char to `0` in September 2025. If you explicitly assigned `dchar.init`, I strongly recommend changing that to `dchar_invalid` for maximum compatibility.
 	+/
-	dchar echoChar = dchar.init;
+	dchar echoChar = dchar_invalid;
 
 	protected static struct Drawer {
 		LineGetter lg;
@@ -6248,7 +6255,7 @@ class LineGetter {
 
 			if(lg.echoChar == '\0')
 				return;
-			else if(lg.echoChar !is dchar.init)
+			else if(lg.echoChar !is dchar_invalid)
 				ch = lg.echoChar;
 
 			auto l = encode(buffer, ch);
@@ -9439,7 +9446,7 @@ version(TerminalDirectToEmulator) {
 						fontSize = widget.scaleWithDpi(fontSize);
 					} else {
 						auto xft = getXftDpi();
-						if(xft is float.init)
+						if(xft is float.nan)
 							xft = 96;
 						// the xft passed as assumed means it will figure that's what the size
 						// is based on (which it is, inside xft) preventing the double scale problem
