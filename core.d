@@ -8492,9 +8492,7 @@ unittest {
 
 		Not actually implemented until February 6, 2025, when it changed from mixin template to class.
 +/
-class LoggerOf(T, size_t bufferSize = 16) {
-	version(D_OpenD) mixin EnableSynchronization;
-
+class LoggerOf(T, size_t bufferSize = 16) : SynchronizableObject {
 	private LoggedMessage!T[bufferSize] ring;
 	private ulong writeBufferPosition;
 
