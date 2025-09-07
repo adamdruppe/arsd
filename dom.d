@@ -47,6 +47,10 @@
 	implementations =
 
 	These provide implementations of other functionality.
+
+	History:
+		The `toString` methods used to optionally take a Phobos `appender`,
+		but now it takes a private internal implementation as of August 26, 2025. This may change again.
 +/
 module arsd.dom;
 
@@ -541,6 +545,7 @@ class Document : FileResource, DomParent {
 			dataEncoding = dataEncoding.replace("-", "");
 			dataEncoding = dataEncoding.replace("_", "");
 			if(dataEncoding == "utf8") {
+				import std.utf;
 				try {
 					validate(rawdata);
 				} catch(UTFException e) {
@@ -700,7 +705,7 @@ class Document : FileResource, DomParent {
 		}
 
 		void parseError(string message) {
-			throw new MarkupException(format("char %d (line %d): %s", pos, getLineNumber(pos), message));
+			throw new MarkupException("char "~to!string(pos)~" (line "~to!string(getLineNumber(pos))~"): " ~ message);
 		}
 
 		bool eatWhitespace() {
@@ -860,7 +865,8 @@ class Document : FileResource, DomParent {
 				return Ele(0, readTextNode(), null);
 			}
 
-			enforce(data[pos] == '<');
+			if(data[pos] != '<')
+				throw new MarkupException("expected < not " ~ data[pos]);
 			pos++;
 			if(pos == data.length) {
 				if(strict)
@@ -1113,10 +1119,9 @@ class Document : FileResource, DomParent {
 									selfClosed = true;
 						}
 
-						import std.algorithm.comparison;
-
 						if(strict) {
-						enforce(data[pos] == '>', format("got %s when expecting > (possible missing attribute name)\nContext:\n%s", data[pos], data[max(0, pos - data.contextToKeep) .. min(data.length, pos + data.contextToKeep)]));
+							if(data[pos] != '>')
+								throw new MarkupException("got "~data[pos]~" when expecting > (possible missing attribute name)\nContext:\n" ~ data[max(0, pos - data.contextToKeep) .. min(data.length, pos + data.contextToKeep)]);
 						} else {
 							// if we got here, it's probably because a slash was in an
 							// unquoted attribute - don't trust the selfClosed value
@@ -1166,7 +1171,7 @@ class Document : FileResource, DomParent {
 								else
 									ending = indexOf(data[pos..$], closer);
 
-								ending = indexOf(data[pos..$], closer, 0, (loose ? CaseSensitive.no : CaseSensitive.yes));
+								ending = indexOf(data[pos..$], closer, (loose ? false : true));
 								/*
 								if(loose && ending == -1 && pos < data.length)
 									ending = indexOf(data[pos..$], closer.toUpper());
@@ -1225,7 +1230,7 @@ class Document : FileResource, DomParent {
 								bool found = false;
 								if(n.payload != tagName) {
 									if(strict)
-										parseError(format("mismatched tag: </%s> != <%s> (opened on line %d)", n.payload, tagName, getLineNumber(whereThisTagStarted)));
+										parseError("mismatched tag: </"~n.payload~"> != <"~tagName~"> (opened on line "~to!string(getLineNumber(whereThisTagStarted))~")");
 									else {
 										sawImproperNesting = true;
 										// this is so we don't drop several levels of awful markup
@@ -1721,7 +1726,6 @@ class Document : FileResource, DomParent {
 		because whitespace may be significant content in XML.
 	+/
 	string toPrettyString(bool insertComments = false, int indentationLevel = 0, string indentWith = "\t") const {
-		import std.string;
 		string s = prolog.strip;
 
 		/*
@@ -1872,6 +1876,7 @@ unittest {
 unittest {
 	auto document = new Document(`<html>
 		<p>¤ is a non-ascii character. It will be converted to a numbered entity in string output.</p>
+		<p>&#164; is the same thing.</p>
 		<p>&curren; is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.</p>
 		<p><![CDATA[xml cdata segments, which can contain <tag> looking things, are converted to encode the embedded special-to-xml characters to entities too.]]></p>
 	</html>`, true, true); // strict mode turned on
@@ -1881,15 +1886,17 @@ unittest {
 	// no surprise on the first paragraph, we wrote it with the character, and it is still there in the D string
 	assert(paragraphs[0].textContent == "¤ is a non-ascii character. It will be converted to a numbered entity in string output.");
 	// but note on the second paragraph, the entity has been converted to the appropriate *character* in the object
-	assert(paragraphs[1].textContent == "¤ is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.");
+	assert(paragraphs[1].textContent == "¤ is the same thing.");
+	assert(paragraphs[2].textContent == "¤ is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.");
 	// and the CDATA bit is completely gone from the DOM; it just read it in as a text node. The txt content shows the text as a plain string:
-	assert(paragraphs[2].textContent == "xml cdata segments, which can contain <tag> looking things, are converted to encode the embedded special-to-xml characters to entities too.");
+	assert(paragraphs[3].textContent == "xml cdata segments, which can contain <tag> looking things, are converted to encode the embedded special-to-xml characters to entities too.");
 	// and the dom node beneath it is just a single text node; no trace of the original CDATA detail is left after parsing.
-	assert(paragraphs[2].childNodes.length == 1 && paragraphs[2].childNodes[0].nodeType == NodeType.Text);
+	assert(paragraphs[3].childNodes.length == 1 && paragraphs[3].childNodes[0].nodeType == NodeType.Text);
 
 	// And now, in the output string, we can see they are normalized thusly:
 	assert(document.toString() == "<!DOCTYPE html>\n<html>
 		<p>&#164; is a non-ascii character. It will be converted to a numbered entity in string output.</p>
+		<p>&#164; is the same thing.</p>
 		<p>&#164; is the same thing, but as a named entity. It also will be changed to a numbered entity in string output.</p>
 		<p>xml cdata segments, which can contain &lt;tag&gt; looking things, are converted to encode the embedded special-to-xml characters to entities too.</p>
 	</html>");
@@ -4144,8 +4151,7 @@ class Element : DomParent {
 
 		// i sort these for consistent output. might be more legible
 		// but especially it keeps it the same for diff purposes.
-		import std.algorithm : sort;
-		auto keys = sort(attributes.keys);
+		auto keys = sortStrings(attributes.keys);
 		foreach(n; keys) {
 			auto v = attributes[n];
 			s ~= " ";
@@ -4397,8 +4403,6 @@ unittest {
 }
 
 
-
-import std.string;
 
 /* domconvenience follows { */
 
@@ -5059,11 +5063,6 @@ string camelCase(string a) {
 
 // I need to maintain compatibility with the way it is now too.
 
-import std.string;
-import std.exception;
-import std.array;
-import std.range;
-
 //import std.stdio;
 
 // tag soup works for most the crap I know now! If you have two bad closing tags back to back, it might erase one, but meh
@@ -5209,7 +5208,7 @@ string htmlEntitiesEncode(string data, Appender!string output = appender!string(
 		else if (!encodeNonAscii || (d < 128 && d > 0))
 			output.put(d);
 		else
-			output.put("&#" ~ std.conv.to!string(cast(int) d) ~ ";");
+			output.put("&#" ~ to!string(cast(int) d) ~ ";");
 	}
 
 	//assert(output !is null); // this fails on empty attributes.....
@@ -5286,7 +5285,7 @@ dchar parseEntity(in dchar[] entity) {
 						return ' '; // this is really broken html
 					// done with dealing with broken stuff
 
-					auto p = std.conv.to!int(decimal);
+					auto p = to!int(decimal);
 					return cast(dchar) p;
 				}
 			} else
@@ -5316,9 +5315,6 @@ unittest {
 	assert(parseEntity("&AElig;"d) == '\u00c6');
 	assert(parseEntity("&zwnj;"d) == '\u200c');
 }
-
-import std.utf;
-import std.stdio;
 
 /// This takes a string of raw HTML and decodes the entities into a nice D utf-8 string.
 /// By default, it uses loose mode - it will try to return a useful string from garbage input too.
@@ -5369,7 +5365,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 						foreach(char c; entityBeingTried[0 .. entityBeingTriedLength - 1]) // cut off the & we're on now
 							a ~= c;
 					} else {
-						a ~= buffer[0.. std.utf.encode(buffer, ch2)];
+						a ~= buffer[0.. utf_encode(buffer, ch2)];
 					}
 				}
 
@@ -5378,7 +5374,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 			} else
 			if(ch == ';') {
 				tryingEntity = false;
-				a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
+				a ~= buffer[0.. utf_encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
 			} else if(ch == ' ') {
 				// e.g. you &amp i
 				if(strict)
@@ -5386,7 +5382,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 				else {
 					tryingEntity = false;
 					a ~= to!(char[])(entityBeingTried[0 .. entityBeingTriedLength - 1]);
-					a ~= buffer[0 .. std.utf.encode(buffer, ch)];
+					a ~= buffer[0 .. utf_encode(buffer, ch)];
 				}
 			} else {
 				if(tryingNumericEntity) {
@@ -5403,7 +5399,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 							if(strict)
 								throw new Exception("unterminated entity at " ~ to!string(entityBeingTried[0 .. entityBeingTriedLength]));
 							tryingEntity = false;
-							a ~= buffer[0.. std.utf.encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
+							a ~= buffer[0.. utf_encode(buffer, parseEntity(entityBeingTried[0 .. entityBeingTriedLength]))];
 							a ~= ch;
 							continue;
 						}
@@ -5431,7 +5427,7 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 				entityBeingTried[entityBeingTriedLength++] = ch;
 				entityAttemptIndex = 0;
 			} else {
-				a ~= buffer[0 .. std.utf.encode(buffer, ch)];
+				a ~= buffer[0 .. utf_encode(buffer, ch)];
 			}
 		}
 	}
@@ -5781,9 +5777,8 @@ class TextNode : Element {
 		}
 
 		auto e = htmlEntitiesEncode(contents);
-		import std.algorithm.iteration : splitter;
 		bool first = true;
-		foreach(line; splitter(e, "\n")) {
+		foreach(line; LineSplitter(e)) {
 			if(first) {
 				s ~= toPrettyStringIndent(insertComments, indentationLevel, indentWith);
 				first = false;
@@ -6231,8 +6226,6 @@ class Form : Element {
 +/
 }
 
-import std.conv;
-
 /++
 	Represents a HTML table. Has some convenience methods for working with tabular data.
 +/
@@ -6618,8 +6611,6 @@ private immutable static string[] htmlInlineElements = [
 	"span", "strong", "em", "b", "i", "a"
 ];
 
-
-static import std.conv;
 
 /// helper function for decoding html entities
 int intFromHex(string hex) {
@@ -7074,7 +7065,7 @@ int intFromHex(string hex) {
 				if(e.parentNode is null)
 					return false;
 
-				auto among = retro(e.parentNode.childElements(e.tagName));
+				auto among = Retro!Element(e.parentNode.childElements(e.tagName));
 
 				if(!a.solvesFor(among, e))
 					return false;
@@ -7136,7 +7127,7 @@ int intFromHex(string hex) {
 		}
 
 		string toString() {
-			return format("%dn%s%d%s%s", multiplier, adder >= 0 ? "+" : "", adder, of.length ? " of " : "", of);
+			return (to!string(multiplier) ~ "n" ~ (adder >= 0 ? "+" : "") ~ to!string(adder) ~ (of.length ? " of " : "") ~ of);
 		}
 
 		bool solvesFor(R)(R elements, Element e) {
@@ -7331,8 +7322,7 @@ int intFromHex(string hex) {
 			about mutating the dom as you iterate through this.
 		+/
 		auto getMatchingElementsLazy(Element start, Element relativeTo = null) {
-			import std.algorithm.iteration;
-			return start.tree.filter!(a => this.matchesElement(a, relativeTo));
+			return ElementStreamFilter(start.tree, (Element a) => this.matchesElement(a, relativeTo));
 		}
 
 
@@ -7413,7 +7403,7 @@ int intFromHex(string hex) {
 			+/
 			}
 
-			foreach(part; retro(lparts)) {
+			foreach_reverse(part; lparts) {
 
 				 // writeln("matching ", where, " with ", part, " via ", lastSeparation);
 				 // writeln(parts);
@@ -8339,11 +8329,13 @@ final class ElementStream {
 // unbelievable.
 // Don't use any of these in your own code. Instead, try to use phobos or roll your own, as I might kill these at any time.
 sizediff_t indexOfBytes(immutable(ubyte)[] haystack, immutable(ubyte)[] needle) {
-	static import std.algorithm;
-	auto found = std.algorithm.find(haystack, needle);
-	if(found.length == 0)
-		return -1;
-	return haystack.length - found.length;
+	foreach(idx, b; haystack) {
+		if(idx + needle.length > haystack.length)
+			return -1;
+		if(haystack[idx .. idx + needle.length] == needle[])
+			return idx;
+	}
+	return -1;
 }
 
 private T[] insertAfter(T)(T[] arr, int position, T[] what) {
@@ -8764,7 +8756,7 @@ class Event {
 
 		isBubbling = false;
 
-		foreach(e; chain.retro()) {
+		foreach(e; Retro!Element(chain)) {
 			if(eventName in e.capturingEventHandlers)
 			foreach(handler; e.capturingEventHandlers[eventName])
 				handler(e, this);
@@ -9352,6 +9344,270 @@ unittest {
 	auto document = new Document("broken"); // just ensuring it doesn't crash
 }
 
+private long min(long a, long b) {
+	if(a < b)
+		return a;
+	return b;
+}
+
+private long max(long a, long b) {
+	if(a < b)
+		return b;
+	return a;
+}
+
+alias utf_encode = arsd.core.encodeUtf8;
+
+private struct Retro(T) {
+	T[] array;
+	size_t pos;
+
+	this(T[] array) {
+		this.array = array;
+		this.pos = array.length;
+	}
+
+	T front() {
+		return array[pos - 1];
+	}
+	void popFront() {
+		pos--;
+	}
+	bool empty() {
+		return pos > 0;
+	}
+}
+
+// import std.array; // for Appender
+
+private struct Appender(T : string) {
+	void put(string s) {
+		impl.data ~= s;
+	}
+	void put(char c) {
+		impl.data ~= c;
+	}
+	void put(dchar c) {
+		char[4] buffer;
+		impl.data ~= buffer[0 .. arsd.core.encodeUtf8(buffer, c)];
+	}
+	void reserve(size_t s) {
+		impl.data.reserve(s);
+	}
+
+	static struct Impl {
+		string data;
+	}
+
+	Impl* impl;
+
+	string data() {
+		return impl.data;
+	}
+
+	this(string start) {
+		impl = new Impl;
+		impl.data = start;
+	}
+}
+
+private Appender!string appender(T : string)() {
+	return Appender!string(null);
+}
+
+private string[] split(string s, string onWhat) {
+	string[] ret;
+
+	more:
+	auto idx = s.indexOf(onWhat);
+	if(idx == -1) {
+		ret ~= s;
+	} else {
+		ret ~= s[0 .. idx];
+		s = s[idx + onWhat.length .. $];
+		goto more;
+	}
+
+	return ret;
+}
+
+private string replace(string s, string replaceWhat, string withThis) {
+	string ret;
+
+	more:
+	auto idx = s.indexOf(replaceWhat);
+	if(idx == -1) {
+		ret ~= s;
+	} else {
+		ret ~= s[0 .. idx];
+		ret ~= withThis;
+		s = s[idx + replaceWhat.length .. $];
+		goto more;
+	}
+	return ret;
+}
+
+private @trusted string[] sortStrings(string[] obj) {
+	static extern(C) int comparator(scope const void* ra, scope const void* rb) {
+		string a = *cast(string*) ra;
+		string b = *cast(string*) rb;
+		return a < b;
+	}
+
+	import core.stdc.stdlib;
+	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, &comparator);
+	return obj;
+}
+
+private struct LineSplitter {
+	string s;
+	size_t nextLineBreak;
+	this(string s) {
+		this.s = s;
+		popFront();
+	}
+	string front() {
+		return s[0 .. nextLineBreak];
+	}
+	void popFront() {
+		s = s[nextLineBreak .. $];
+		nextLineBreak = 0;
+		while(nextLineBreak < s.length) {
+			if(s[nextLineBreak] == '\n') {
+				nextLineBreak++;
+				return;
+			}
+			nextLineBreak++;
+		}
+	}
+	bool empty() {
+		return s.length == 0;
+	}
+}
+unittest {
+	foreach(line; LineSplitter("foo"))
+		assert(line == "foo");
+	int c;
+	foreach(line; LineSplitter("foo\nbar")) {
+		if(c == 0)
+			assert(line == "foo\n");
+		else if(c == 1)
+			assert(line == "bar");
+		c++;
+	}
+}
+
+private struct ElementStreamFilter {
+	ElementStream range;
+	bool delegate(Element e) filter;
+	this(ElementStream range, bool delegate(Element e) filter) {
+		this.range = range;
+		this.filter = filter;
+		if(!range.empty && !filter(range.front))
+			popFront();
+	}
+	void popFront() {
+		range.popFront;
+		while(!range.empty && !this.filter(range.front)) {
+			range.popFront();
+		}
+	}
+	bool empty() {
+		return range.empty;
+	}
+	Element front() {
+		return range.front;
+	}
+}
+
+alias arsd.core.indexOf indexOf;
+alias arsd.core.stripInternal strip;
+alias arsd.core.stripRightInternal stripRight;
+alias arsd.core.startsWith startsWith;
+alias arsd.core.endsWith endsWith;
+
+// FIXME: start index can be useful but i used 0 here anyway
+private size_t indexOf(string haystack, string needle, bool caseSensitive) {
+	if(!caseSensitive) {
+		haystack = toLower(haystack);
+		needle = toLower(needle);
+	}
+	return indexOf(haystack, needle);
+}
+
+private string to(T : string, F)(F f) {
+	return arsd.core.toStringInternal(f);
+}
+private int to(T : int, F)(F f) {
+	// NOT GENERIC DO NOT USE OUTSIDE OF THIS MODULE'S CONTEXT
+	int accumulator;
+	foreach(ch; f) {
+		accumulator *= 10;
+		accumulator += ch - '0';
+	}
+	return accumulator;
+}
+private char[] to(T : char[], F : dchar[])(F f) {
+	char[] s;
+	foreach(dc; f) {
+		char[4] buffer;
+		s ~= buffer[0 .. arsd.core.encodeUtf8(buffer, dc)];
+	}
+	return s;
+}
+private string to(T : string, F : const(dchar)[])(F f) {
+	return cast(string) to!(char[], dchar[])(cast(dchar[]) f);
+}
+
+private string toLower(string s) {
+	foreach(ch; s) {
+		if(ch >= 'A' && ch <= 'Z')
+			goto needed;
+	}
+	return s; // shortcut, no changes
+
+	needed:
+	char[] ret;
+	ret.length = s.length;
+	foreach(idx, ch; s) {
+		if(ch >= 'A' && ch <= 'Z')
+			ret[idx] = ch | 32;
+		else
+			ret[idx] = ch;
+	}
+	return cast(string) ret;
+}
+unittest {
+	assert("".toLower == "");
+	assert("foo".toLower == "foo");
+	assert("FaZ".toLower == "faz");
+	assert("423".toLower == "423");
+}
+
+private string toUpper(string s) {
+	foreach(ch; s) {
+		if(ch >= 'a' && ch <= 'z')
+			goto needed;
+	}
+	return s; // shortcut, no changes
+
+	needed:
+	char[] ret;
+	ret.length = s.length;
+	foreach(idx, ch; s) {
+		if(ch >= 'a' && ch <= 'z')
+			ret[idx] = ch & ~32;
+		else
+			ret[idx] = ch;
+	}
+	return cast(string) ret;
+}
+unittest {
+	assert("".toUpper == "");
+	assert("foo".toUpper == "FOO");
+	assert("FaZ".toUpper == "FAZ");
+	assert("423".toUpper == "423");
+}
 
 /*
 Copyright: Adam D. Ruppe, 2010 - 2023
