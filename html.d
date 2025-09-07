@@ -10,6 +10,8 @@ module arsd.html;
 
 import arsd.core : encodeUriComponent;
 
+import std.string : indexOf, startsWith, endsWith, strip;
+
 public import arsd.dom;
 import arsd.color;
 

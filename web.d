@@ -11,7 +11,6 @@
 +/
 module arsd.web;
 
-
 static if(__VERSION__ <= 2076) {
 	// compatibility shims with gdc
 	enum JSONType {
@@ -225,6 +224,8 @@ public import std.range;
 
 public import std.traits;
 import std.json;
+
+import std.string : indexOf, endsWith, startsWith;
 
 /// This gets your site's base link. note it's really only good if you are using FancyMain.
 string getSiteLink(Cgi cgi) {
@@ -631,7 +632,7 @@ class ApiProvider : WebDotDBaseType {
 					continue;
 
 				// the builtins aren't interesting either
-				if(key.startsWith("builtin."))
+				if(std.string.startsWith(key, "builtin."))
 					continue;
 
 				if(func.originalName.length)
@@ -1879,7 +1880,7 @@ Form createAutomaticForm(Document document, string action, in Parameter[] parame
 		} else if (type == "radio") {
 			assert(0, "FIXME");
 		} else {
-			if(type.startsWith("textarea")) {
+			if(std.string.startsWith(type, "textarea")) {
 				input = Element.make("textarea");
 				input.name = param.name;
 				input.innerText = param.value;
