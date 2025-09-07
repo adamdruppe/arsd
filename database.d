@@ -231,6 +231,9 @@ unittest {
 	// tbh this is more of a phobos test but rvaluerefparam has messed it up before
 	auto db = DatabaseDatum("1234567");
 	assert(to!int(db) == 1234567);
+	assert(to!long(db) == 1234567);
+	assert(to!int(DatabaseDatum("1234567")) == 1234567);
+	assert(to!long(DatabaseDatum("1234567")) == 1234567);
 }
 
 /++
