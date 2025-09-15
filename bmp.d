@@ -421,9 +421,17 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 
 		return img;
 	} else {
-		if (compression != 0) throw new Exception("invalid bitmap compression");
+		if (compression != 0 && compression != 3) throw new Exception("unsupported bitmap compression");
 		// true color image
 		auto img = new TrueColorImage(width, height);
+
+		if(compression == 3)
+		foreach(idx; 0 .. 3) {
+			// so tbh I don't know what this actually is, it looks like an rgb mask, but why is it here?
+			// is this common or just the one file i happen to have?
+			// is there some header byte im missing?
+			read4();
+		}
 
 		// no palette, so straight into the data
 		int offsetStart = width * height * 4;
