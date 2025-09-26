@@ -179,10 +179,23 @@ struct RecipientList {
 
 	string toProtocolString(string linesep = "\r\n") {
 		string ret;
+		int lineLengthCounter = 6; // first line probably includes "Bcc: " or similar and if not, we're allowed to be a wee bit conservative anyway
 		foreach(idx, item; recipients) {
-			if(idx)
+			if(idx) {
 				ret ~= ", ";
-			ret ~= item.toProtocolString(linesep);
+				lineLengthCounter += 2;
+			}
+
+			auto itemString = item.toProtocolString(linesep);
+
+			if(lineLengthCounter > 0 && lineLengthCounter + itemString.length > 78) {
+				ret ~= linesep;
+				ret ~= " ";
+				lineLengthCounter = 1;
+			}
+
+			ret ~= itemString;
+			lineLengthCounter += itemString.length;
 		}
 		return ret;
 	}
@@ -1732,6 +1745,32 @@ unittest {
 
 	test = "Subject: foo\nbar";
 	assert(test !is encodeEmailHeaderForTransmit(test, linesep)); // a newline forces encoding
+}
+
+unittest {
+	auto message = new EmailMessage();
+		//message.to ~= "someusadssssssssssssssssssssssssssssssssssssssssssssssssssssssser@example.com";
+	foreach(i; 0 .. 10)
+		message.to ~= "someuser@example.com";
+		//message.to ~= "someusadssssssssssssssssssssssssssssssssssssssssssssssssssssssser@example.com";
+	//foreach(i; 0 .. 10)
+		//message.to ~= "someuser@example.com";
+	message.from = "youremail@example.com";
+	message.subject = "My Subject";
+	message.setTextBody("hi there");
+	int lineLength;
+
+	//import arsd.core; writeln(message.toString());
+
+	foreach(char c; message.toString()) {
+		if(c == 13) {
+			assert(lineLength < 78);
+			lineLength = 0;
+		} else {
+			lineLength++;
+		}
+	}
+	assert(lineLength < 78);
 }
 
 /+
