@@ -3406,7 +3406,7 @@ struct RealTimeConsoleInput {
 		if(nonblocking && !anyInput_internal())
 			return dchar_invalid;
 
-		auto event = nextEvent();
+		auto event = nextEvent(nonblocking);
 		while(event.type != InputEvent.Type.KeyboardEvent || event.keyboardEvent.pressed == false) {
 			if(event.type == InputEvent.Type.UserInterruptionEvent)
 				throw new UserInterruptionException();
@@ -3418,7 +3418,7 @@ struct RealTimeConsoleInput {
 			if(nonblocking && !anyInput_internal())
 				return dchar_invalid;
 
-			event = nextEvent();
+			event = nextEvent(nonblocking);
 		}
 		return event.keyboardEvent.which;
 	}
@@ -3561,7 +3561,7 @@ struct RealTimeConsoleInput {
 	/// Experimental: It is also possible to integrate this into
 	/// a generic event loop, currently under -version=with_eventloop and it will
 	/// require the module arsd.eventloop (Linux only at this point)
-	InputEvent nextEvent() {
+	InputEvent nextEvent(bool nonblocking=false) {
 		terminal.flush();
 
 		wait_for_more:
@@ -3616,7 +3616,11 @@ struct RealTimeConsoleInput {
 
 		auto more = readNextEvents();
 		if(!more.length)
+		{
+			if(nonblocking && !anyInput_internal())
+				return InputEvent.init;
 			goto wait_for_more; // i used to do a loop (readNextEvents can read something, but it might be discarded by the input filter) but now it goto's above because readNextEvents might be interrupted by a SIGWINCH aka size event so we want to check that at least
+		}
 
 		assert(more.length);
 
