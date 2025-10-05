@@ -886,6 +886,10 @@ struct CellReference {
 		return CellReference(ret);
 	}
 
+	string toString() {
+		return name;
+	}
+
 	int toColumnIndex() {
 		size_t endSlice = name.length;
 		foreach(idx, ch; name) {
