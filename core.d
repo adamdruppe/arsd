@@ -60,6 +60,7 @@ static if(!__traits(hasMember, object, "SynchronizableObject")) {
 	alias SynchronizableObject = Object;
 	mixin template EnableSynchronization() {}
 } else {
+	alias SynchronizableObject = object.SynchronizableObject;
 	alias EnableSynchronization = Object.EnableSynchronization;
 }
 
@@ -769,7 +770,8 @@ struct LimitedVariant {
 		duration,
 		dateTime,
 
-		// FIXME boolean? char? decimal?
+		// FIXME boolean? char? decimal? specializations of float for various precisions...
+
 		// could do enums by way of a pointer but kinda iffy
 
 		// maybe some kind of prefixed string too for stuff like xml and json or enums etc.
@@ -1701,6 +1703,7 @@ struct FloatToStringArgs {
 	}
 }
 
+// the buffer should be at least 32 bytes long, maybe more with other args
 char[] floatToString(double value, char[] buffer, FloatToStringArgs args = FloatToStringArgs.init) {
 	// actually doing this is pretty painful, so gonna pawn it off on the C lib
 	import core.stdc.stdio;
@@ -1751,7 +1754,68 @@ char[] floatToString(double value, char[] buffer, FloatToStringArgs args = Float
 			ret = cast(int) scratch.length - pos + ret - splitPoint;
 		}
 	}
-	// FIXME: if maximum precision....?
+
+	// sprintf will always put zeroes on to the maximum precision, but if it is a bunch of trailing zeroes, we can trim them
+	// if scientific notation, don't forget to bring the e back down though.
+	int trailingZeroesStart = -1;
+	int dot = -1;
+	int trailingZeroesEnd;
+	bool inZone;
+	foreach(idx, ch; buffer[0 .. ret]) {
+		if(inZone) {
+			if(ch == '0') {
+				if(trailingZeroesStart == -1) {
+					trailingZeroesStart = cast(int) idx;
+				}
+			} else if(ch == 'e') {
+				trailingZeroesEnd = cast(int) idx;
+				break;
+			} else {
+				trailingZeroesStart = -1;
+			}
+		} else {
+			if(ch == '.') {
+				inZone = true;
+				dot = cast(int) idx;
+			}
+		}
+	}
+	if(trailingZeroesEnd == 0)
+		trailingZeroesEnd = ret;
+
+		// 0.430000
+		// end = $
+		// dot = 1
+		// start = 4
+		// precision is thus 3-1 = 2
+		// if min precision = 0
+	if(dot != -1 && trailingZeroesStart > dot) {
+		auto currentPrecision = trailingZeroesStart - dot - 1;
+		auto precWanted = (args.minimumPrecision > currentPrecision) ? args.minimumPrecision : currentPrecision;
+		auto sliceOffset = dot + precWanted + 1;
+		if(precWanted == 0)
+			sliceOffset -= 1; // remove the dot
+		char[] keep = buffer[trailingZeroesEnd .. ret];
+
+		// slice copy doesn't allow overlapping and since it can, we need to memmove
+		//buffer[sliceOffset .. sliceOffset + keep.length] = keep[];
+		import core.stdc.string;
+		memmove(buffer[sliceOffset .. ret].ptr, keep.ptr, keep.length);
+
+		ret = cast(int) (sliceOffset + keep.length);
+	}
+	/+
+	if(minimumPrecision > 0) {
+		auto idx = buffer[0 .. ret].indexOf(".");
+		if(idx == -1) {
+			buffer[ret++] = '.';
+			idx = ret;
+		}
+
+		while(ret - idx < minimumPrecision)
+			buffer[ret++] = '0';
+	}
+	+/
 	return buffer[0 .. ret];
 }
 
@@ -1789,7 +1853,23 @@ unittest {
 	assert(floatToString(4.0, buffer[], FloatToStringArgs().withPadding(4).withGroupSeparator(3, ',').withPrecision(3)) == "0,004.000");
 	assert(floatToString(4000.0, buffer[], FloatToStringArgs().withPadding(4).withGroupSeparator(3, ',').withPrecision(3)) == "4,000.000");
 
+	assert(floatToString(4.25, buffer[], FloatToStringArgs().withPrecision(3, 5)) == "4.250");
+	assert(floatToString(4.25, buffer[], FloatToStringArgs().withPrecision(2, 5)) == "4.25");
+	assert(floatToString(4.25, buffer[], FloatToStringArgs().withPrecision(0, 5)) == "4.25");
+	assert(floatToString(4.25, buffer[], FloatToStringArgs().withPrecision(0)) == "4");
+	assert(floatToString(4.251, buffer[], FloatToStringArgs().withPrecision(1)) == "4.3"); // 2.25 would be rounded to even and thus be 2.2... sometimes. this less ambiguous
+
+	//assert(floatToString(4.25, buffer[], FloatToStringArgs().withPrecision(1)) == "4.2");
+	//assert(floatToString(4.35, buffer[], FloatToStringArgs().withPrecision(1)) == "4.3");
+	/+
+	import core.stdc.stdio;
+	printf("%.1f\n", 4.25); // 4.2
+	printf("%.1f\n", 4.35); // 4.3
+	+/
+
 	assert(floatToString(pi*10, buffer[], FloatToStringArgs().withPrecision(2).withScientificNotation(true)) == "3.14e+01");
+
+	assert(floatToString(500, buffer[], FloatToStringArgs().withPrecision(0, 2).withScientificNotation(true)) == "5e+02");
 }
 
 /++
@@ -1881,6 +1961,11 @@ string toStringInternal(T)(T t) {
 		// import std.conv; return to!string(t);
 	}
 	+/
+}
+
+unittest {
+	assert(toStringInternal(-43) == "-43");
+	assert(toStringInternal(4.5) == "4.5");
 }
 
 /++
@@ -6718,7 +6803,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				runLoopIterationDelegates(false);
 
 				// FIXME: timeout is wrong
-				auto retValue = ttrl.runMode(NSDefaultRunLoopMode, beforeDate: NSDate.distantFuture);
+				auto retValue = ttrl.runMode(NSDefaultRunLoopMode, /+beforeDate:+/ NSDate.distantFuture);
 				if(retValue == false)
 					throw new Exception("could not start run loop");
 
@@ -7592,7 +7677,7 @@ struct SynchronizedCircularBuffer(T, size_t maxSize = 128) {
 }
 
 unittest {
-	Object object = new Object();
+	SynchronizableObject object = new SynchronizableObject();
 	auto queue = SynchronizedCircularBuffer!CallbackHelper(object);
 	assert(queue.isEmpty);
 	foreach(i; 0 .. queue.ring.length - 1)
@@ -9069,16 +9154,22 @@ private void appendToBuffer(ref char[] buffer, ref int pos, scope const(char)[] 
 }
 
 private void appendToBuffer(ref char[] buffer, ref int pos, long what) {
+	appendToBuffer(buffer, pos, what, IntToStringArgs.init);
+}
+private void appendToBuffer(ref char[] buffer, ref int pos, long what, IntToStringArgs args) {
 	if(buffer.length < pos + 32)
 		buffer.length = pos + 32;
-	auto sliced = intToString(what, buffer[pos .. $]);
+	auto sliced = intToString(what, buffer[pos .. $], args);
 	pos += sliced.length;
 }
 
 private void appendToBuffer(ref char[] buffer, ref int pos, double what) {
+	appendToBuffer(buffer, pos, what, FloatToStringArgs.init);
+}
+private void appendToBuffer(ref char[] buffer, ref int pos, double what, FloatToStringArgs args) {
 	if(buffer.length < pos + 32)
 		buffer.length = pos + 32;
-	auto sliced = floatToString(what, buffer[pos .. $]);
+	auto sliced = floatToString(what, buffer[pos .. $], args);
 	pos += sliced.length;
 }
 
@@ -9114,6 +9205,29 @@ void writelnStderr(T...)(T t) {
 	writeGuts(null, "\n", null, false, &actuallyWriteToStderr, t);
 }
 
+struct ValueWithFormattingArgs(T : double) {
+	double value;
+	FloatToStringArgs args;
+}
+
+struct ValueWithFormattingArgs(T : long) {
+	long value;
+	IntToStringArgs args;
+}
+
+ValueWithFormattingArgs!double formatArgs(double value, FloatToStringArgs args) {
+	return ValueWithFormattingArgs!double(value, args);
+}
+ValueWithFormattingArgs!double formatArgs(double value, int precision) {
+	return ValueWithFormattingArgs!double(value, FloatToStringArgs().withPrecision(precision));
+
+}
+
+unittest {
+	assert(toStringInternal(5.4364.formatArgs(FloatToStringArgs().withPrecision(2))) == "5.44");
+	assert(toStringInternal(5.4364.formatArgs(precision: 2)) == "5.44");
+}
+
 /++
 
 +/
@@ -9147,7 +9261,9 @@ private string writeGuts(T...)(string prefix, string suffix, string argSeparator
 		if(argSeparator.length)
 			appendToBuffer(buffer, pos, argSeparator);
 
-		static if(is(typeof(arg) Base == enum)) {
+		static if(is(typeof(arg) == ValueWithFormattingArgs!V, V)) {
+			appendToBuffer(buffer, pos, arg.value, arg.args);
+		} else static if(is(typeof(arg) Base == enum)) {
 			appendToBuffer(buffer, pos, typeof(arg).stringof);
 			appendToBuffer(buffer, pos, ".");
 			appendToBuffer(buffer, pos, enumNameForValue(arg));
@@ -10356,7 +10472,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		alias dispatch_queue_t = dispatch_queue_s*; // NSObject<OS_dispatch_queue>
 		alias dispatch_object_t = void*; // actually a "transparent union" of the dispatch_source_t, dispatch_queue_t, and others
 		alias dispatch_block_t = ObjCBlock!(void)*;
-		static if(void*.sizeof == 8)
+		static if(typeof(null).sizeof == 8)
 			alias uintptr_t = ulong;
 		else
 			alias uintptr_t = uint;

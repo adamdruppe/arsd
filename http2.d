@@ -3771,8 +3771,9 @@ version(use_openssl) {
 		private import core.sys.windows.windows;
 
 	import core.stdc.stdio;
+	import arsd.core : SynchronizableObject;
 
-	private __gshared Object loadSslMutex = new Object;
+	private __gshared SynchronizableObject loadSslMutex = new SynchronizableObject;
 	private __gshared bool sslLoaded = false;
 
 	void loadOpenSsl() {
