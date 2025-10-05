@@ -253,7 +253,7 @@ align(1):
   }
   uint alphaBitDepth;
   uint reserved;
-  void* surface;
+  uint /+void*+/ surface;
   union {
     ddsColorKey_t ckDestOverlay;
     uint emptyFaceColor;
