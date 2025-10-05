@@ -4671,7 +4671,7 @@ class DataControllerWidget(T) : WidgetContainer {
 			} else static if(is(typeof(w.value) == int)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 			} else static if(is(typeof(w) == DropDownSelection)) {
-				// special case for this to kinda support enums and such. coudl be better though
+				// special case for this to kinda support enums and such. could be better though
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.intValue); } );
 			} else {
 				//static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
@@ -4709,8 +4709,16 @@ private int saturatedSum(int[] values...) {
 }
 
 void genericSetValue(T, W)(T* where, W what) {
-	import std.conv;
-	*where = to!T(what);
+	static if(is(T == int[])) {
+		pragma(msg, "FIXME");
+	} else
+	static if(is(W : T)) {
+		*where = what;
+	} else {
+		pragma(msg, T.stringof);
+		import std.conv;
+		*where = to!T(what);
+	}
 	//*where = cast(T) stringToLong(what);
 }
 
@@ -4740,46 +4748,83 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 			}
 		}
 	} else static if(controlledByCount!tt == 0) {
-		static if(is(typeof(tt) == enum)) {
-			// FIXME: update
-			auto dds = new DropDownSelection(parent);
-			foreach(idx, option; __traits(allMembers, typeof(tt))) {
-				dds.addOption(option);
-				if(__traits(getMember, typeof(tt), option) == *valptr)
-					dds.setSelection(cast(int) idx);
+		static if(choicesCount!tt == 1) {
+			auto choices = ChoicesFor!tt;
+
+			static if(is(typeof(tt) == E[], E)) {
+				auto list = new Fieldset(displayName, parent);
+
+				// FIXME: update
+
+				foreach(option; choices.options()) {
+					new Checkbox(option, list);
+				}
+				return list;
+			} else {
+				auto dds = new DropDownSelection(parent);
+
+				// FIXME: update
+				// FIXME: label
+
+				foreach(option; choices.options()) {
+					// FIXME: options need not be strings
+					dds.addOption(option);
+				}
+				return dds;
 			}
-			return dds;
-		} else static if(is(typeof(tt) == bool)) {
-			auto box = new Checkbox(displayName, parent);
-			update = () { box.isChecked = *valptr; };
-			update();
-			return box;
-		} else static if(is(typeof(tt) : const long)) {
-			auto le = new LabeledLineEdit(displayName, parent);
-			update = () { le.content = toInternal!string(*valptr); };
-			update();
-			return le;
-		} else static if(is(typeof(tt) : const double)) {
-			auto le = new LabeledLineEdit(displayName, parent);
-			import std.conv;
-			update = () { le.content = to!string(*valptr); };
-			update();
-			return le;
-		} else static if(is(typeof(tt) : const string)) {
-			auto le = new LabeledLineEdit(displayName, parent);
-			update = () { le.content = *valptr; };
-			update();
-			return le;
-		} else static if(is(typeof(tt) == E[], E)) {
-			auto w = new ArrayEditingWidget!E(parent);
-			// FIXME update
-			return w;
-		} else static if(is(typeof(tt) == function)) {
-			auto w = new Button(displayName, parent);
-			return w;
-		} else static if(is(typeof(tt) == class) || is(typeof(tt) == interface)) {
-			return parent.addDataControllerWidget(tt);
-		} else static assert(0, typeof(tt).stringof);
+
+	/+ // FIXME consider these things:
+	bool allowCustom = false;
+	/// only relevant if attached to an array
+	bool allowReordering = true;
+	/// ditto
+	bool allowDuplicates = true;
+	/// makes no sense on a set
+	bool requireAll = false;
+	+/
+		} else static if(choicesCount!tt == 0) {
+			static if(is(typeof(tt) == enum)) {
+				// FIXME: update
+				// FIXME: label
+				auto dds = new DropDownSelection(parent);
+				foreach(idx, option; __traits(allMembers, typeof(tt))) {
+					dds.addOption(option);
+					if(__traits(getMember, typeof(tt), option) == *valptr)
+						dds.setSelection(cast(int) idx);
+				}
+				return dds;
+			} else static if(is(typeof(tt) == bool)) {
+				auto box = new Checkbox(displayName, parent);
+				update = () { box.isChecked = *valptr; };
+				update();
+				return box;
+			} else static if(is(typeof(tt) : const long)) {
+				auto le = new LabeledLineEdit(displayName, parent);
+				update = () { le.content = toInternal!string(*valptr); };
+				update();
+				return le;
+			} else static if(is(typeof(tt) : const double)) {
+				auto le = new LabeledLineEdit(displayName, parent);
+				import std.conv;
+				update = () { le.content = to!string(*valptr); };
+				update();
+				return le;
+			} else static if(is(typeof(tt) : const string)) {
+				auto le = new LabeledLineEdit(displayName, parent);
+				update = () { le.content = *valptr; };
+				update();
+				return le;
+			} else static if(is(typeof(tt) == E[], E)) {
+				auto w = new ArrayEditingWidget!E(parent);
+				// FIXME update
+				return w;
+			} else static if(is(typeof(tt) == function)) {
+				auto w = new Button(displayName, parent);
+				return w;
+			} else static if(is(typeof(tt) == class) || is(typeof(tt) == interface)) {
+				return parent.addDataControllerWidget(tt);
+			} else static assert(0, typeof(tt).stringof);
+		} else static assert(0, "multiple choices not supported");
 	} else static assert(0, "multiple controllers not yet supported");
 }
 
@@ -5122,6 +5167,30 @@ private template controlledByCount(alias tt) {
 	}
 
 	enum controlledByCount = helper;
+}
+
+private template choicesCount(alias tt) {
+	static int helper() {
+		int count;
+		foreach(i, attr; __traits(getAttributes, tt))
+			static if(is(typeof(attr) == Choices!T, T))
+				count++;
+		return count;
+	}
+
+	enum choicesCount = helper;
+}
+
+private template ChoicesFor(alias tt) {
+	static int helper() {
+		int count;
+		foreach(i, attr; __traits(getAttributes, tt))
+			static if(is(typeof(attr) == Choices!T, T))
+				return i;
+		return -1;
+	}
+
+	static immutable ChoicesFor = __traits(getAttributes, tt)[helper()]; // FIXME: change static to enum and get illegal instruction from dmd backend
 }
 
 /++
@@ -10367,6 +10436,24 @@ class TableView : Widget {
 	}
 
 	/++
+		History:
+			Added September 27, 2025
+	+/
+	void scrollIntoView(int row, int column) {
+		version(custom_widgets) {
+			tvwi.smw.vsb.setPosition(row);
+			int w;
+			foreach(col; this.columns[0 .. column])
+				w += col.calculatedWidth;
+			tvwi.smw.hsb.setPosition(w);
+			tvwi.smw.notify();
+
+		} else version(win32_widgets) {
+			SendMessage(hwnd, LVM_ENSUREVISIBLE, row, true);
+		}
+	}
+
+	/++
 		Tells the view how many items are in it. It uses this to set the scroll bar, but the items are not added per se; it calls [getData] as-needed.
 	+/
 	void setItemCount(int count) {
@@ -10499,7 +10586,8 @@ class TableView : Widget {
 			break;
 			case LVN_COLUMNCLICK:
 				auto info = cast(LPNMLISTVIEW) hdr;
-				this.emit!HeaderClickedEvent(info.iSubItem);
+				// FIXME can i get the button?
+				this.emit!HeaderClickedEvent(info.iSubItem, MouseButton.left);
 			break;
 			case (LVN_FIRST-21) /* LVN_HOTTRACK */:
 				// requires LVS_EX_TRACKSELECT
@@ -10694,13 +10782,22 @@ class TableView : Widget {
 +/
 final class HeaderClickedEvent : Event {
 	enum EventString = "HeaderClicked";
-	this(Widget target, int columnIndex) {
+	this(Widget target, int columnIndex, MouseButton button) {
 		this.columnIndex = columnIndex;
+		this.button = button;
 		super(EventString, target);
 	}
 
 	/// The index of the column
 	int columnIndex;
+
+	/++
+		History:
+			Added September 27, 2025
+		Bugs:
+			Not implemented on Windows, always sets mouse button left.
+	+/
+	MouseButton button;
 
 	///
 	override @property int intValue() {
@@ -10900,7 +10997,7 @@ private class TableViewWidgetInner : Widget {
 				}
 
 				if(header != -1) {
-					auto hce = new HeaderClickedEvent(tvw.tvw, header);
+					auto hce = new HeaderClickedEvent(tvw.tvw, header, cast(MouseButton) ev.button);
 					hce.dispatch();
 				}
 
@@ -11208,7 +11305,7 @@ private void delegate() makeAutomaticHandler(alias fn, T)(Window window, T t) {
 					pragma(msg, "warning: automatic handler of params not yet implemented on your compiler");
 				} else mixin(q{
 				static foreach(idx, ignore; Params) {
-					mixin("Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
+					mixin("@(__traits(getAttributes, Params[idx .. idx + 1])) Params[idx] " ~ __traits(identifier, Params[idx .. idx + 1]) ~ ";");
 				}
 				});
 			}
@@ -11229,7 +11326,7 @@ private void delegate() makeAutomaticHandler(alias fn, T)(Window window, T t) {
 				}, null, __traits(identifier, fn));
 			};
 		}
-	}
+	} else static assert(0, fn.stringof ~ " isn't a function but in a menu block");
 }
 
 private template hasAnyRelevantAnnotations(a...) {
@@ -18158,13 +18255,13 @@ Choices!T choices(T)(T[] options, bool allowCustom = false, bool allowReordering
 	return Choices!T(() => options, allowCustom, allowReordering, allowDuplicates);
 }
 /// ditto
-Choices!T choices(T)(T[] delegate() options, bool allowCustom = false, bool allowReordering = true, bool allowDuplicates = true) {
+Choices!T choices(T)(T[] function() options, bool allowCustom = false, bool allowReordering = true, bool allowDuplicates = true) {
 	return Choices!T(options, allowCustom, allowReordering, allowDuplicates);
 }
 /// ditto
 struct Choices(T) {
 	///
-	T[] delegate() options;
+	T[] function() options; // IMPORTANT: this MUST be function, not delegate, see https://github.com/dlang/dmd/issues/21915
 	bool allowCustom = false;
 	/// only relevant if attached to an array
 	bool allowReordering = true;
