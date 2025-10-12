@@ -2571,6 +2571,8 @@ class Cgi {
 				buffer.add("HTTP/1.0 200 OK", terminator);
 			else
 				buffer.add("HTTP/1.1 200 OK", terminator);
+		} else {
+			buffer.add("Status: ", "200 OK", terminator);
 		}
 
 		if(websocketMode)
@@ -5523,7 +5525,6 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 		fun(cgi);
 		cgi.close();
 		connection.close();
-
 	} catch(AuthorizationRequiredException are) {
 		cgi.setResponseStatus("401 Authorization Required");
 		cgi.header ("WWW-Authenticate: "~are.type~" realm=\""~are.realm~"\"");
