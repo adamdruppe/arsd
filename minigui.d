@@ -4650,22 +4650,27 @@ class DataControllerWidget(T) : WidgetContainer {
 		static if(member != "this") // wtf https://issues.dlang.org/show_bug.cgi?id=22011
 		static if(is(typeof(__traits(getMember, this.datum, member))))
 		static if(__traits(getProtection, __traits(getMember, this.datum, member)) == "public") {
-			void delegate() update;
-
-			auto w = widgetFor!(__traits(getMember, T, member))(&__traits(getMember, this.datum, member), helper(member), update);
-
-			if(update)
-				updaters ~= update;
+			void delegate() updateWidgetFromData;
+			void delegate() updateDataFromWidget;
 
 			static if(is(typeof(__traits(getMember, this.datum, member)) == function)) {
+				auto w = widgetFor!(__traits(getMember, T, member), void)(null, helper(member), updateWidgetFromData, updateDataFromWidget);
 				w.addEventListener("triggered", delegate() {
 					makeAutomaticHandler!(__traits(getMember, this.datum, member))(this.parentWindow, &__traits(getMember, this.datum, member))();
 					notifyDataUpdated();
 				});
-			} else static if(is(typeof(w.isChecked) == bool)) {
+			} else {
+				auto w = widgetFor!(__traits(getMember, T, member))(&__traits(getMember, this.datum, member), helper(member), updateWidgetFromData, updateDataFromWidget);
+				if(updateWidgetFromData)
+					updaters ~= updateWidgetFromData;
+				if(updateDataFromWidget)
 				w.addEventListener(EventType.change, (Event ev) {
-					__traits(getMember, this.datum, member) = w.isChecked;
+					updateDataFromWidget();
 				});
+			}
+			/+
+			static if(is(typeof(w.isChecked) == bool)) {
+					__traits(getMember, this.datum, member) = w.isChecked;
 			} else static if(is(typeof(w.value) == string) || is(typeof(w.content) == string)) {
 				w.addEventListener("change", (Event e) { genericSetValue(&__traits(getMember, this.datum, member), e.stringValue); } );
 			} else static if(is(typeof(w.value) == int)) {
@@ -4676,6 +4681,7 @@ class DataControllerWidget(T) : WidgetContainer {
 			} else {
 				//static assert(0, "unsupported type " ~ typeof(__traits(getMember, this.datum, member)).stringof ~ " " ~ typeof(w).stringof);
 			}
+			+/
 		}
 	}
 
@@ -4709,27 +4715,32 @@ private int saturatedSum(int[] values...) {
 }
 
 void genericSetValue(T, W)(T* where, W what) {
-	static if(is(T == int[])) {
-		pragma(msg, "FIXME");
-	} else
-	static if(is(W : T)) {
-		*where = what;
+	version(D_OpenD) {
+		static if(is(T == int[])) {
+			// pragma(msg, "FIXME");
+		} else
+		static if(is(W : T)) {
+			*where = what;
+		} else
+		{
+			import arsd.conv;
+			*where = to!T(what);
+		}
 	} else {
-		pragma(msg, T.stringof);
+		// slow, less feature fallback branch cuz i hate dub
 		import std.conv;
 		*where = to!T(what);
 	}
-	//*where = cast(T) stringToLong(what);
 }
 
 /++
 	Creates a widget for the value `tt`, which is pointed to at runtime by `valptr`, with the given parent.
 
-	The `update` delegate can be called if you change `*valptr` to reflect those changes in the widget.
+	The `updateWidgetFromData` delegate can be called if you change `*valptr` to reflect those changes in the widget.
 
-	Note that this creates the widget but does not attach any event handlers to it.
+	Note that this creates the widget but does not attach any event handlers to it. You might set a change event to call this.
 +/
-private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void delegate() update) {
+private static auto widgetFor(alias tt, P)(P* valptr, Widget parent, out void delegate() updateWidgetFromData, out void delegate() updateDataFromWidget) {
 
 	string displayName = __traits(identifier, tt).beautify;
 
@@ -4737,39 +4748,76 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 		foreach(i, attr; __traits(getAttributes, tt)) {
 			static if(is(typeof(attr) == ControlledBy_!(T, Args), T, Args...)) {
 				auto w = attr.construct(parent);
-				static if(__traits(compiles, w.setPosition(*valptr)))
-					update = () { w.setPosition(*valptr); };
-				else static if(__traits(compiles, w.setValue(*valptr)))
-					update = () { w.setValue(*valptr); };
+				static if(__traits(compiles, w.setPosition(*valptr))) {
+					updateWidgetFromData = () { w.setPosition(*valptr); };
+					updateDataFromWidget = () { *valptr = w.position; };
+				}
+				else static if(__traits(compiles, w.setValue(*valptr))) {
+					updateWidgetFromData = () { w.setValue(*valptr); };
+					updateDataFromWidget = () { *valptr = w.value; };
+				}
 
-				if(update)
-					update();
+				if(updateWidgetFromData)
+					updateWidgetFromData();
 				return w;
 			}
 		}
 	} else static if(controlledByCount!tt == 0) {
+
+		version(D_OpenD)
+			import arsd.conv;
+		else
+			import std.conv;
+
 		static if(choicesCount!tt == 1) {
 			auto choices = ChoicesFor!tt;
 
 			static if(is(typeof(tt) == E[], E)) {
+				// can select multiple...
 				auto list = new Fieldset(displayName, parent);
 
-				// FIXME: update
+				Checkbox[] boxes;
 
 				foreach(option; choices.options()) {
-					new Checkbox(option, list);
+					boxes ~= new Checkbox(option, list);
 				}
+
+				updateWidgetFromData = () {
+					foreach(box; boxes) {
+						box.isChecked = box.label == *valptr;
+					}
+				};
+
+				updateDataFromWidget = () {
+					(*valptr) = [];
+					foreach(idx, box; boxes) {
+						// FIXME: what if it is not an int[]?
+						if(box.isChecked)
+							(*valptr) ~= cast(int) idx;
+					}
+				};
+
 				return list;
 			} else {
 				auto dds = new DropDownSelection(parent);
 
-				// FIXME: update
 				// FIXME: label
 
 				foreach(option; choices.options()) {
 					// FIXME: options need not be strings
 					dds.addOption(option);
 				}
+
+				// FIXME: value need not be ints...
+				updateWidgetFromData = () {
+					dds.setSelection(*valptr);
+				};
+				updateDataFromWidget = () {
+					if(dds.getSelection != -1)
+						*valptr = cast(P) dds.getSelection;
+				};
+				updateWidgetFromData();
+
 				return dds;
 			}
 
@@ -4783,45 +4831,62 @@ private static auto widgetFor(alias tt, P)(P valptr, Widget parent, out void del
 	bool requireAll = false;
 	+/
 		} else static if(choicesCount!tt == 0) {
+
 			static if(is(typeof(tt) == enum)) {
-				// FIXME: update
 				// FIXME: label
 				auto dds = new DropDownSelection(parent);
 				foreach(idx, option; __traits(allMembers, typeof(tt))) {
 					dds.addOption(option);
-					if(__traits(getMember, typeof(tt), option) == *valptr)
-						dds.setSelection(cast(int) idx);
 				}
+				updateWidgetFromData = () {
+					foreach(idx, option; __traits(allMembers, typeof(tt))) {
+						if(__traits(getMember, typeof(tt), option) == *valptr)
+							dds.setSelection(cast(int) idx);
+					}
+				};
+				updateDataFromWidget = () {
+					if(dds.getSelection != -1)
+						*valptr = cast(P) dds.getSelection;
+				};
+				updateWidgetFromData();
 				return dds;
 			} else static if(is(typeof(tt) == bool)) {
 				auto box = new Checkbox(displayName, parent);
-				update = () { box.isChecked = *valptr; };
-				update();
+				updateWidgetFromData = () { box.isChecked = *valptr; };
+				updateDataFromWidget = () { *valptr = box.isChecked; };
+				updateWidgetFromData();
 				return box;
 			} else static if(is(typeof(tt) : const long)) {
 				auto le = new LabeledLineEdit(displayName, parent);
-				update = () { le.content = toInternal!string(*valptr); };
-				update();
+				updateWidgetFromData = () { le.content = toInternal!string(*valptr); };
+				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) : const double)) {
 				auto le = new LabeledLineEdit(displayName, parent);
-				import std.conv;
-				update = () { le.content = to!string(*valptr); };
-				update();
+				version(D_OpenD)
+					import arsd.conv;
+				else
+					import std.conv;
+				updateWidgetFromData = () { le.content = to!string(*valptr); };
+				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) : const string)) {
 				auto le = new LabeledLineEdit(displayName, parent);
-				update = () { le.content = *valptr; };
-				update();
+				updateWidgetFromData = () { le.content = *valptr; };
+				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) == E[], E)) {
 				auto w = new ArrayEditingWidget!E(parent);
-				// FIXME update
+				// FIXME updateWidgetFromData
 				return w;
 			} else static if(is(typeof(tt) == function)) {
 				auto w = new Button(displayName, parent);
 				return w;
 			} else static if(is(typeof(tt) == class) || is(typeof(tt) == interface)) {
+				// FIXME: updaters
 				return parent.addDataControllerWidget(tt);
 			} else static assert(0, typeof(tt).stringof);
 		} else static assert(0, "multiple choices not supported");
@@ -14455,15 +14520,17 @@ class TextDisplayHelper : Widget {
 		super.defaultEventHandler_click(ce);
 	}
 
+	final const(char)[] wordSplitHelper(scope return const(char)[] ch) {
+		if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
+			return ch;
+		return null;
+	}
+
 	override void defaultEventHandler_dblclick(scope DoubleClickEvent dce) {
 		if(dce.button == MouseButton.left) {
 			with(l.selection()) {
 				// FIXME: for a url or file picker i might wanna use / as a separator intead
-				scope dg = delegate const(char)[] (scope return const(char)[] ch) {
-					if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
-						return ch;
-					return null;
-				};
+				scope dg = &wordSplitHelper;
 				find(dg, 1, true).moveToEnd.setAnchor;
 				find(dg, 1, false).moveTo.setFocus;
 				selectionChanged();
@@ -14527,8 +14594,24 @@ class TextDisplayHelper : Widget {
 				switch(kde.key) {
 					case Key.Up: l.selection.moveUp(); break;
 					case Key.Down: l.selection.moveDown(); break;
-					case Key.Left: l.selection.moveLeft(); setPosition = true; break;
-					case Key.Right: l.selection.moveRight(); setPosition = true; break;
+					case Key.Left:
+						l.selection.moveLeft();
+
+						if(kde.ctrlKey) {
+							l.selection.find(&wordSplitHelper, 1, true).moveToEnd;
+						}
+
+						setPosition = true;
+					break;
+					case Key.Right:
+						l.selection.moveRight();
+
+						if(kde.ctrlKey) {
+							l.selection.find(&wordSplitHelper, 1, false).moveTo;
+						}
+
+						setPosition = true;
+					break;
 					case Key.Home: l.selection.moveToStartOfLine(); setPosition = true; break;
 					case Key.End: l.selection.moveToEndOfLine(); setPosition = true; break;
 					default: assert(0);
