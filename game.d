@@ -625,7 +625,7 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 /++
 	This is the base class for your game. Create a class based on this, then pass it to [runGame].
 +/
-abstract class GameHelperBase {
+abstract class GameHelperBase : SynchronizableObject {
 	/++
 		Implement this to draw.
 
