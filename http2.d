@@ -1050,6 +1050,16 @@ class HttpRequest {
 	}
 
 	/++
+		Adds the given header to the request, without checking for duplicates or similar.
+
+		History:
+			Added October 8, 2025. Previously, you'd have to do `request.requestParameters.headers ~= "Name: Value"` (which is exactly what this does, but less conveniently).
+	+/
+	void addHeader(string name, string value) {
+		this.requestParameters.headers ~= name ~ ": " ~ value;
+	}
+
+	/++
 		Sets the timeout from inactivity on the request. This is the amount of time that passes with no send or receive activity on the request before it fails with "request timed out" error.
 
 		History:
