@@ -58,6 +58,8 @@ arsd.script's language now requires () around the if and while conditions. Its p
 
 arsd.simpledisplay now uses the arsd.core event loop by default.
 
+Several files are allowed to import other files from the directory now, at least in opend. Using the -i switch is strongly recommended.
+
 ## 11.0
 
 Released: Planned for May 2023, actually out August 2023.
