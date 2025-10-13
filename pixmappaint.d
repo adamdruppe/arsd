@@ -4178,3 +4178,13 @@ void drawSprite(Pixmap target, const SpriteSheet sheet, int spriteIndex, Point p
 		);
 	}
 }
+
+unittest {
+	// sanity test of the compiler's vector addition we need
+	ulong[4] a = [1,2,3,4];
+	ulong[4] b = [2,3,4,5];
+
+	a[] += b[];
+
+	assert(a == [3,5,7,9]);
+}
