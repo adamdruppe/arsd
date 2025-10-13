@@ -68,6 +68,8 @@ enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 /// A reasonable default volume for an individual sample. It doesn't need to be large; in fact it needs to not be large so mixing doesn't clip too much.
 enum DEFAULT_VOLUME = 20;
 
+private enum PI = 3.14159265358979323;
+
 version(Demo_simpleaudio)
 void main() {
 /+
@@ -382,6 +384,9 @@ class DummySample : SampleController {
 }
 
 private final class SampleControlFlags : SampleController {
+	import arsd.core : EnableSynchronization;
+	mixin EnableSynchronization;
+
 	void pause() { paused_ = true; }
 	void resume() { paused_ = false; }
 	void stop() { paused_ = false; stopped = true; }
@@ -927,7 +932,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase / (1 + cast(float) x / (cast(float) SampleRate / attack));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -944,7 +949,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase * (1 + cast(float) x / (cast(float) SampleRate / attack));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -959,7 +964,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.duration = dur * SampleRate / 1000;
 		s.f = delegate short(int x) {
 			auto currentFrequency = 500.0 / (1 + cast(float) x / (cast(float) SampleRate / 8));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -981,8 +986,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			The seek method is not yet implemented.
 	+/
 	SampleController playEmulatedOpl3Midi()(string filename, bool loop = false) {
-		import std.file;
-		auto bytes = cast(immutable(ubyte)[]) std.file.read(filename);
+		import arsd.core;
+		auto bytes = cast(immutable(ubyte)[]) readBinaryFile(filename); // cast(immutable(ubyte)[]) std.file.read(filename);
 
 		return playEmulatedOpl3Midi(bytes);
 	}
@@ -4202,7 +4207,7 @@ version(with_resampler) {
 	/*8, 24, 40, 56, 80, 104, 128, 160, 200, 256, 320*/
 	double computeFunc (float x, immutable FuncDef* func) {
 	  version(Posix) import core.stdc.math : lrintf;
-	  import std.math : floor;
+	  import core.stdc.math;
 	  //double[4] interp;
 	  float y = x*func.oversample;
 	  version(Posix) {
@@ -4231,7 +4236,7 @@ version(with_resampler) {
 	  } else {
 	    static T fabs(T) (T n) pure { static if (__VERSION__ > 2067) pragma(inline, true); return (n < 0 ? -n : n); }
 	  }
-	  import std.math : sin, PI;
+	  import core.stdc.math;
 	  version(LittleEndian) {
 	    temp_float txx = void;
 	    txx.f = x;
