@@ -16,6 +16,17 @@ static import arsd.core;
 	Converts a string into the other given type. Throws on failure.
 +/
 T to(T)(scope const(char)[] str) {
+	static if(is(T == enum)) {
+		switch(str) {
+			default:
+				throw new EnumConvException(T.stringof, str.idup);
+			foreach(memberName; __traits(allMembers, T))
+			case memberName:
+				return __traits(getMember, T, memberName);
+		}
+
+	}
+	else
 	static if(is(T : long)) {
 		// FIXME: unsigned? overflowing? radix? keep reading or stop on invalid char?
 		StringToIntArgs args;
@@ -25,7 +36,9 @@ T to(T)(scope const(char)[] str) {
 		if(ret != v)
 			throw new StringToIntConvException("overflow", 0, str.idup, 0);
 		return ret;
-	} else static if(is(T : double)) {
+	}
+	else
+	static if(is(T : double)) {
 		import core.stdc.stdlib;
 		import core.stdc.errno;
 		arsd.core.CharzBuffer z = str;
@@ -38,7 +51,9 @@ T to(T)(scope const(char)[] str) {
 		}
 
 		return res;
-	} else {
+	}
+	else
+	{
 		static assert(0, "Unsupported type: " ~ T.stringof);
 	}
 }
@@ -51,6 +66,16 @@ string to(T:string, From)(From value) {
 		return arsd.core.enumNameForValue(value);
 	else
 		return arsd.core.toStringInternal(value);
+}
+
+/++
+	Converts ints to other types of ints or enums
++/
+T to(T)(long value) {
+	static if(is(T == enum))
+		return cast(T) value; // FIXME check if the value is actually in range
+	else
+		return checkedConversion!T(value);
 }
 
 /+
@@ -120,7 +145,16 @@ unittest {
 /++
 
 +/
-class ValueOutOfRangeException : arsd.core.ArsdExceptionBase {
+class ConvException : arsd.core.ArsdExceptionBase {
+	this(string msg, string file, size_t line) {
+		super(msg, file, line);
+	}
+}
+
+/++
+
++/
+class ValueOutOfRangeException : ConvException {
 	this(string type, long userSuppliedValue, long minimumAcceptableValue, long maximumAcceptableValue, string file = __FILE__, size_t line = __LINE__) {
 		this.type = type;
 		this.userSuppliedValue = userSuppliedValue;
@@ -140,6 +174,31 @@ class ValueOutOfRangeException : arsd.core.ArsdExceptionBase {
 		sink("minimumAcceptableValue", arsd.core.toStringInternal(minimumAcceptableValue));
 		sink("maximumAcceptableValue", arsd.core.toStringInternal(maximumAcceptableValue));
 	}
+}
+
+/++
+
++/
+class EnumConvException : ConvException {
+	this(string type, string userSuppliedValue, string file = __FILE__, size_t line = __LINE__) {
+		this.type = type;
+		this.userSuppliedValue = userSuppliedValue;
+
+		super("No such enum value", file, line);
+
+	}
+	string type;
+	string userSuppliedValue;
+
+	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
+		sink("type", type);
+		sink("userSuppliedValue", userSuppliedValue);
+	}
+}
+
+unittest {
+	enum A { a, b, c }
+	// to!A("d");
 }
 
 
