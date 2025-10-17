@@ -818,7 +818,7 @@ struct LimitedVariant {
 					else
 						return isHighBitSet ? Contains.bytes : Contains.string;
 				} else {
-					return Contains.invalid;
+					return isHighBitSet ? Contains.bytes : Contains.invalid;
 				}
 		}
 	}
@@ -1576,6 +1576,14 @@ char[] intToString(long value, char[] buffer, IntToStringArgs args = IntToString
 
 	int pos;
 
+	bool needsOverflowFixup = false;
+
+	if(value == long.min) {
+		// -long.min will overflow so we're gonna cheat
+		value += 1;
+		needsOverflowFixup = true;
+	}
+
 	if(value < 0) {
 		buffer[pos++] = '-';
 		value = -value;
@@ -1585,18 +1593,33 @@ char[] intToString(long value, char[] buffer, IntToStringArgs args = IntToString
 	int digitCount;
 	int groupCount;
 
-	do {
-		auto remainder = value % radix;
-		value = value / radix;
-
+	void outputDigit(char c) {
 		if(groupSize && groupCount == groupSize) {
 			buffer[pos++] = args.separator;
 			groupCount = 0;
 		}
 
-		buffer[pos++] = cast(char) (remainder < 10 ? (remainder + '0') : (remainder - 10 + args.ten));
+		buffer[pos++] = c;
 		groupCount++;
 		digitCount++;
+
+	}
+
+	do {
+		auto remainder = value % radix;
+		value = value / radix;
+		if(needsOverflowFixup) {
+			if(remainder + 1 == radix) {
+				outputDigit('0');
+				remainder = 0;
+				value += 1;
+			} else {
+				remainder += 1;
+			}
+			needsOverflowFixup = false;
+		}
+
+		outputDigit(cast(char) (remainder < 10 ? (remainder + '0') : (remainder - 10 + args.ten)));
 	} while(value);
 
 	if(digitsPad > 0) {
