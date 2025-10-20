@@ -24,10 +24,13 @@ public import arsd.targa;
 public import arsd.pcx;
 public import arsd.dds;
 public import arsd.svg;
-
 public import arsd.imageresize;
 
 import core.memory;
+
+// this alias will represent the data type of files imported into the executable, it has to be immutable because the arsd library demands it,
+// it is useful when you are embedding many images into the executable because they all need to be converted to immutable ubyte[]
+alias memory = immutable ubyte[];
 
 static if (__traits(compiles, { import iv.vfs; })) enum ArsdImageHasIVVFS = true; else enum ArsdImageHasIVVFS = false;
 
