@@ -525,7 +525,7 @@ struct Union(T...) {
 
 		total: 25 bits + 17 bits = 42 bits
 
-		fractional seconds: 10 bits
+		fractional seconds: 10 bits (about milliseconds)
 
 		accuracy flags: date_valid | time_valid = 2 bits
 
@@ -2546,11 +2546,13 @@ class ArsdExceptionBase : object.Exception {
 			sink(value);
 		});
 
-		// full stack trace
-		sink("\n----------------\n");
-		foreach(str; info) {
-			sink(str);
-			sink("\n");
+		// full stack trace, if available
+		if(info) {
+			sink("\n----------------\n");
+			foreach(str; info) {
+				sink(str);
+				sink("\n");
+			}
 		}
 	}
 	/// ditto
@@ -8166,6 +8168,13 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 		else throw new NotYetImplementedException();
 	}
 
+	package {
+		int overrideStdinFd = -2;
+		int overrideStdoutFd = -2;
+		int overrideStderrFd = -2;
+		int pgid = -2;
+	}
+
 	/++
 
 	+/
@@ -8176,40 +8185,52 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 			int ret;
 
 			int[2] stdinPipes;
-			ret = pipe(stdinPipes);
-			if(ret == -1)
-				throw new ErrnoApiException("stdin pipe", errno);
-
-			scope(failure) {
-				close(stdinPipes[0]);
-				close(stdinPipes[1]);
+			if(overrideStdinFd == -2) {
+				ret = pipe(stdinPipes);
+				if(ret == -1)
+					throw new ErrnoApiException("stdin pipe", errno);
 			}
 
-			auto stdinFd = stdinPipes[1];
+			scope(failure) {
+				if(overrideStdinFd == -2) {
+					close(stdinPipes[0]);
+					close(stdinPipes[1]);
+				}
+			}
+
+			auto stdinFd = overrideStdinFd == -2 ? stdinPipes[1] : -1;
 
 			int[2] stdoutPipes;
-			ret = pipe(stdoutPipes);
-			if(ret == -1)
-				throw new ErrnoApiException("stdout pipe", errno);
-
-			scope(failure) {
-				close(stdoutPipes[0]);
-				close(stdoutPipes[1]);
+			if(overrideStdoutFd == -2) {
+				ret = pipe(stdoutPipes);
+				if(ret == -1)
+					throw new ErrnoApiException("stdout pipe", errno);
 			}
 
-			auto stdoutFd = stdoutPipes[0];
+			scope(failure) {
+				if(overrideStdoutFd == -2) {
+					close(stdoutPipes[0]);
+					close(stdoutPipes[1]);
+				}
+			}
+
+			auto stdoutFd = overrideStdoutFd == -2 ? stdoutPipes[0] : -1;
 
 			int[2] stderrPipes;
-			ret = pipe(stderrPipes);
-			if(ret == -1)
-				throw new ErrnoApiException("stderr pipe", errno);
-
-			scope(failure) {
-				close(stderrPipes[0]);
-				close(stderrPipes[1]);
+			if(overrideStderrFd == -2) {
+				ret = pipe(stderrPipes);
+				if(ret == -1)
+					throw new ErrnoApiException("stderr pipe", errno);
 			}
 
-			auto stderrFd = stderrPipes[0];
+			scope(failure) {
+				if(overrideStderrFd == -2) {
+					close(stderrPipes[0]);
+					close(stderrPipes[1]);
+				}
+			}
+
+			auto stderrFd = overrideStderrFd == -2 ? stderrPipes[0] : -1;
 
 
 			int[2] errorReportPipes;
@@ -8252,18 +8273,39 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 					exit(1);
 				}
 
-				// dup2 closes the fd it is replacing automatically
-				dup2(stdinPipes[0], 0);
-				dup2(stdoutPipes[1], 1);
-				dup2(stderrPipes[1], 2);
+				// both parent and child are supposed to try to set it
+				if(pgid != -2) {
+					setpgid(0, pgid == 0 ? getpid() : pgid);
+				}
 
-				// don't need either of the original pipe fds anymore
-				close(stdinPipes[0]);
-				close(stdinPipes[1]);
-				close(stdoutPipes[0]);
-				close(stdoutPipes[1]);
-				close(stderrPipes[0]);
-				close(stderrPipes[1]);
+				// dup2 closes the fd it is replacing automatically
+				// then don't need either of the original pipe fds anymore
+				if(overrideStdinFd == -2) {
+					dup2(stdinPipes[0], 0);
+					close(stdinPipes[0]);
+					close(stdinPipes[1]);
+				} else if(overrideStdinFd != 0) {
+					dup2(overrideStdinFd, 0);
+					close(overrideStdinFd);
+				}
+
+				if(overrideStdoutFd == -2) {
+					dup2(stdoutPipes[1], 1);
+					close(stdoutPipes[0]);
+					close(stdoutPipes[1]);
+				} else if(overrideStdoutFd != 1) {
+					dup2(overrideStdoutFd, 1);
+					close(overrideStdoutFd);
+				}
+
+				if(overrideStderrFd == -2) {
+					dup2(stderrPipes[1], 2);
+					close(stderrPipes[0]);
+					close(stderrPipes[1]);
+				} else if(overrideStderrFd != 2) {
+					dup2(overrideStderrFd, 2);
+					close(overrideStderrFd);
+				}
 
 				// the error reporting pipe will be closed upon exec since we set cloexec before fork
 				// and everything else should have cloexec set too hopefully.
@@ -8297,6 +8339,11 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 			} else {
 				pid = forkRet;
 
+				// both parent and child are supposed to try to set it
+				if(pgid != -2) {
+					setpgid(pid, pgid == 0 ? pid : pgid);
+				}
+
 				recordChildCreated(pid, this);
 
 				// close our copy of the write side of the error reporting pipe
@@ -8305,10 +8352,14 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 
 				int[2] msg;
 				// this will block to wait for it to actually either start up or fail to exec (which should be near instant)
+				try_again:
 				auto val = read(errorReportPipes[0], msg.ptr, msg.sizeof);
 
-				if(val == -1)
+				if(val == -1) {
+					if(errno == EINTR)
+						goto try_again;
 					throw new ErrnoApiException("read error report", errno);
+				}
 
 				if(val == msg.sizeof) {
 					// error happened
@@ -8321,25 +8372,29 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 				}
 
 				// set the ones we keep to close upon future execs
-				// FIXME should i set NOBLOCK at this time too? prolly should
-				setCloExec(stdinPipes[1]);
-				setCloExec(stdoutPipes[0]);
-				setCloExec(stderrPipes[0]);
-
 				// and close the others
-				ErrnoEnforce!close(stdinPipes[0]);
-				ErrnoEnforce!close(stdoutPipes[1]);
-				ErrnoEnforce!close(stderrPipes[1]);
+				if(overrideStdinFd == -2) {
+					setCloExec(stdinPipes[1]);
+					ErrnoEnforce!close(stdinPipes[0]);
+					makeNonBlocking(stdinFd);
+					_stdin = new AsyncFile(stdinFd);
+				}
+
+				if(overrideStdoutFd == -2) {
+					setCloExec(stdoutPipes[0]);
+					ErrnoEnforce!close(stdoutPipes[1]);
+					makeNonBlocking(stdoutFd);
+					_stdout = new AsyncFile(stdoutFd);
+				}
+
+				if(overrideStderrFd == -2) {
+					setCloExec(stderrPipes[0]);
+					ErrnoEnforce!close(stderrPipes[1]);
+					makeNonBlocking(stderrFd);
+					_stderr = new AsyncFile(stderrFd);
+				}
 
 				ErrnoEnforce!close(errorReportPipes[0]);
-
-				makeNonBlocking(stdinFd);
-				makeNonBlocking(stdoutFd);
-				makeNonBlocking(stderrFd);
-
-				_stdin = new AsyncFile(stdinFd);
-				_stdout = new AsyncFile(stdoutFd);
-				_stderr = new AsyncFile(stderrFd);
 			}
 		} else version(Windows) {
 			WCharzBuffer program = this.program.path;
@@ -8432,7 +8487,7 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 		import core.sys.posix.unistd;
 		import core.sys.posix.fcntl;
 
-		private pid_t pid = -1;
+		package pid_t pid = -1;
 
 		public void delegate() beforeExec;
 
