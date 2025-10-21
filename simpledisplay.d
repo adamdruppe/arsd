@@ -8417,6 +8417,8 @@ struct Pen {
 /++
 	Represents an in-memory image in the format that the GUI expects, but with its raw data available to your program.
 
+	You can load an image with an alpha channel, but you cannot draw that in the current implementation. If you want alpha blending when drawing, use [Sprite] instead.
+
 
 	On Windows, this means a device-independent bitmap. On X11, it is an XImage.
 
@@ -9953,7 +9955,14 @@ struct ScreenPainter {
 		impl.drawPixmap(s, upperLeft.x, upperLeft.y, imageUpperLeft.x, imageUpperLeft.y, sliceSize.width, sliceSize.height);
 	}
 
-	///
+	/++
+		Draws an [Image] to the window.
+
+		$(WARNING
+			Even if the Image was loaded with `enableAlpha`, drawing may not work!
+
+			Use [Sprite.fromMemoryImage] and [drawPixmap] instead if you want alpha blending to work better.
+	+/
 	void drawImage(Point upperLeft, Image i, Point upperLeftOfImage = Point(0, 0), int w = 0, int h = 0) {
 		if(impl is null) return;
 		//if(isClipped(upperLeft, w, h)) return; // FIXME
@@ -9966,6 +9975,8 @@ struct ScreenPainter {
 			upperLeftOfImage.x = 0;
 		if(upperLeftOfImage.y < 0)
 			upperLeftOfImage.y = 0;
+
+		assert(i.enableAlpha == false, "Alpha blending is not implemented for Image drawing - use Sprite and drawPixmap instead");
 
 		impl.drawImage(upperLeft.x, upperLeft.y, i, upperLeftOfImage.x, upperLeftOfImage.y, w, h);
 	}
