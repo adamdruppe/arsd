@@ -1416,7 +1416,7 @@ version(Emscripten) {
 }
 
 version(libnotify) {
-	pragma(lib, "dl");
+	//pragma(lib, "dl");
 	import core.sys.posix.dlfcn;
 
 	void delegate()[int] libnotify_action_delegates;
@@ -2910,7 +2910,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 			else
 				XMapWindow(impl.display, impl.window);
 		} else version(OSXCocoa) {
-			impl.window.setIsVisible = !b;
+			if(impl.window)
+				impl.window.setIsVisible = !b;
 			if(!hidden)
 			impl.view.setNeedsDisplay(true);
 		} else version(Emscripten) {
@@ -7355,7 +7356,7 @@ version(Windows) {
 }
 
 version (X11) {
-	pragma(lib, "dl");
+	//pragma(lib, "dl"); // already done by the standard compiler build and specifying it again messes up zig cross compile
 	import core.sys.posix.dlfcn;
 }
 
@@ -19453,7 +19454,7 @@ version(OSXCocoa) {
 
 			auto contentRect = NSRect(NSPoint(0, 0), NSSize(width, height));
 
-			auto window = NSWindow.alloc.initWithContentRect(
+			window = NSWindow.alloc.initWithContentRect(
 				contentRect,
 				NSWindowStyleMask.resizable | NSWindowStyleMask.closable | NSWindowStyleMask.miniaturizable | NSWindowStyleMask.titled,
 				NSBackingStoreType.buffered,
