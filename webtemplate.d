@@ -51,6 +51,7 @@ module arsd.webtemplate;
 
 import arsd.script;
 import arsd.dom;
+import arsd.uri;
 
 public import arsd.jsvar : var;
 
