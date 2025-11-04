@@ -9268,6 +9268,9 @@ version(TerminalDirectToEmulator) {
 
 	private class TerminalEmulatorInsideWidget : TerminalEmulator {
 
+		import arsd.core : EnableSynchronization;
+		mixin EnableSynchronization;
+
 		private ScrollbackBuffer sbb() { return scrollbackBuffer; }
 
 		void resized(int w, int h) {
@@ -9467,8 +9470,8 @@ version(TerminalDirectToEmulator) {
 				if(this.font.isNull) {
 					// carry on, it will try a default later
 				} else if(this.font.isMonospace) {
-					this.fontWidth = font.averageWidth;
-					this.fontHeight = font.height;
+					this.fontWidth = castFnumToCnum(font.averageWidth);
+					this.fontHeight = castFnumToCnum(font.height);
 				} else {
 					this.font.unload(); // can't really use a non-monospace font, so just going to unload it so the default font loads again
 				}
