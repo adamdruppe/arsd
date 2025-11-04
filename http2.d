@@ -9,7 +9,7 @@
 	This is version 2 of my http/1.1 client implementation.
 
 
-	It has no dependencies for basic operation, but does require OpenSSL
+	It has no runtime dependencies for basic operation, but does require OpenSSL
 	libraries (or compatible) to support HTTPS. This dynamically loaded
 	on-demand (meaning it won't be loaded if you don't use it, but if you do
 	use it, the openssl dynamic libraries must be found in the system search path).
@@ -37,6 +37,9 @@
 		information, and better event loop integration with other arsd modules beyond
 		just the simpledisplay adapters available previously. The new integration can
 		also make things like heartbeat timers easier for you to code.
+
+		A dependency on [arsd.uri], and through it, [arsd.string], and [arsd.conv] was added
+		on November 2, 2025
 +/
 module arsd.http2;
 
@@ -69,6 +72,8 @@ version(no_arsd_core) {
 +/
 
 static import arsd.core;
+import arsd.uri;
+public import arsd.uri : Uri;
 
 // FIXME: I think I want to disable sigpipe here too.
 
@@ -609,342 +614,6 @@ private class UnixAddress : Address {
 	override sockaddr* name() { assert(0); }
 	override const(sockaddr)* name() const { assert(0); }
 	override int nameLen() const { assert(0); }
-}
-
-
-// Copy pasta from cgi.d, then stripped down. unix path thing added tho
-/++
-	Represents a URI. It offers named access to the components and relative uri resolution, though as a user of the library, you'd mostly just construct it like `Uri("http://example.com/index.html")`.
-+/
-struct Uri {
-	alias toString this; // blargh idk a url really is a string, but should it be implicit?
-
-	// scheme://userinfo@host:port/path?query#fragment
-
-	string scheme; /// e.g. "http" in "http://example.com/"
-	string userinfo; /// the username (and possibly a password) in the uri
-	string host; /// the domain name
-	int port; /// port number, if given. Will be zero if a port was not explicitly given
-	string path; /// e.g. "/folder/file.html" in "http://example.com/folder/file.html"
-	string query; /// the stuff after the ? in a uri
-	string fragment; /// the stuff after the # in a uri.
-
-	/// Breaks down a uri string to its components
-	this(string uri) {
-		size_t lastGoodIndex;
-		foreach(char ch; uri) {
-			if(ch > 127) {
-				break;
-			}
-			lastGoodIndex++;
-		}
-
-		string replacement = uri[0 .. lastGoodIndex];
-		foreach(char ch; uri[lastGoodIndex .. $]) {
-			if(ch > 127) {
-				// need to percent-encode any non-ascii in it
-				char[3] buffer;
-				buffer[0] = '%';
-
-				auto first = ch / 16;
-				auto second = ch % 16;
-				first += (first >= 10) ? ('A'-10) : '0';
-				second += (second >= 10) ? ('A'-10) : '0';
-
-				buffer[1] = cast(char) first;
-				buffer[2] = cast(char) second;
-
-				replacement ~= buffer[];
-			} else {
-				replacement ~= ch;
-			}
-		}
-
-		reparse(replacement);
-	}
-
-	/// Returns `port` if set, otherwise if scheme is https 443, otherwise always 80
-	int effectivePort() const @property nothrow pure @safe @nogc {
-		return port != 0 ? port
-			: scheme == "https" ? 443 : 80;
-	}
-
-	private string unixSocketPath = null;
-	/// Indicates it should be accessed through a unix socket instead of regular tcp. Returns new version without modifying this object.
-	Uri viaUnixSocket(string path) const {
-		Uri copy = this;
-		copy.unixSocketPath = path;
-		return copy;
-	}
-
-	/// Goes through a unix socket in the abstract namespace (linux only). Returns new version without modifying this object.
-	version(linux)
-	Uri viaAbstractSocket(string path) const {
-		Uri copy = this;
-		copy.unixSocketPath = "\0" ~ path;
-		return copy;
-	}
-
-	private void reparse(string uri) {
-		// from RFC 3986
-		// the ctRegex triples the compile time and makes ugly errors for no real benefit
-		// it was a nice experiment but just not worth it.
-		// enum ctr = ctRegex!r"^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?";
-		/*
-			Captures:
-				0 = whole url
-				1 = scheme, with :
-				2 = scheme, no :
-				3 = authority, with //
-				4 = authority, no //
-				5 = path
-				6 = query string, with ?
-				7 = query string, no ?
-				8 = anchor, with #
-				9 = anchor, no #
-		*/
-		// Yikes, even regular, non-CT regex is also unacceptably slow to compile. 1.9s on my computer!
-		// instead, I will DIY and cut that down to 0.6s on the same computer.
-		/*
-
-				Note that authority is
-					user:password@domain:port
-				where the user:password@ part is optional, and the :port is optional.
-
-				Regex translation:
-
-				Scheme cannot have :, /, ?, or # in it, and must have one or more chars and end in a :. It is optional, but must be first.
-				Authority must start with //, but cannot have any other /, ?, or # in it. It is optional.
-				Path cannot have any ? or # in it. It is optional.
-				Query must start with ? and must not have # in it. It is optional.
-				Anchor must start with # and can have anything else in it to end of string. It is optional.
-		*/
-
-		this = Uri.init; // reset all state
-
-		// empty uri = nothing special
-		if(uri.length == 0) {
-			return;
-		}
-
-		size_t idx;
-
-		scheme_loop: foreach(char c; uri[idx .. $]) {
-			switch(c) {
-				case ':':
-				case '/':
-				case '?':
-				case '#':
-					break scheme_loop;
-				default:
-			}
-			idx++;
-		}
-
-		if(idx == 0 && uri[idx] == ':') {
-			// this is actually a path! we skip way ahead
-			goto path_loop;
-		}
-
-		if(idx == uri.length) {
-			// the whole thing is a path, apparently
-			path = uri;
-			return;
-		}
-
-		if(idx > 0 && uri[idx] == ':') {
-			scheme = uri[0 .. idx];
-			idx++;
-		} else {
-			// we need to rewind; it found a / but no :, so the whole thing is prolly a path...
-			idx = 0;
-		}
-
-		if(idx + 2 < uri.length && uri[idx .. idx + 2] == "//") {
-			// we have an authority....
-			idx += 2;
-
-			auto authority_start = idx;
-			authority_loop: foreach(char c; uri[idx .. $]) {
-				switch(c) {
-					case '/':
-					case '?':
-					case '#':
-						break authority_loop;
-					default:
-				}
-				idx++;
-			}
-
-			auto authority = uri[authority_start .. idx];
-
-			auto idx2 = authority.indexOf("@");
-			if(idx2 != -1) {
-				userinfo = authority[0 .. idx2];
-				authority = authority[idx2 + 1 .. $];
-			}
-
-			if(authority.length && authority[0] == '[') {
-				// ipv6 address special casing
-				idx2 = authority.indexOf(']');
-				if(idx2 != -1) {
-					auto end = authority[idx2 + 1 .. $];
-					if(end.length && end[0] == ':')
-						idx2 = idx2 + 1;
-					else
-						idx2 = -1;
-				}
-			} else {
-				idx2 = authority.indexOf(":");
-			}
-
-			if(idx2 == -1) {
-				port = 0; // 0 means not specified; we should use the default for the scheme
-				host = authority;
-			} else {
-				host = authority[0 .. idx2];
-				if(idx2 + 1 < authority.length)
-					port = to!int(authority[idx2 + 1 .. $]);
-				else
-					port = 0;
-			}
-		}
-
-		path_loop:
-		auto path_start = idx;
-
-		foreach(char c; uri[idx .. $]) {
-			if(c == '?' || c == '#')
-				break;
-			idx++;
-		}
-
-		path = uri[path_start .. idx];
-
-		if(idx == uri.length)
-			return; // nothing more to examine...
-
-		if(uri[idx] == '?') {
-			idx++;
-			auto query_start = idx;
-			foreach(char c; uri[idx .. $]) {
-				if(c == '#')
-					break;
-				idx++;
-			}
-			query = uri[query_start .. idx];
-		}
-
-		if(idx < uri.length && uri[idx] == '#') {
-			idx++;
-			fragment = uri[idx .. $];
-		}
-
-		// uriInvalidated = false;
-	}
-
-	private string rebuildUri() const {
-		string ret;
-		if(scheme.length)
-			ret ~= scheme ~ ":";
-		if(userinfo.length || host.length)
-			ret ~= "//";
-		if(userinfo.length)
-			ret ~= userinfo ~ "@";
-		if(host.length)
-			ret ~= host;
-		if(port)
-			ret ~= ":" ~ to!string(port);
-
-		ret ~= path;
-
-		if(query.length)
-			ret ~= "?" ~ query;
-
-		if(fragment.length)
-			ret ~= "#" ~ fragment;
-
-		// uri = ret;
-		// uriInvalidated = false;
-		return ret;
-	}
-
-	/// Converts the broken down parts back into a complete string
-	string toString() const {
-		// if(uriInvalidated)
-			return rebuildUri();
-	}
-
-	/// Returns a new absolute Uri given a base. It treats this one as
-	/// relative where possible, but absolute if not. (If protocol, domain, or
-	/// other info is not set, the new one inherits it from the base.)
-	///
-	/// Browsers use a function like this to figure out links in html.
-	Uri basedOn(in Uri baseUrl) const {
-		Uri n = this; // copies
-		if(n.scheme == "data")
-			return n;
-		// n.uriInvalidated = true; // make sure we regenerate...
-
-		// userinfo is not inherited... is this wrong?
-
-		// if anything is given in the existing url, we don't use the base anymore.
-		if(n.scheme.empty) {
-			n.scheme = baseUrl.scheme;
-			if(n.host.empty) {
-				n.host = baseUrl.host;
-				if(n.port == 0) {
-					n.port = baseUrl.port;
-					if(n.path.length > 0 && n.path[0] != '/') {
-						auto b = baseUrl.path[0 .. baseUrl.path.lastIndexOf("/") + 1];
-						if(b.length == 0)
-							b = "/";
-						n.path = b ~ n.path;
-					} else if(n.path.length == 0) {
-						n.path = baseUrl.path;
-					}
-				}
-			}
-		}
-
-		n.removeDots();
-
-		// if still basically talking to the same thing, we should inherit the unix path
-		// too since basically the unix path is saying for this service, always use this override.
-		if(n.host == baseUrl.host && n.scheme == baseUrl.scheme && n.port == baseUrl.port)
-			n.unixSocketPath = baseUrl.unixSocketPath;
-
-		return n;
-	}
-
-	/++
-		Resolves ../ and ./ parts of the path. Used in the implementation of [basedOn] and you could also use it to normalize things.
-	+/
-	void removeDots() {
-		auto parts = this.path.split("/");
-		string[] toKeep;
-		foreach(part; parts) {
-			if(part == ".") {
-				continue;
-			} else if(part == "..") {
-				//if(toKeep.length > 1)
-					toKeep = toKeep[0 .. $-1];
-				//else
-					//toKeep = [""];
-				continue;
-			} else {
-				//if(toKeep.length && toKeep[$-1].length == 0 && part.length == 0)
-					//continue; // skip a `//` situation
-				toKeep ~= part;
-			}
-		}
-
-		auto path = toKeep.join("/");
-		if(path.length && path[0] != '/')
-			path = "/" ~ path;
-
-		this.path = path;
-	}
 }
 
 /*
@@ -4595,6 +4264,8 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 	return true;
 }
 
+public import arsd.core : WebSocketOpcode, WebSocketFrame;
+
 /++
 	WebSocket client, based on the browser api, though also with other api options.
 
@@ -4664,17 +4335,17 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 			}
 			---
 
+	History:
+		Shared functionality between [arsd.http2] and [arsd.cgi] finally merged into [arsd.core.WebSocketBase] on November 2, 2025.
+
 +/
-class WebSocket {
+class WebSocket : arsd.core.WebSocketBase {
 	private Uri uri;
 	private string[string] cookies;
 
 	private string host;
 	private ushort port;
 	private bool ssl;
-
-	// used to decide if we mask outgoing msgs
-	private bool isClient;
 
 	private MonoTime timeoutFromInactivity;
 	private MonoTime nextPing;
@@ -4957,7 +4628,7 @@ class WebSocket {
 		again.
 	+/
 	/// Group: blocking_api
-	public bool isDataPending(Duration timeout = 0.seconds) {
+	public override bool isDataPending(Duration timeout = 0.seconds) {
 		static SocketSet readSet;
 		if(readSet is null)
 			readSet = new SocketSet();
@@ -4991,7 +4662,7 @@ class WebSocket {
 		return false;
 	}
 
-	private void llsend(ubyte[] d) {
+	protected override void llsend(ubyte[] d) {
 		if(readyState == CONNECTING)
 			throw new Exception("WebSocket not connected when trying to send. Did you forget to call connect(); ?");
 			//connect();
@@ -5014,10 +4685,35 @@ class WebSocket {
 		}
 	}
 
-	private void llclose() {
+	protected override void llshutdown() {
 		// import std.stdio; writeln("LLCLOSE");
 		socket.shutdown(SocketShutdown.SEND);
 	}
+
+	protected override void llclose() {
+		socket.close();
+	}
+
+	protected override void unregisterAsActiveSocket() {
+		unregisterActiveSocket(this);
+	}
+
+	protected override arsd.core.WebSocketFrame waitGotNothing() {
+		return arsd.core.WebSocketFrame.init;
+	}
+
+	// FIXME: if i remove this function it still compiles, but it is abstract, so compiler bug still?
+	protected override bool connectionClosedInMiddleOfMessage() {
+		return false;
+	}
+
+	private void autoprocess() {
+		// FIXME
+		do {
+			processOnce();
+		} while(lowLevelReceive());
+	}
+
 
 	/++
 		Waits for more data off the low-level socket and adds it to the pending buffer.
@@ -5025,7 +4721,7 @@ class WebSocket {
 		Returns `true` if the connection is still active.
 	+/
 	/// Group: blocking_api
-	public bool lowLevelReceive() {
+	public override bool lowLevelReceive() {
 		if(readyState == CONNECTING)
 			throw new Exception("WebSocket not connected when trying to receive. Did you forget to call connect(); ?");
 		if (receiveBufferUsedLength == receiveBuffer.length)
@@ -5051,450 +4747,6 @@ class WebSocket {
 	}
 
 	private Socket socket;
-
-	/* copy/paste section { */
-
-	private int readyState_;
-	private ubyte[] receiveBuffer;
-	private size_t receiveBufferUsedLength;
-
-	private Config config;
-
-	enum CONNECTING = 0; /// Socket has been created. The connection is not yet open.
-	enum OPEN = 1; /// The connection is open and ready to communicate.
-	enum CLOSING = 2; /// The connection is in the process of closing.
-	enum CLOSED = 3; /// The connection is closed or couldn't be opened.
-
-	/++
-
-	+/
-	/// Group: foundational
-	static struct Config {
-		/++
-			These control the size of the receive buffer.
-
-			It starts at the initial size, will temporarily
-			balloon up to the maximum size, and will reuse
-			a buffer up to the likely size.
-
-			Anything larger than the maximum size will cause
-			the connection to be aborted and an exception thrown.
-			This is to protect you against a peer trying to
-			exhaust your memory, while keeping the user-level
-			processing simple.
-		+/
-		size_t initialReceiveBufferSize = 4096;
-		size_t likelyReceiveBufferSize = 4096; /// ditto
-		size_t maximumReceiveBufferSize = 10 * 1024 * 1024; /// ditto
-
-		/++
-			Maximum combined size of a message.
-		+/
-		size_t maximumMessageSize = 10 * 1024 * 1024;
-
-		string[string] cookies; /// Cookies to send with the initial request. cookies[name] = value;
-		string origin; /// Origin URL to send with the handshake, if desired.
-		string protocol; /// the protocol header, if desired.
-
-		/++
-			Additional headers to put in the HTTP request. These should be formatted `Name: value`, like for example:
-
-			---
-			Config config;
-			config.additionalHeaders ~= "Authorization: Bearer your_auth_token_here";
-			---
-
-			History:
-				Added February 19, 2021 (included in dub version 9.2)
-		+/
-		string[] additionalHeaders;
-
-		/++
-			Amount of time (in msecs) of idleness after which to send an automatic ping
-
-			Please note how this interacts with [timeoutFromInactivity] - a ping counts as activity that
-			keeps the socket alive.
-		+/
-		int pingFrequency = 5000;
-
-		/++
-			Amount of time to disconnect when there's no activity. Note that automatic pings will keep the connection alive; this timeout only occurs if there's absolutely nothing, including no responses to websocket ping frames. Since the default [pingFrequency] is only seconds, this one minute should never elapse unless the connection is actually dead.
-
-			The one thing to keep in mind is if your program is busy and doesn't check input, it might consider this a time out since there's no activity. The reason is that your program was busy rather than a connection failure, but it doesn't care. You should avoid long processing periods anyway though!
-
-			History:
-				Added March 31, 2021 (included in dub version 9.4)
-		+/
-		Duration timeoutFromInactivity = 1.minutes;
-
-		/++
-			For https connections, if this is `true`, it will fail to connect if the TLS certificate can not be
-			verified. Setting this to `false` will skip this check and allow the connection to continue anyway.
-
-			History:
-				Added April 5, 2022 (dub v10.8)
-
-				Prior to this, it always used the global (but undocumented) `defaultVerifyPeer` setting, and sometimes
-				even if it was true, it would skip the verification. Now, it always respects this local setting.
-		+/
-		bool verifyPeer = true;
-	}
-
-	/++
-		Returns one of [CONNECTING], [OPEN], [CLOSING], or [CLOSED].
-	+/
-	int readyState() {
-		return readyState_;
-	}
-
-	/++
-		Closes the connection, sending a graceful teardown message to the other side.
-		If you provide no arguments, it sends code 1000, normal closure. If you provide
-		a code, you should also provide a short reason string.
-
-		Params:
-			code = reason code.
-
-			0-999 are invalid.
-			1000-2999 are defined by the RFC. [https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1]
-				1000 - normal finish
-				1001 - endpoint going away
-				1002 - protocol error
-				1003 - unacceptable data received (e.g. binary message when you can't handle it)
-				1004 - reserved
-				1005 - missing status code (should not be set except by implementations)
-				1006 - abnormal connection closure (should only be set by implementations)
-				1007 - inconsistent data received (i.e. utf-8 decode error in text message)
-				1008 - policy violation
-				1009 - received message too big
-				1010 - client aborting due to required extension being unsupported by the server
-				1011 - server had unexpected failure
-				1015 - reserved for TLS handshake failure
-			3000-3999 are to be registered with IANA.
-			4000-4999 are private-use custom codes depending on the application. These are what you'd most commonly set here.
-
-			reason = <= 123 bytes of human-readable reason text, used for logs and debugging
-
-		History:
-			The default `code` was changed to 1000 on January 9, 2023. Previously it was 0,
-			but also ignored anyway.
-
-			On May 11, 2024, the optional arguments were changed to overloads since if you provide a code, you should also provide a reason.
-	+/
-	/// Group: foundational
-	void close() {
-		close(1000, null);
-	}
-
-	/// ditto
-	void close(int code, string reason)
-		//in (reason.length < 123)
-		in { assert(reason.length <= 123); } do
-	{
-		if(readyState_ != OPEN)
-			return; // it cool, we done
-		WebSocketFrame wss;
-		wss.fin = true;
-		wss.masked = this.isClient;
-		wss.opcode = WebSocketOpcode.close;
-		wss.data = [ubyte((code >> 8) & 0xff), ubyte(code & 0xff)] ~ cast(ubyte[]) reason.dup;
-		wss.send(&llsend);
-
-		readyState_ = CLOSING;
-
-		closeCalled = true;
-
-		llclose();
-	}
-
-	deprecated("If you provide a code, please also provide a reason string") void close(int code) {
-		close(code, null);
-	}
-
-
-	private bool closeCalled;
-
-	/++
-		Sends a ping message to the server. This is done automatically by the library if you set a non-zero [Config.pingFrequency], but you can also send extra pings explicitly as well with this function.
-	+/
-	/// Group: foundational
-	void ping(in ubyte[] data = null) {
-		WebSocketFrame wss;
-		wss.fin = true;
-		wss.masked = this.isClient;
-		wss.opcode = WebSocketOpcode.ping;
-		if(data !is null) wss.data = data.dup;
-		wss.send(&llsend);
-	}
-
-	/++
-		Sends a pong message to the server. This is normally done automatically in response to pings.
-	+/
-	/// Group: foundational
-	void pong(in ubyte[] data = null) {
-		WebSocketFrame wss;
-		wss.fin = true;
-		wss.masked = this.isClient;
-		wss.opcode = WebSocketOpcode.pong;
-		if(data !is null) wss.data = data.dup;
-		wss.send(&llsend);
-	}
-
-	/++
-		Sends a text message through the websocket.
-	+/
-	/// Group: foundational
-	void send(in char[] textData) {
-		WebSocketFrame wss;
-		wss.fin = true;
-		wss.masked = this.isClient;
-		wss.opcode = WebSocketOpcode.text;
-		wss.data = cast(ubyte[]) textData.dup;
-		wss.send(&llsend);
-	}
-
-	/++
-		Sends a binary message through the websocket.
-	+/
-	/// Group: foundational
-	void send(in ubyte[] binaryData) {
-		WebSocketFrame wss;
-		wss.masked = this.isClient;
-		wss.fin = true;
-		wss.opcode = WebSocketOpcode.binary;
-		wss.data = cast(ubyte[]) binaryData.dup;
-		wss.send(&llsend);
-	}
-
-	/++
-		Waits for and returns the next complete message on the socket.
-
-		Note that the onmessage function is still called, right before
-		this returns.
-	+/
-	/// Group: blocking_api
-	public WebSocketFrame waitForNextMessage() {
-		do {
-			auto m = processOnce();
-			if(m.populated)
-				return m;
-		} while(lowLevelReceive());
-
-		return WebSocketFrame.init; // FIXME? maybe.
-	}
-
-	/++
-		Tells if [waitForNextMessage] would block.
-	+/
-	/// Group: blocking_api
-	public bool waitForNextMessageWouldBlock() {
-		checkAgain:
-		if(isMessageBuffered())
-			return false;
-		if(!isDataPending())
-			return true;
-		while(isDataPending())
-			if(lowLevelReceive() == false)
-				return false;
-		goto checkAgain;
-	}
-
-	/++
-		Is there a message in the buffer already?
-		If `true`, [waitForNextMessage] is guaranteed to return immediately.
-		If `false`, check [isDataPending] as the next step.
-	+/
-	/// Group: blocking_api
-	public bool isMessageBuffered() {
-		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
-		auto s = d;
-		if(d.length) {
-			auto orig = d;
-			auto m = WebSocketFrame.read(d);
-			// that's how it indicates that it needs more data
-			if(d !is orig)
-				return true;
-		}
-
-		return false;
-	}
-
-	private ubyte continuingType;
-	private ubyte[] continuingData;
-	//private size_t continuingDataLength;
-
-	private WebSocketFrame processOnce() {
-		ubyte[] d = receiveBuffer[0 .. receiveBufferUsedLength];
-		auto s = d;
-		// FIXME: handle continuation frames more efficiently. it should really just reuse the receive buffer.
-		WebSocketFrame m;
-		if(d.length) {
-			auto orig = d;
-			m = WebSocketFrame.read(d);
-			// that's how it indicates that it needs more data
-			if(d is orig)
-				return WebSocketFrame.init;
-			m.unmaskInPlace();
-			switch(m.opcode) {
-				case WebSocketOpcode.continuation:
-					if(continuingData.length + m.data.length > config.maximumMessageSize)
-						throw new Exception("message size exceeded");
-
-					continuingData ~= m.data;
-					if(m.fin) {
-						if(ontextmessage)
-							ontextmessage(cast(char[]) continuingData);
-						if(onbinarymessage)
-							onbinarymessage(continuingData);
-
-						continuingData = null;
-					}
-				break;
-				case WebSocketOpcode.text:
-					if(m.fin) {
-						if(ontextmessage)
-							ontextmessage(m.textData);
-					} else {
-						continuingType = m.opcode;
-						//continuingDataLength = 0;
-						continuingData = null;
-						continuingData ~= m.data;
-					}
-				break;
-				case WebSocketOpcode.binary:
-					if(m.fin) {
-						if(onbinarymessage)
-							onbinarymessage(m.data);
-					} else {
-						continuingType = m.opcode;
-						//continuingDataLength = 0;
-						continuingData = null;
-						continuingData ~= m.data;
-					}
-				break;
-				case WebSocketOpcode.close:
-
-					//import std.stdio; writeln("closed ", cast(string) m.data);
-
-					ushort code = CloseEvent.StandardCloseCodes.noStatusCodePresent;
-					const(char)[] reason;
-
-					if(m.data.length >= 2) {
-						code = (m.data[0] << 8) | m.data[1];
-						reason = (cast(char[]) m.data[2 .. $]);
-					}
-
-					if(onclose)
-						onclose(CloseEvent(code, reason, true));
-
-					// if we receive one and haven't sent one back we're supposed to echo it back and close.
-					if(!closeCalled)
-						close(code, reason.idup);
-
-					readyState_ = CLOSED;
-
-					unregisterActiveSocket(this);
-					socket.close();
-				break;
-				case WebSocketOpcode.ping:
-					// import std.stdio; writeln("ping received ", m.data);
-					pong(m.data);
-				break;
-				case WebSocketOpcode.pong:
-					// import std.stdio; writeln("pong received ", m.data);
-					// just really references it is still alive, nbd.
-				break;
-				default: // ignore though i could and perhaps should throw too
-			}
-		}
-
-		if(d.length) {
-			m.data = m.data.dup();
-		}
-
-		import core.stdc.string;
-		memmove(receiveBuffer.ptr, d.ptr, d.length);
-		receiveBufferUsedLength = d.length;
-
-		return m;
-	}
-
-	private void autoprocess() {
-		// FIXME
-		do {
-			processOnce();
-		} while(lowLevelReceive());
-	}
-
-	/++
-		Arguments for the close event. The `code` and `reason` are provided from the close message on the websocket, if they are present. The spec says code 1000 indicates a normal, default reason close, but reserves the code range from 3000-5000 for future definition; the 3000s can be registered with IANA and the 4000's are application private use. The `reason` should be user readable, but not displayed to the end user. `wasClean` is true if the server actually sent a close event, false if it just disconnected.
-
-		$(PITFALL
-			The `reason` argument references a temporary buffer and there's no guarantee it will remain valid once your callback returns. It may be freed and will very likely be overwritten. If you want to keep the reason beyond the callback, make sure you `.idup` it.
-		)
-
-		History:
-			Added March 19, 2023 (dub v11.0).
-	+/
-	static struct CloseEvent {
-		ushort code;
-		const(char)[] reason;
-		bool wasClean;
-
-		string extendedErrorInformationUnstable;
-
-		/++
-			See https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1 for details.
-		+/
-		enum StandardCloseCodes {
-			purposeFulfilled = 1000,
-			goingAway = 1001,
-			protocolError = 1002,
-			unacceptableData = 1003, // e.g. got text message when you can only handle binary
-			Reserved = 1004,
-			noStatusCodePresent = 1005, // not set by endpoint.
-			abnormalClosure = 1006, // not set by endpoint. closed without a Close control. FIXME: maybe keep a copy of errno around for these
-			inconsistentData = 1007, // e.g. utf8 validation failed
-			genericPolicyViolation = 1008,
-			messageTooBig = 1009,
-			clientRequiredExtensionMissing = 1010, // only the client should send this
-			unnexpectedCondition = 1011,
-			unverifiedCertificate = 1015, // not set by client
-		}
-
-		string toString() {
-			return cast(string) (arsd.core.toStringInternal(code) ~ ": " ~ reason);
-		}
-	}
-
-	/++
-		The `CloseEvent` you get references a temporary buffer that may be overwritten after your handler returns. If you want to keep it or the `event.reason` member, remember to `.idup` it.
-
-		History:
-			The `CloseEvent` was changed to a [arsd.core.FlexibleDelegate] on March 19, 2023 (dub v11.0). Before that, `onclose` was a public member of type `void delegate()`. This change means setters still work with or without the [CloseEvent] argument.
-
-			Your onclose method is now also called on abnormal terminations. Check the `wasClean` member of the `CloseEvent` to know if it came from a close frame or other cause.
-	+/
-	arsd.core.FlexibleDelegate!(void delegate(CloseEvent event)) onclose;
-	void delegate() onerror; ///
-	void delegate(in char[]) ontextmessage; ///
-	void delegate(in ubyte[]) onbinarymessage; ///
-	void delegate() onopen; ///
-
-	/++
-
-	+/
-	/// Group: browser_api
-	void onmessage(void delegate(in char[]) dg) {
-		ontextmessage = dg;
-	}
-
-	/// ditto
-	void onmessage(void delegate(in ubyte[]) dg) {
-		onbinarymessage = dg;
-	}
-
-	/* } end copy/paste */
 
 	// returns true if still active
 	private static bool readyToRead(WebSocket sock) {
@@ -5803,217 +5055,6 @@ version(Windows) {
 
 	extern(Windows)
 	DWORD WSAWaitForMultipleEvents(DWORD, HANDLE*, BOOL, DWORD, BOOL);
-}
-
-/* copy/paste from cgi.d */
-public {
-	enum WebSocketOpcode : ubyte {
-		continuation = 0,
-		text = 1,
-		binary = 2,
-		// 3, 4, 5, 6, 7 RESERVED
-		close = 8,
-		ping = 9,
-		pong = 10,
-		// 11,12,13,14,15 RESERVED
-	}
-
-	public struct WebSocketFrame {
-		private bool populated;
-		bool fin;
-		bool rsv1;
-		bool rsv2;
-		bool rsv3;
-		WebSocketOpcode opcode; // 4 bits
-		bool masked;
-		ubyte lengthIndicator; // don't set this when building one to send
-		ulong realLength; // don't use when sending
-		ubyte[4] maskingKey; // don't set this when sending
-		ubyte[] data;
-
-		static WebSocketFrame simpleMessage(WebSocketOpcode opcode, in void[] data) {
-			WebSocketFrame msg;
-			msg.fin = true;
-			msg.opcode = opcode;
-			msg.data = cast(ubyte[]) data.dup; // it is mutated below when masked, so need to be cautious and copy it, sigh
-
-			return msg;
-		}
-
-		private void send(scope void delegate(ubyte[]) llsend) {
-			ubyte[64] headerScratch;
-			int headerScratchPos = 0;
-
-			realLength = data.length;
-
-			{
-				ubyte b1;
-				b1 |= cast(ubyte) opcode;
-				b1 |= rsv3 ? (1 << 4) : 0;
-				b1 |= rsv2 ? (1 << 5) : 0;
-				b1 |= rsv1 ? (1 << 6) : 0;
-				b1 |= fin  ? (1 << 7) : 0;
-
-				headerScratch[0] = b1;
-				headerScratchPos++;
-			}
-
-			{
-				headerScratchPos++; // we'll set header[1] at the end of this
-				auto rlc = realLength;
-				ubyte b2;
-				b2 |= masked ? (1 << 7) : 0;
-
-				assert(headerScratchPos == 2);
-
-				if(realLength > 65535) {
-					// use 64 bit length
-					b2 |= 0x7f;
-
-					// FIXME: double check endinaness
-					foreach(i; 0 .. 8) {
-						headerScratch[2 + 7 - i] = rlc & 0x0ff;
-						rlc >>>= 8;
-					}
-
-					headerScratchPos += 8;
-				} else if(realLength > 125) {
-					// use 16 bit length
-					b2 |= 0x7e;
-
-					// FIXME: double check endinaness
-					foreach(i; 0 .. 2) {
-						headerScratch[2 + 1 - i] = rlc & 0x0ff;
-						rlc >>>= 8;
-					}
-
-					headerScratchPos += 2;
-				} else {
-					// use 7 bit length
-					b2 |= realLength & 0b_0111_1111;
-				}
-
-				headerScratch[1] = b2;
-			}
-
-			//assert(!masked, "masking key not properly implemented");
-			if(masked) {
-				import std.random;
-				foreach(ref item; maskingKey)
-					item = uniform(ubyte.min, ubyte.max);
-				headerScratch[headerScratchPos .. headerScratchPos + 4] = maskingKey[];
-				headerScratchPos += 4;
-
-				// we'll just mask it in place...
-				int keyIdx = 0;
-				foreach(i; 0 .. data.length) {
-					data[i] = data[i] ^ maskingKey[keyIdx];
-					if(keyIdx == 3)
-						keyIdx = 0;
-					else
-						keyIdx++;
-				}
-			}
-
-			//writeln("SENDING ", headerScratch[0 .. headerScratchPos], data);
-			llsend(headerScratch[0 .. headerScratchPos]);
-			if(data.length)
-				llsend(data);
-		}
-
-		static WebSocketFrame read(ref ubyte[] d) {
-			WebSocketFrame msg;
-
-			auto orig = d;
-
-			WebSocketFrame needsMoreData() {
-				d = orig;
-				return WebSocketFrame.init;
-			}
-
-			if(d.length < 2)
-				return needsMoreData();
-
-			ubyte b = d[0];
-
-			msg.populated = true;
-
-			msg.opcode = cast(WebSocketOpcode) (b & 0x0f);
-			b >>= 4;
-			msg.rsv3 = b & 0x01;
-			b >>= 1;
-			msg.rsv2 = b & 0x01;
-			b >>= 1;
-			msg.rsv1 = b & 0x01;
-			b >>= 1;
-			msg.fin = b & 0x01;
-
-			b = d[1];
-			msg.masked = (b & 0b1000_0000) ? true : false;
-			msg.lengthIndicator = b & 0b0111_1111;
-
-			d = d[2 .. $];
-
-			if(msg.lengthIndicator == 0x7e) {
-				// 16 bit length
-				msg.realLength = 0;
-
-				if(d.length < 2) return needsMoreData();
-
-				foreach(i; 0 .. 2) {
-					msg.realLength |= d[0] << ((1-i) * 8);
-					d = d[1 .. $];
-				}
-			} else if(msg.lengthIndicator == 0x7f) {
-				// 64 bit length
-				msg.realLength = 0;
-
-				if(d.length < 8) return needsMoreData();
-
-				foreach(i; 0 .. 8) {
-					msg.realLength |= ulong(d[0]) << ((7-i) * 8);
-					d = d[1 .. $];
-				}
-			} else {
-				// 7 bit length
-				msg.realLength = msg.lengthIndicator;
-			}
-
-			if(msg.masked) {
-
-				if(d.length < 4) return needsMoreData();
-
-				msg.maskingKey = d[0 .. 4];
-				d = d[4 .. $];
-			}
-
-			if(msg.realLength > d.length) {
-				return needsMoreData();
-			}
-
-			msg.data = d[0 .. cast(size_t) msg.realLength];
-			d = d[cast(size_t) msg.realLength .. $];
-
-			return msg;
-		}
-
-		void unmaskInPlace() {
-			if(this.masked) {
-				int keyIdx = 0;
-				foreach(i; 0 .. this.data.length) {
-					this.data[i] = this.data[i] ^ this.maskingKey[keyIdx];
-					if(keyIdx == 3)
-						keyIdx = 0;
-					else
-						keyIdx++;
-				}
-			}
-		}
-
-		char[] textData() {
-			return cast(char[]) data;
-		}
-	}
 }
 
 private extern(C)
