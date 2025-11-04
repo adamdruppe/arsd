@@ -17879,15 +17879,26 @@ class FilePicker : Dialog {
 					return -1;
 
 				enum specialZoneSize = 1;
+				string originalString = whole;
+				bool fallback;
+
+				start_over:
 
 				char current = whole[0];
-				if(current >= '0' && current <= '9') {
+				if(!fallback && current >= '0' && current <= '9') {
+					// if this overflows, it can mess up the sort, so it will fallback to string sort in that event
 					int accumulator;
 					do {
+						auto before = accumulator;
 						whole = whole[1 .. $];
 						accumulator *= 10;
 						accumulator += current - '0';
 						current = whole.length ? whole[0] : 0;
+						if(accumulator < before) {
+							fallback = true;
+							whole = originalString;
+							goto start_over;
+						}
 					} while (current >= '0' && current <= '9');
 
 					return accumulator + specialZoneSize + cast(int) char.max; // leave room for symbols
@@ -18277,6 +18288,7 @@ private FileType getFileType(string name) {
 		auto ret = stat((name ~ '\0').ptr, &buf);
 		if(ret == -1)
 			return FileType.error;
+		// FIXME: what about a symlink to a dir? S_IFLNK then readlink then i believe stat it again.
 		return ((buf.st_mode & S_IFMT) == S_IFDIR) ? FileType.dir : FileType.other;
 	} else assert(0, "Not implemented");
 }

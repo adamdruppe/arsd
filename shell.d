@@ -10,6 +10,49 @@
 
 	History:
 		Added October 18, 2025
+
+	Bugs:
+	$(LIST
+		* < and > redirections are not implemented at all
+		* >> not implemented
+		* | on Windows is not implemented
+		* glob expansion is minimal - * works, but no ?, no {item,other}, no {start..end}
+		* ~ expansion is not implemented
+		* `substitution` and $(...) is not implemented
+		* variable expansion is not implemented. can do $IDENT and ${IDENT} i think
+		* built-ins don't exist - `set`, want `for` and then like `export` and a way to hook in basic utilities polyfills especially on Windows (ls, rm, grep, etc)
+			* built-ins should have a pipe they can read/write to and return an int. integrate with arsd.cli?
+		* no !history recall. or history command in general
+		* job control is rudimentary - no fg, bg, jobs, &, ctrl+z, etc.
+		* set -o ignoreeof
+		* the path search is hardcoded
+		* prompt could be cooler
+			PS1 = normal prompt
+			PS2 = continuation prompt
+			Bash shell executes the content of the PROMPT_COMMAND just before displaying the PS1 variable.
+
+			bash does it with `\u` and stuff but i kinda thiink using `$USER` and such might make more sense.
+		* it prints command return values when you might not want that
+		* LS_COLORS env var is not set
+		* && and || is not implemented
+		* the api is not very good
+		* ulimit? sourcing things too. aliases.
+		* see my bash rc for other little things. maybe i want a deeshrc
+		* permission denied when hitting tab on Windows
+		* tab complete of available commands not implemented - get it from path search.
+		* some vars dynamic like $_ being the most recent command, $? being its return value, etc
+	)
+
+	Questionable_ideas:
+	$(LIST
+		* separate stdout and stderr more by default, allow stderr pipes.
+		* custom completion scripts? prolly not bash compatible since the scripts would be more involved
+		* some kind of scriptable cmdlet? a full on script language with shell stuff embeddable?
+			see https://hush-shell.github.io/cmd/index.html for some ok ideas
+		* do something fun with job control. idk what tho really.
+		* can terminal emulators get notifications when the foreground process group changes? i don't think so but i could make a "poll again now" sequence since i control shell and possibly terminal emulator now.
+		* change DISPLAY and such when attaching remote sessions
+	)
 +/
 module arsd.shell;
 
@@ -424,6 +467,12 @@ ShellCommand[] parseShellCommand(ShellLexeme[] lexemes, ShellContext context, Gl
 	ShellCommand currentCommand;
 	ShellCommand firstCommand;
 
+	enum ParseState {
+		lookingForVarAssignment,
+		lookingForArg,
+	}
+	ParseState parseState = ParseState.lookingForVarAssignment;
+
 	while(lexemes.length) {
 		auto component = nextComponent(lexemes);
 		if(component.length) {
@@ -450,12 +499,6 @@ ShellCommand[] parseShellCommand(ShellLexeme[] lexemes, ShellContext context, Gl
 
 				BUT THIS IS MY SHELL I CAN DO WHAT I WANT!!!!!!!!!!!!
 			+/
-
-			enum ParseState {
-				lookingForVarAssignment,
-				lookingForArg,
-			}
-			ParseState parseState = ParseState.lookingForVarAssignment;
 
 			bool thisWasEnvironmentPair = false;
 			EnvironmentPair environmentPair;
@@ -718,7 +761,7 @@ class Shell {
 		auto commands = parseShellCommand(lexShellCommandLine(commandLine), context, &globberForwarder);
 		foreach(command; commands)
 		try {
-			//dumpCommand(command);
+			dumpCommand(command);
 
 			version(Posix) {
 				import core.sys.posix.unistd;

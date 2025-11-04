@@ -98,6 +98,7 @@ import arsd.rtf;
 // import arsd.screen; // D1 or 2.098
 import arsd.script;
 import arsd.sha;
+import arsd.shell;
 import arsd.simpleaudio;
 import arsd.simpledisplay;
 import arsd.sqlite;
