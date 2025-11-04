@@ -124,6 +124,10 @@ class Sqlite : Database {
 		}
 	}
 
+	override bool isAlive() {
+		return true;
+	}
+
 	///
 	override void startTransaction() {
 		query("BEGIN TRANSACTION");

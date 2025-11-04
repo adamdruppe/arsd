@@ -88,6 +88,10 @@ class MsSql : Database {
 		return null; // FIXME
 	}
 
+	override bool isAlive() {
+		return true;
+	}
+
 	private:
 		SQLHENV env;
 		SQLHDBC conn;

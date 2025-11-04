@@ -219,6 +219,9 @@ class MySql : Database {
 		query("START TRANSACTION");
 	}
 
+	override bool isAlive() {
+		return true;
+	}
 
 	string sysTimeToValue(SysTime s) {
 		return "cast('" ~ escape(s.toISOExtString()) ~ "' as datetime)";

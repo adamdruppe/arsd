@@ -60,9 +60,12 @@ class PostgreSql : Database {
 		conn = PQconnectdb(toStringz(connectionString));
 		if(conn is null)
 			throw new DatabaseException("Unable to allocate PG connection object");
-		if(PQstatus(conn) != CONNECTION_OK)
+		if(PQstatus(conn) != CONNECTION_OK) {
+			this.connectionOk = false;
 			throw new DatabaseException(error());
+		}
 		query("SET NAMES 'utf8'"); // D does everything with utf8
+		this.connectionOk = true;
 	}
 
 	string connectionString;
@@ -73,6 +76,11 @@ class PostgreSql : Database {
 
 	string sysTimeToValue(SysTime s) {
 		return "'" ~ escape(s.toISOExtString()) ~ "'::timestamptz";
+	}
+
+	private bool connectionOk;
+	override bool isAlive() {
+		return connectionOk;
 	}
 
 	/**
@@ -132,8 +140,10 @@ class PostgreSql : Database {
 				conn = PQconnectdb(toStringz(connectionString));
 				if(conn is null)
 					throw new DatabaseException("Unable to allocate PG connection object");
-				if(PQstatus(conn) != CONNECTION_OK)
+				if(PQstatus(conn) != CONNECTION_OK) {
+					this.connectionOk = false;
 					throw new DatabaseException(error());
+				}
 				goto retry;
 			}
 			throw new DatabaseException(error());
@@ -177,6 +187,82 @@ class PostgreSql : Database {
 
 	private:
 		PGconn* conn;
+}
+
+/+
+# when it changes from lowercase to upper case, call that a new word. or when it goes to/from anything else and underscore or dashes.
++/
+
+struct PreparedStatementDescription {
+	PreparedStatementResult[] result;
+}
+
+struct PreparedStatementResult {
+	string fieldName;
+	DatabaseDatum type;
+}
+
+PreparedStatementDescription describePrepared(PostgreSql db, string name) {
+	auto res = PQdescribePrepared(db.conn, name.toStringz);
+
+	PreparedStatementResult[] ret;
+
+	// PQnparams PQparamtype for params
+	auto numFields = PQnfields(res);
+	foreach(num; 0 .. numFields) {
+		auto typeId = PQftype(res, num);
+		DatabaseDatum dd;
+		dd.platformSpecificTag = typeId;
+		dd.storage = sampleForOid(typeId);
+		ret ~= PreparedStatementResult(
+			copyCString(PQfname(res, num)),
+			dd,
+		);
+	}
+
+	PQclear(res);
+
+	return PreparedStatementDescription(ret);
+}
+
+import arsd.core : LimitedVariant, PackedDateTime, SimplifiedUtcTimestamp;
+LimitedVariant sampleForOid(int platformSpecificTag) {
+	switch(platformSpecificTag) {
+		case BOOLOID:
+			return LimitedVariant(false);
+		case BYTEAOID:
+			return LimitedVariant(cast(const(ubyte)[]) null);
+		case TEXTOID:
+		case VARCHAROID:
+			return LimitedVariant("");
+		case INT4OID:
+			return LimitedVariant(0);
+		case INT8OID:
+			return LimitedVariant(0L);
+		case FLOAT4OID:
+			return LimitedVariant(0.0f);
+		case FLOAT8OID:
+			return LimitedVariant(0.0);
+		case TIMESTAMPOID:
+		case TIMESTAMPTZOID:
+			return LimitedVariant(SimplifiedUtcTimestamp(0));
+		case DATEOID:
+			PackedDateTime d;
+			d.hasDate = true;
+			return LimitedVariant(d); // might want a different type so contains shows the thing without checking hasDate and hasTime
+		case TIMETZOID: // possibly wrong... the tz isn't in my packed thing
+		case TIMEOID:
+			PackedDateTime d;
+			d.hasTime = true;
+			return LimitedVariant(d);
+		case INTERVALOID:
+			// months, days, and microseconds
+
+		case NUMERICOID: // aka decimal
+		default:
+			// when in doubt, assume it is just a string
+			return LimitedVariant("sample");
+	}
 }
 
 private string toLowerFast(string s) {
@@ -374,7 +460,22 @@ extern(C) {
 	int PQfformat(const PGresult *res, int column_number);
 
 	alias Oid = int;
+	enum BOOLOID = 16;
 	enum BYTEAOID = 17;
+	enum TEXTOID = 25;
+	enum INT4OID = 23; // integer
+	enum INT8OID = 20; // bigint
+	enum NUMERICOID = 1700;
+	enum FLOAT4OID = 700;
+	enum FLOAT8OID = 701;
+	enum VARCHAROID = 1043;
+	enum DATEOID = 1082;
+	enum TIMEOID = 1083;
+	enum TIMESTAMPOID = 1114;
+	enum TIMESTAMPTZOID = 1184;
+	enum INTERVALOID = 1186;
+	enum TIMETZOID = 1266;
+
 	Oid PQftype(const PGresult* res, int column_number);
 
 	char *PQescapeByteaConn(PGconn *conn,
@@ -386,6 +487,7 @@ extern(C) {
 
 	char* PQcmdTuples(PGresult *res);
 
+	PGresult *PQdescribePrepared(PGconn *conn, const char *stmtName);
 }
 
 /*
