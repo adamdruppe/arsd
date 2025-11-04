@@ -53,3 +53,76 @@ deprecated("D calls this `stripRight` instead") alias trimRight = stripRight;
 alias stringz = arsd.core.stringz;
 // CharzBuffer
 // WCharzBuffer
+
+// ********* UTILITIES **************
+
+string[] split(string s, string onWhat) {
+	assert(onWhat.length);
+	string[] ret;
+	more:
+	auto idx = s.indexOf(onWhat);
+	if(idx == -1) {
+		ret ~= s;
+		return ret;
+	}
+	ret ~= s[0 .. idx];
+	s = s[idx + onWhat.length .. $];
+	goto more;
+}
+
+unittest {
+	assert("foo.bar".split(".") == ["foo", "bar"]);
+}
+
+ptrdiff_t lastIndexOf(string s, string what) {
+	assert(what.length);
+	if(s.length < what.length)
+		return -1;
+	ptrdiff_t checking = s.length - what.length;
+	while(checking >= 0) {
+		if(s[checking .. checking + what.length] == what)
+			return checking;
+
+		checking--;
+	}
+
+	return -1;
+}
+
+unittest {
+	assert("31234".lastIndexOf("3") == 3);
+}
+
+string join(string[] str, string w) {
+	string ret;
+	foreach(i, s; str) {
+		if(i)
+			ret ~= w;
+		ret ~= s;
+	}
+	return ret;
+}
+
+unittest {
+	assert(["a", "b"].join(" ") == "a b");
+}
+
+string replace(string str, string find, string repacement) {
+	assert(find.length);
+
+	string ret;
+	more:
+	auto idx = str.indexOf(find);
+	if(idx == -1) {
+		ret ~= str;
+		return ret;
+	}
+	ret ~= str[0 .. idx];
+	ret ~= repacement;
+	str = str[idx + find.length .. $];
+	goto more;
+}
+
+unittest {
+	assert("foobarfoo".replace("foo", "bar") == "barbarbar");
+}

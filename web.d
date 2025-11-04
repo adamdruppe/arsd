@@ -11,6 +11,8 @@
 +/
 module arsd.web;
 
+import arsd.uri : decodeVariablesSingle, encodeVariables;
+
 static if(__VERSION__ <= 2076) {
 	// compatibility shims with gdc
 	enum JSONType {

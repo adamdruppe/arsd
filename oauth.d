@@ -2,7 +2,8 @@
 module arsd.oauth;
 
 import arsd.curl;
-import arsd.cgi; // for decodeVariables
+import arsd.uri;
+import arsd.cgi : Cgi;
 import std.array;
 static import std.uri;
 static import std.algorithm;
