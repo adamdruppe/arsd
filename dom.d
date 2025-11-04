@@ -1,3 +1,5 @@
+// FIXME: i want css nesting via the new standard now.
+
 // FIXME: xml namespace support???
 // FIXME: https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentHTML
 // FIXME: parentElement is parentNode that skips DocumentFragment etc but will be hard to work in with my compatibility...
@@ -2695,6 +2697,47 @@ class Element : DomParent {
 		return m;
 	}
 
+	/++
+		Makes an element from an interpolated sequence.
+
+		FIXME: add a type interpolator thing that can be replaced
+		FIXME: syntax check at compile time?
+		FIXME: allow a DocumentFragment in some cases
+	+/
+	static Element make(Args...)(arsd.core.InterpolationHeader head, Args args, arsd.core.InterpolationFooter foot) {
+		string html;
+
+		import arsd.core;
+		foreach(arg; args) {
+			static if(is(typeof(arg) == InterpolationHeader))
+				{}
+			else
+			static if(is(typeof(arg) == InterpolationFooter))
+				{}
+			else
+			static if(is(typeof(arg) == InterpolatedLiteral!h, string h))
+				html ~= h;
+			else
+			static if(is(typeof(arg) == InterpolatedExpression!code, string code))
+				{}
+			else
+			static if(is(typeof(arg) : iraw))
+				html ~= arg.s;
+			else
+			// FIXME: what if we are inside a <script> ? or an attribute etc
+			static if(is(typeof(arg) : Html))
+				html ~= arg.source;
+			else
+			static if(is(typeof(arg) : Element))
+				html ~= arg.toString();
+			else
+				html ~= htmlEntitiesEncode(toStringInternal(arg));
+		}
+
+		auto root = Element.make("root");
+		root.innerHTML(html, true /* strict mode */);
+		return root.querySelector(" > *");
+	}
 
 	/// Generally, you don't want to call this yourself - use Element.make or document.createElement instead.
 	this(Document _parentDocument, string _tagName, string[string] _attributes = null, bool _selfClosed = false) {
