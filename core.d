@@ -8680,7 +8680,13 @@ class LoggerOf(T, size_t bufferSize = 16) : SynchronizableObject {
 						logger.condition.notifyAll();
 					}
 					// mark us as complete for other listeners waiting as well
-					event.set();
+					static if (__traits(hasMember, event, "setIfInitialized")) {
+						// Upstream compatibility, see <https://github.com/dlang/dmd/pull/15800>.
+						event.setIfInitialized();
+					} else {
+						// Old D runtime compatibility
+						event.set();
+					}
 				}
 				+/
 
@@ -8731,7 +8737,13 @@ class LoggerOf(T, size_t bufferSize = 16) : SynchronizableObject {
 					logger.condition.notifyAll();
 				}
 				// mark us as complete for other listeners waiting as well
-				event.set();
+				static if (__traits(hasMember, event, "setIfInitialized")) {
+					// Upstream compatibility, see <https://github.com/dlang/dmd/pull/15800>.
+					event.setIfInitialized();
+				} else {
+					// Old D runtime compatibility
+					event.set();
+				}
 
 			}
 
