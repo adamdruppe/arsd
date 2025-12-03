@@ -119,21 +119,24 @@ version(ArsdUseCustomRuntime)
 }
 else
 {
-	version(D_OpenD) {
-		version(OSX)
-			version=OSXCocoa;
-		version(iOS)
-			version=OSXCocoa;
-	} else version(DigitalMars) {
-		version(OSX)
-			version=OSXCocoa;
-		version(iOS)
-			version=OSXCocoa;
-	} else version(LDC) {
-		version(OSX)
-			version=OSXCocoa;
-		version(iOS)
-			version=OSXCocoa;
+	version(ArsdNoCocoa) {
+	} else {
+		version(D_OpenD) {
+			version(OSX)
+				version=OSXCocoa;
+			version(iOS)
+				version=OSXCocoa;
+		} else version(DigitalMars) {
+			version(OSX)
+				version=OSXCocoa;
+			version(iOS)
+				version=OSXCocoa;
+		} else version(LDC) {
+			version(OSX)
+				version=OSXCocoa;
+			version(iOS)
+				version=OSXCocoa;
+		}
 	}
 
 	version = HasFile;
@@ -145,7 +148,7 @@ else
 		version = HasTimer;
 	version(linux)
 		version = HasTimer;
-	version(OSXCocoa)
+	version(OSX)
 		version = HasTimer;
 }
 
@@ -236,7 +239,11 @@ version(Emscripten)  {
 	// THIS FILE DOESN'T ACTUALLY EXIST, WE NEED TO MAKE IT
 	import core.sys.openbsd.sys.event;
 } else version(OSX) {
-	version=Arsd_core_dispatch;
+	version(ArsdNoCocoa) {
+		version=Arsd_core_kqueue;
+	} else {
+		version=Arsd_core_dispatch;
+	}
 
 	import core.sys.darwin.sys.event;
 } else version(iOS) {
@@ -5427,6 +5434,8 @@ class Timer {
 
 			auto el = getThisThreadEventLoop(EventLoopType.Ui);
 			unregisterToken = el.addCallbackOnFdReadable(fd, new CallbackHelper(&trigger));
+		} else version(Arsd_core_kqueue) {
+			this.ident = ++identTicker;
 		} else throw new NotYetImplementedException();
 		// FIXME: freebsd 12 has timer_fd and netbsd 10 too
 	}
@@ -5462,6 +5471,17 @@ class Timer {
 			if(timerfd_settime(fd, 0, &value, null) == -1) {
 				throw new ErrnoApiException("couldn't change pulse timer", errno);
 			}
+		} else version(Arsd_core_kqueue) {
+			// FIXME
+
+			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+
+			kevent_t ev;
+
+			cbh = new CallbackHelper(&trigger);
+
+			EV_SET(&ev, this.ident, EVFILT_TIMER, EV_ADD | EV_ENABLE | EV_CLEAR | (repeats ? 0 : EV_ONESHOT), NOTE_USECONDS, 1000 * intervalInMilliseconds, cast(void*) cbh);
+			ErrnoEnforce!kevent(el.kqueuefd, &ev, 1, null, 0, null);
 		} else {
 			throw new NotYetImplementedException();
 		}
@@ -5524,7 +5544,7 @@ class Timer {
 		}
 	}
 
-	version(Windows) {} else {
+	version(Windows) {} else version(Arsd_core_kqueue) {} else {
 		ICoreEventLoop.UnregisterToken unregisterToken;
 	}
 
@@ -5539,26 +5559,24 @@ class Timer {
 	void destroy() {
 		version(Windows) {
 			cbh.release();
-		} else {
-			unregisterToken.unregister();
-		}
-
-		version(Windows) {
 			staticDestroy(handle);
 			handle = null;
 		} else version(linux) {
+			unregisterToken.unregister();
 			staticDestroy(fd);
 			fd = -1;
+		} else version(Arsd_core_kqueue) {
 		} else throw new NotYetImplementedException();
 	}
 
 	~this() {
-		version(Windows) {} else
+		version(Windows) {
+			if(handle)
+				cleanupQueue.queue!staticDestroy(handle);
+		} else version(linux) {
 			cleanupQueue.queue!unregister(unregisterToken);
-		version(Windows) { if(handle)
-			cleanupQueue.queue!staticDestroy(handle);
-		} else version(linux) { if(fd != -1)
-			cleanupQueue.queue!staticDestroy(fd);
+			if(fd != -1)
+				cleanupQueue.queue!staticDestroy(fd);
 		}
 	}
 
@@ -5621,6 +5639,7 @@ class Timer {
 			if(this.lastEventLoopRoundTriggered == eventLoopRound)
 				return; // never try to actually run faster than the event loop
 			lastEventLoopRoundTriggered = eventLoopRound;
+		} else version(Arsd_core_kqueue) {
 		} else throw new NotYetImplementedException();
 
 		if(onPulse)
@@ -5642,6 +5661,10 @@ class Timer {
 		CallbackHelper cbh;
 	} else version(linux) {
 		int fd = -1;
+	} else version(Arsd_core_kqueue) {
+		int ident;
+		static int identTicker;
+		CallbackHelper cbh;
 	} else static if(UseCocoa) {
 	} else static assert(0, "timer not supported");
 }

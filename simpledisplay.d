@@ -1164,15 +1164,17 @@ unittest {
 
 import arsd.core;
 
-version(D_OpenD) {
-	version(OSX)
-		version=OSXCocoa;
-	version(iOS)
-		version=OSXCocoa;
+version(ArsdNoCocoa) {
 } else {
-	version(OSX) version(DigitalMars) version=OSXCocoa;
+	version(D_OpenD) {
+		version(OSX)
+			version=OSXCocoa;
+		version(iOS)
+			version=OSXCocoa;
+	} else {
+		version(OSX) version(DigitalMars) version=OSXCocoa;
+	}
 }
-
 
 
 version(Emscripten) {
@@ -4415,6 +4417,10 @@ struct EventLoopImpl {
 
 		void delegate(int) signalHandler;
 	}
+	else
+	version(Posix) {
+		static import unix = core.sys.posix.unistd;
+	}
 
 	version(X11) {
 		int pulseFd = -1;
@@ -4624,7 +4630,7 @@ struct EventLoopImpl {
 	ref int customEventFDRead() { return SimpleWindow.customEventFDRead; }
 	version(Posix)
 	ref int customEventFDWrite() { return SimpleWindow.customEventFDWrite; }
-	version(linux)
+	version(Posix)
 	ref int customSignalFD() { return SimpleWindow.customSignalFD; }
 	version(Windows)
 	ref auto customEventH() { return SimpleWindow.customEventH; }
