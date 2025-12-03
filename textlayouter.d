@@ -1503,6 +1503,10 @@ class TextLayouter {
 
 						auto bb = boundingBoxOfGlyph(segmentIndex, selection.focus);
 
+						// the y is added elsewhere already. i think.
+						bb.left += segment.upperLeft.x;
+						bb.right += segment.upperLeft.x;
+
 						bb.top += castFnumToCnum(glyphStyle.font.ascent);
 						bb.bottom -= castFnumToCnum(glyphStyle.font.descent);
 
