@@ -5017,6 +5017,8 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 		} else if (range.sourceClosed)
 			range.source.close();
 
+		range.consume(data.length);
+
 		return data;
 	}
 
@@ -9962,7 +9964,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 
 			return internalHandlerWithObject(obj, remainingUrl, cgi, presenter);
 		} catch(Throwable t) {
-			switch(cgi.request("format", "html")) {
+			switch(cgi.request("format", cgi.isCalledWithCommandLineArguments ? "json" : "html")) {
 				case "html":
 					static void dummy() {}
 					presenter.presentExceptionAsHtml(cgi, t, null);
@@ -10173,7 +10175,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 					if(callFunction)
 				+/
 
-					auto format = cgi.request("format", defaultFormat!overload());
+					auto format = cgi.request("format", cgi.isCalledWithCommandLineArguments ? "json" : defaultFormat!overload());
 					auto wantsFormFormat = format.startsWith("form-");
 
 					if(wantsFormFormat || (automaticForm && cgi.requestMethod == Cgi.RequestMethod.GET)) {
