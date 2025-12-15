@@ -111,6 +111,13 @@ struct ScopeBuffer(T, size_t maxSize, bool allowGrowth = false) {
 	size_t length;
 	bool isNull = true;
 	T[] opSlice() { return isNull ? null : buffer[0 .. length]; }
+
+	static if(is(T == char))
+	void appendIntAsString(int n) {
+		import std.conv;
+		this ~= to!string(n);
+	}
+
 	void opOpAssign(string op : "~")(in T rhs) {
 		if(buffer is null) buffer = bufferInternal[];
 		isNull = false;
@@ -327,6 +334,7 @@ class TerminalEmulator {
 		if(termY >= screenHeight)
 			termY = screenHeight - 1;
 
+		/+
 		version(Windows) {
 			// I'm swapping these because my laptop doesn't have a middle button,
 			// and putty swaps them too by default so whatevs.
@@ -335,6 +343,7 @@ class TerminalEmulator {
 			else if(button == MouseButton.middle)
 				button = MouseButton.right;
 		}
+		+/
 
 		int baseEventCode() {
 			int b;
@@ -359,6 +368,9 @@ class TerminalEmulator {
 				b |= 16;
 			if(alt) // sending alt as meta
 				b |= 8;
+
+			if(!sgrMouseMode)
+				b |= 32; // it just always does this
 
 			return b;
 		}
@@ -411,14 +423,9 @@ class TerminalEmulator {
 			dragging = false;
 			if(mouseButtonReleaseTracking) {
 				int b = baseEventCode;
-				b |= 3; // always send none / button released
-				ScopeBuffer!(char, 16) buffer;
-				buffer ~= "\033[M";
-				buffer ~= cast(char) (b | 32);
-				addMouseCoordinates(buffer, termX, termY);
-				//buffer ~= cast(char) (termX+1 + 32);
-				//buffer ~= cast(char) (termY+1 + 32);
-				sendToApplication(buffer[]);
+				if(!sgrMouseMode)
+					b |= 3; // always send none / button released
+				sendMouseEvent(b, termX, termY, true);
 			}
 		}
 
@@ -428,13 +435,7 @@ class TerminalEmulator {
 				lastDragX = termX;
 				if(mouseMotionTracking || (mouseButtonMotionTracking && button)) {
 					int b = baseEventCode;
-					ScopeBuffer!(char, 16) buffer;
-					buffer ~= "\033[M";
-					buffer ~= cast(char) ((b | 32) + 32);
-					addMouseCoordinates(buffer, termX, termY);
-					//buffer ~= cast(char) (termX+1 + 32);
-					//buffer ~= cast(char) (termY+1 + 32);
-					sendToApplication(buffer[]);
+					sendMouseEvent(b + 32, termX, termY);
 				}
 
 				if(dragging) {
@@ -511,18 +512,9 @@ class TerminalEmulator {
 
 				int b = baseEventCode;
 
-				int x = termX;
-				int y = termY;
-				x++; y++; // applications expect it to be one-based
-
-				ScopeBuffer!(char, 16) buffer;
-				buffer ~= "\033[M";
-				buffer ~= cast(char) (b | 32);
-				addMouseCoordinates(buffer, termX, termY);
-				//buffer ~= cast(char) (x + 32);
-				//buffer ~= cast(char) (y + 32);
-
-				sendToApplication(buffer[]);
+				sendMouseEvent(b, termX, termY);
+					//buffer ~= cast(char) (x + 32);
+					//buffer ~= cast(char) (y + 32);
 			} else {
 				do_default_behavior:
 				if(button == MouseButton.middle) {
@@ -623,24 +615,42 @@ class TerminalEmulator {
 		return false;
 	}
 
-	private void addMouseCoordinates(ref ScopeBuffer!(char, 16) buffer, int x, int y) {
-		// 1-based stuff and 32 is the base value
-		x += 1 + 32;
-		y += 1 + 32;
+	private void sendMouseEvent(int b, int x, int y, bool isRelease = false) {
 
-		if(utf8MouseMode) {
-			import std.utf;
-			char[4] str;
+		ScopeBuffer!(char, 16) buffer;
 
-			foreach(char ch; str[0 .. encode(str, x)])
-				buffer ~= ch;
-
-			foreach(char ch; str[0 .. encode(str, y)])
-				buffer ~= ch;
+		if(sgrMouseMode) {
+			buffer ~= "\033[<";
+			buffer.appendIntAsString(b);
+			buffer ~= ";";
+			buffer.appendIntAsString(x + 1);
+			buffer ~= ";";
+			buffer.appendIntAsString(y + 1);
+			buffer ~= isRelease ? "m" : "M";
 		} else {
-			buffer ~= cast(char) x;
-			buffer ~= cast(char) y;
+			buffer ~= "\033[M";
+			buffer ~= cast(char) b;
+
+			// 1-based stuff and 32 is the base value
+			x += 1 + 32;
+			y += 1 + 32;
+
+			if(utf8MouseMode) {
+				import std.utf;
+				char[4] str;
+
+				foreach(char ch; str[0 .. encode(str, x)])
+					buffer ~= ch;
+
+				foreach(char ch; str[0 .. encode(str, y)])
+					buffer ~= ch;
+			} else {
+				buffer ~= cast(char) x;
+				buffer ~= cast(char) y;
+			}
 		}
+
+		sendToApplication(buffer[]);
 	}
 
 	protected void returnToNormalScreen() {
@@ -1983,6 +1993,7 @@ class TerminalEmulator {
 		bool mouseButtonTracking;
 		private bool _mouseMotionTracking;
 		bool utf8MouseMode;
+		bool sgrMouseMode;
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
 		bool selectiveMouseTracking;
@@ -3223,7 +3234,10 @@ SGR (1006)
           The highlight tracking responses are also modified to an SGR-
           like format, using the same SGR-style scheme and button-encod-
           ings.
+
+	  Note that M is used for motion; m is only release
 								*/
+									sgrMouseMode = true;
 								break;
 								case 1014:
 									// ARSD extension: it is 1002 but selective, only
@@ -3300,6 +3314,7 @@ URXVT (1015)
 							break;
 							case 1006:
 								// turn off sgr mouse
+								sgrMouseMode = false;
 							break;
 							case 1015:
 								// turn off urxvt mouse
