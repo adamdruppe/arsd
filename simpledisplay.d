@@ -3611,6 +3611,27 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		handleNativeEvent_ = neh;
 	}
 
+	private void dispatchXInputEvent(InputDeviceEvent ide) @system {
+		if(auto aih = ide.deviceId in advancedInputHandlers) {
+			ide.deviceObject = aih.device;
+			aih.handler(ide);
+		}
+		if(auto aih = (cast(typeof(ide.deviceId)) 0) in advancedInputHandlers) {
+			ide.deviceObject = null;
+			aih.handler(ide);
+		}
+	}
+
+	private struct AdvancedInputHandler {
+		InputDevice device;
+		void delegate(InputDeviceEvent ide) handler;
+	}
+
+	private AdvancedInputHandler[typeof(InputDevice.deviceId)] advancedInputHandlers;
+	private void setAdvancedInputHandler(InputDevice id, void delegate(InputDeviceEvent ide) handler) {
+		advancedInputHandlers[id ? id.deviceId : (cast(typeof(InputDeviceEvent.deviceId)) 0)] = AdvancedInputHandler(id, handler);
+	}
+
 	version(Windows)
 	// compatibility shim with the old deprecated way
 	// in this one, if you return 0, it means you must return. otherwise the ret value is ignored.
@@ -3752,8 +3773,10 @@ public:
 	/// If `timeoutmsecs` is greater than zero, the event will be delayed for at least `timeoutmsecs` milliseconds.
 	/// if `replace` is `true`, replace all existing events typed `ET` with the new one (if `evt` is empty, remove 'em all)
 	/// Returns `true` if event was queued. Always returns `false` if `evt` is null.
-	bool postTimeout(ET:Object) (ET evt, uint timeoutmsecs, bool replace=false) {
+	bool postTimeout(ET:Object) (ET evt, uint timeoutmsecs, bool replace=false, bool replaceTime = true) {
 		if (this.closed) return false; // closed windows can't handle events
+
+		MonoTime storedHittime;
 
 		// remove all events of type `ET`
 		void removeAllET () {
@@ -3762,6 +3785,9 @@ public:
 			while (eidx < ec) {
 				if (eptr.doProcess) { ++eidx; ++eptr; continue; }
 				if (cast(ET)eptr.evt !is null) {
+					if(!replaceTime) {
+						storedHittime = eptr.hittime;
+					}
 					// i found her!
 					if (inCustomEventProcessor) {
 						// if we're in custom event processing loop, processor will clear it for us
@@ -3791,20 +3817,27 @@ public:
 		synchronized(this) {
 			if (replace) removeAllET();
 			if (eventQueueUsed == uint.max) return false; // just in case
+
+			auto nev = (replaceTime || storedHittime == MonoTime.zero) ? QueuedEvent(evt, timeoutmsecs) : QueuedEvent(evt, storedHittime);
+
 			if (eventQueueUsed < eventQueue.length) {
-				eventQueue[eventQueueUsed++] = QueuedEvent(evt, timeoutmsecs);
+				eventQueue[eventQueueUsed++] = nev;
 			} else {
 				if (eventQueue.capacity == eventQueue.length) {
 					// need to reallocate; do a trick to ensure that old array is cleared
 					auto oarr = eventQueue;
-					eventQueue ~= QueuedEvent(evt, timeoutmsecs);
+					if(replaceTime)
+						eventQueue ~= nev;
+					else {
+						eventQueue ~= nev;
+					}
 					// just in case, do yet another check
 					if (oarr.length != 0 && oarr.ptr !is eventQueue.ptr) foreach (ref e; oarr[0..eventQueueUsed]) e.evt = null;
 					import core.memory : GC;
 					if (eventQueue.ptr is GC.addrOf(eventQueue.ptr)) GC.setAttr(eventQueue.ptr, GC.BlkAttr.NO_INTERIOR);
 				} else {
 					auto optr = eventQueue.ptr;
-					eventQueue ~= QueuedEvent(evt, timeoutmsecs);
+					eventQueue ~= nev;
 					assert(eventQueue.ptr is optr);
 				}
 				++eventQueueUsed;
@@ -3871,6 +3904,12 @@ private:
 				timed = true;
 				hittime = MonoTime.currTime+toutmsecs.msecs;
 			}
+		}
+
+		this (Object aevt, MonoTime hittime) {
+			evt = aevt;
+			timed = true;
+			this.hittime = hittime;
 		}
 	}
 
@@ -4150,6 +4189,231 @@ else
 	Added Nov 5, 2021.
 +/
 __gshared SimpleWindow justCommunication = new SimpleWindow(NullWindow);
+
+/* Advanced input support { */
+
+/++
+	Returns input devices currently attached to the computer that can be used to advanced input event subscriptions.
+
+	On Windows, this generally means touch screens and pen tablets.
+
+	On X, this can be just about anything.
+
+	This may change in the future.
+
+
+	History:
+		Added December 1, 2025
++/
+InputDevice[] getInputDevices() {
+	version(Windows) {
+		POINTER_DEVICE_INFO[32] buffer;
+		uint count = cast(uint) buffer.length;
+		if(GetPointerDevices(&count, buffer.ptr)) {
+			InputDevice[] ret;
+			foreach(dev; buffer[0 .. count]) {
+				auto id = new InputDevice;
+				id.deviceId = dev.device;
+				id.name = makeUtf8StringFromWindowsString(dev.productString.ptr);
+				id.enabled = true;
+
+				// pointerDeviceType is useful
+
+				// FIXME: use more of it i guess
+
+				ret ~= id;
+			}
+			return ret;
+		} else {
+			throw new WindowsApiException("GetPointerDevices", GetLastError());
+		}
+	} else
+	static if(UsingSimpledisplayX11) {
+		xi_opcode(); // load XInput2
+
+		int cnt;
+		auto di = XIQueryDevice(XDisplayConnection.get, XIAllDevices, &cnt);
+		if(di is null)
+			return null;
+		scope(exit)
+			XIFreeDeviceInfo(di);
+
+		InputDevice[] ret;
+		foreach(dev; di[0 .. cnt]) {
+			auto id = new InputDevice;
+			id.deviceId = dev.deviceid;
+			id.name = stringz(dev.name).borrow.idup;
+			// use, attachment ?
+			id.enabled = dev.enabled != 0;
+
+			foreach(cls; dev.classes[0 .. dev.num_classes]) {
+				// FIXME: process these somehow...
+				switch(cls.type) {
+					case XIDeviceClass.XIKeyClass:
+						// has num keycodes but it isn't super accurate...
+						// writeln("\t", *cast(XIKeyClassInfo*) cls);
+						id.hasKeyClass = true;
+						break;
+					case XIDeviceClass.XIButtonClass:
+						// has num buttons but it isn't super accurate...
+						// writeln("\t", *cast(XIButtonClassInfo*) cls);
+						id.hasButtonClass = true;
+						break;
+					case XIDeviceClass.XIValuatorClass:
+						// writeln("\t", getAtomName((cast(XIValuatorClassInfo*) cls).label, XDisplayConnection.get), " ", *cast(XIValuatorClassInfo*) cls);
+						auto info = cast(XIValuatorClassInfo*) cls;
+						id.valuators ~= InputDevice.Valuator(info.label, info.min, info.max);
+						break;
+					case XIDeviceClass.XIScrollClass:
+						// FIXME anything else useful?
+						writeln(id.deviceId, ": ", id.name);
+						writeln("\t", *cast(XIScrollClassInfo*) cls);
+						id.hasScrollClass = true;
+						break;
+					case XIDeviceClass.XITouchClass:
+						// FIXME anything else useful?
+						writeln(id.deviceId, ": ", id.name);
+						writeln("\t", *cast(XITouchClassInfo*) cls);
+						id.hasTouchClass = true;
+						break;
+					case XIDeviceClass.XIGestureClass:
+						// FIXME what to do?
+						writeln(id.deviceId, ": ", id.name);
+						writeln("\t", *cast(XIGestureClassInfo*) cls);
+						break;
+					default:
+						// writeln("\t", cls.type);
+				}
+			}
+
+			ret ~= id;
+		}
+		return ret;
+	} else return null;
+}
+
+/// ditto
+class InputDevice {
+	private this() {}
+
+	static if(UsingSimpledisplayX11) {
+		int deviceId;
+	} else version(Windows) {
+		HANDLE deviceId;
+	}
+	string name;
+	bool enabled;
+
+	bool hasKeyClass;
+	bool hasButtonClass;
+	bool hasScrollClass;
+	bool hasTouchClass;
+
+	static if(UsingSimpledisplayX11) {
+		struct Valuator {
+			Atom label;
+			double min;
+			double max;
+		}
+
+		Valuator[] valuators;
+	}
+}
+
+/// ditto
+struct InputDeviceEvent {
+	SimpleWindow window;
+	InputDevice deviceObject;
+
+	int event;
+
+	static if(UsingSimpledisplayX11) {
+		int deviceId;
+	} else version(Windows) {
+		HANDLE deviceId;
+	}
+
+	int detail;
+	int flags;
+
+	double rootX;
+	double rootY;
+	double windowX;
+	double windowY;
+
+	ulong buttons;
+
+	double[16] valuators;
+
+	// parsed valuators
+	static if(UsingSimpledisplayX11) {
+		double relX() { return findValuator(GetAtom!"Rel X"(XDisplayConnection.get)); }
+		double relY() { return findValuator(GetAtom!"Rel Y"(XDisplayConnection.get)); }
+		double absX() { return findValuator(GetAtom!"Abs X"(XDisplayConnection.get)); }
+		double absY() { return findValuator(GetAtom!"Abs Y"(XDisplayConnection.get)); }
+		double pressure() { return findValuator(GetAtom!"Abs Pressure"(XDisplayConnection.get)); }
+		double tiltX() { return findValuator(GetAtom!"Abs Tilt X"(XDisplayConnection.get)); }
+		double tiltY() { return findValuator(GetAtom!"Abs Tilt Y"(XDisplayConnection.get)); }
+
+/+
+
+                "Rel Horiz Scroll",
+                "Rel Vert Scroll",
+                "Abs Wheel"
+
+                "Abs MT Position X",
+                "Abs MT Position Y",
++/
+
+		private double findValuator(Atom what) {
+			assert(deviceObject !is null);
+
+			foreach(idx, v; deviceObject.valuators) {
+				if(idx >= valuators.length)
+					break;
+				if(v.label == what)
+					return valuators[idx];
+			}
+			return double.nan;
+		}
+	} else {
+		double pressure = double.nan;
+		double tiltX = double.nan;
+		double tiltY = double.nan;
+	}
+
+	// parsed flags
+	// all 1 << 16
+	bool wasKeyRepeat; // only on key event
+	bool wasEmulatedPointer; // only on pointer event
+	bool wasTouchPendingEnd; // only on touch event
+
+	bool wasTouchEmulatingPointer; // 1 << 16
+}
+
+/// ditto
+void subscribeToInputEvents(SimpleWindow window, InputDevice device, void delegate(InputDeviceEvent ide) handler) {
+	static if(UsingSimpledisplayX11) {
+		XIEventMask mask = XIEventMask(device.deviceId);
+		with(XIEventType)
+			mask.set(
+				XI_ButtonPress, XI_ButtonRelease, XI_Motion,
+				XI_FocusIn, XI_FocusOut,
+				XI_Enter, XI_Leave,
+				XI_KeyPress, XI_KeyRelease,
+				// tbh the raw events are useful af too
+				XI_TouchBegin, XI_TouchUpdate, XI_TouchEnd
+			);
+
+		XISelectEvents(XDisplayConnection.get, window.window, &mask, 1);
+
+		window.setAdvancedInputHandler(device, handler);
+	} else {
+		window.setAdvancedInputHandler(null, handler);
+	}
+}
+
+/* } Advanced input support */
 
 /* Drag and drop support { */
 version(X11) {
@@ -4675,6 +4939,7 @@ struct EventLoopImpl {
 
 				static bool loopInitialized = false;
 				if(!loopInitialized) {
+					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? -1 : cast(int)wto); };
 					el.addDelegateOnLoopIteration(&doXNextEventVoid, 3);
 					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 
@@ -4953,6 +5218,7 @@ struct EventLoopImpl {
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
 				static bool loopInitialized = false;
 				if(!loopInitialized) {
+					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? INFINITE : cast(int)wto); };
 					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 					el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
 					loopInitialized = true;
@@ -5136,8 +5402,8 @@ class NotificationAreaIcon : CapableOfHandlingNativeEvent {
 								case 3: mb = MouseButton.right; break; // right
 								case 4: mb = MouseButton.wheelUp; break; // scroll up
 								case 5: mb = MouseButton.wheelDown; break; // scroll down
-								case 6: break; // scroll left...
-								case 7: break; // scroll right...
+								case 6: mb = MouseButton.wheelLeft; break; // scroll left...
+								case 7: mb = MouseButton.wheelRight; break; // scroll right...
 								case 8: mb = MouseButton.backButton; break;
 								case 9: mb = MouseButton.forwardButton; break;
 								default:
@@ -6622,8 +6888,8 @@ void setClipboardImage()(SimpleWindow clipboardOwner, MemoryImage img) {
 		}
 
 		auto handler = new X11SetSelectionHandler_Image(img);
-		setX11Selection!"PRIMARY"(clipboardOwner, handler);
 		setX11Selection!"CLIPBOARD"(clipboardOwner, handler);
+		setX11Selection!"PRIMARY"(clipboardOwner, handler);
 	} else version(OSXCocoa) {
 		throw new NotYetImplementedException();
 	} else version(Emscripten) {
@@ -6654,7 +6920,11 @@ version(X11) {
 
 	/// Platform-specific for X11 - gets atom names as a string.
 	string getAtomName(Atom atom, Display* display) {
+		if(atom == None)
+			return "None";
 		auto got = XGetAtomName(display, atom);
+		if(got is null)
+			return null;
 		scope(exit) XFree(got);
 		import core.stdc.string;
 		string s = got[0 .. strlen(got)].idup;
@@ -6854,7 +7124,7 @@ version(X11) {
 		else static if (atomName == "SECONDARY") Atom a = XA_SECONDARY;
 		else Atom a = GetAtom!atomName(display);
 
-		if(mightShortCircuitClipboard)
+		if(a == XA_PRIMARY && mightShortCircuitClipboard)
 		if(auto ptr = a in window.impl.setSelectionHandlers) {
 			// we already have it, don't even need to inform the X server
 			// sdpyPrintDebugString("short circuit in set");
@@ -6865,6 +7135,7 @@ version(X11) {
 		// we don't have it, tell X we want it
 		XSetSelectionOwner(display, a, window.impl.window, 0 /* CurrentTime */);
 		window.impl.setSelectionHandlers[a] = data;
+		if(a == XA_PRIMARY)
 		mightShortCircuitClipboard = true;
 	}
 
@@ -6970,7 +7241,7 @@ version(X11) {
 		else static if (atomName == "SECONDARY") Atom atom = XA_SECONDARY;
 		else Atom atom = GetAtom!atomName(display);
 
-		if(mightShortCircuitClipboard)
+		if(atom == XA_PRIMARY && mightShortCircuitClipboard)
 		if(auto ptr = atom in window.impl.setSelectionHandlers) {
 			if(auto txt = (cast(X11SetSelectionHandler_Text) *ptr)) {
 				// we already have it! short circuit everything
@@ -7531,6 +7802,8 @@ struct SyntheticInput {
 					input.mi.dwFlags = MOUSEEVENTF_WHEEL;
 					input.mi.mouseData = button == MouseButton.wheelUp ? 120 : -120;
 				break;
+				case MouseButton.wheelLeft: throw new NotYetImplementedException();
+				case MouseButton.wheelRight: throw new NotYetImplementedException();
 				case MouseButton.backButton: throw new NotYetImplementedException();
 				case MouseButton.forwardButton: throw new NotYetImplementedException();
 				default:
@@ -7548,6 +7821,8 @@ struct SyntheticInput {
 				case MouseButton.right: btn = 3; break;
 				case MouseButton.wheelUp: btn = 4; break;
 				case MouseButton.wheelDown: btn = 5; break;
+				case MouseButton.wheelLeft: btn = 6; break;
+				case MouseButton.wheelRight: btn = 7; break;
 				case MouseButton.backButton: btn = 8; break;
 				case MouseButton.forwardButton: btn = 9; break;
 				default:
@@ -8087,6 +8362,16 @@ struct MouseEvent {
 
 	version(X11)
 		private Time timestamp;
+
+	/++
+		Returns true if this is a mouse wheel/touchpad scroll event.
+
+		History:
+			Added December 21, 2025
+	+/
+	bool isMouseWheel() const {
+		return button != MouseButton.wheelLeft && button != MouseButton.wheelRight && button != MouseButton.wheelUp && button != MouseButton.wheelDown;
+	}
 
 	/// Returns a linear representation of mouse button,
 	/// for use with static arrays. Guaranteed to be >= 0 && <= 15
@@ -10953,6 +11238,7 @@ void runInGuiThreadAsync(void delegate() dg, void delegate(Exception) nothrow ha
 		if(!SimpleWindow.eventWakeUp())
 			throw new Error("runInGuiThread impossible; eventWakeUp failed");
 	} catch(Exception e) {
+		// try sdpyPrintDebugString(e.toString); catch(Exception wtf) {}
 		if(handleError)
 			handleError(e);
 	}
@@ -11279,8 +11565,10 @@ enum MouseButton : int {
 	middle = 4, ///
 	wheelUp = 8, ///
 	wheelDown = 16, ///
-	backButton = 32, /// often found on the thumb and used for back in browsers
-	forwardButton = 64, /// often found on the thumb and used for forward in browsers
+	wheelLeft = 32, ///
+	wheelRight = 64, ///
+	backButton = 128, /// often found on the thumb and used for back in browsers
+	forwardButton = 256, /// often found on the thumb and used for forward in browsers
 }
 
 /// Corresponds to the values found in MouseEvent.buttonLinear, being equal to `core.bitop.bsf(button) + 1`
@@ -11290,6 +11578,8 @@ enum MouseButtonLinear : ubyte {
 	middle, ///
 	wheelUp, ///
 	wheelDown, ///
+	wheelLeft, /// Added Dec 21, 2025
+	wheelRight, /// ditto
 	backButton, /// often found on the thumb and used for back in browsers
 	forwardButton, /// often found on the thumb and used for forward in browsers
 }
@@ -12942,6 +13232,96 @@ version(Windows) {
 					if(wind.handleKeyEvent)
 						wind.handleKeyEvent(ev);
 				break;
+				case 0x0249 /* WM_POINTERENTER */:
+				case 0x024A /* WM_POINTERLEAVE */:
+				case 0x0246 /* WM_POINTERDOWN */:
+				case 0x0247 /* WM_POINTERUP */:
+				case 0x0245 /* WM_POINTERUPDATE */:
+					//import std.conv; import arsd.core; writeln("update ", LOWORD(wParam), " ", to!string(HIWORD(wParam), 2), " ", cast(short) LOWORD(lParam), "x", cast(short) HIWORD(lParam));
+
+					auto pointerId = LOWORD(wParam);
+					auto flags = HIWORD(wParam);
+					auto x = cast(short) LOWORD(lParam);
+					auto y = cast(short) HIWORD(lParam);
+
+					void dispatchIde(InputDeviceEvent ide) {
+						ide.event = msg;
+						ide.rootX = x;
+						ide.rootY = y;
+						ide.buttons = 0;
+						ide.valuators[] = double.nan;
+
+						ide.window = wind;
+						wind.dispatchXInputEvent(ide);
+					}
+
+					POINTER_INPUT_TYPE pit;
+					if(GetPointerType(pointerId, &pit)) {
+						switch(pit) {
+							case POINTER_INPUT_TYPE.PT_TOUCH:
+								POINTER_TOUCH_INFO[16] buffer;
+								uint count = cast(uint) buffer.length;
+								if(GetPointerFrameTouchInfo(pointerId, &count, buffer.ptr)) {
+									auto frame = buffer[0 .. count];
+
+									foreach(f; frame) {
+										InputDeviceEvent ide;
+
+										// check f.pointerInfo.hwndTarget to translate these correctly...
+										ide.windowX = f.pointerInfo.ptPixelLocation.x;
+										ide.windowY = f.pointerInfo.ptPixelLocation.y;
+										ide.deviceId = f.pointerInfo.sourceDevice;
+										ide.detail = pointerId;
+										ide.pressure = f.pressure;
+
+										dispatchIde(ide);
+									}
+								} else {
+									throw new WindowsApiException("GetPointerFrameTouchInfo", GetLastError());
+								}
+							break;
+							case POINTER_INPUT_TYPE.PT_PEN:
+								POINTER_PEN_INFO[16] buffer;
+								uint count = cast(uint) buffer.length;
+								if(GetPointerFramePenInfo(pointerId, &count, buffer.ptr)) {
+									auto frame = buffer[0 .. count];
+
+									foreach(f; frame) {
+										InputDeviceEvent ide;
+
+										// check f.pointerInfo.hwndTarget to translate these correctly...
+										ide.windowX = f.pointerInfo.ptPixelLocation.x;
+										ide.windowY = f.pointerInfo.ptPixelLocation.y;
+										ide.deviceId = f.pointerInfo.sourceDevice;
+										ide.detail = pointerId;
+										ide.pressure = f.pressure;
+										ide.tiltX = f.tiltX;
+										ide.tiltY = f.tiltY;
+
+										dispatchIde(ide);
+									}
+								} else {
+									throw new WindowsApiException("GetPointerFramePenInfo", GetLastError());
+								}
+							break;
+							case POINTER_INPUT_TYPE.PT_MOUSE:
+							case POINTER_INPUT_TYPE.PT_TOUCHPAD:
+								// generic GetPointerInfo
+
+							break;
+							case POINTER_INPUT_TYPE.PT_POINTER:
+								// should never happen according to docs
+							default:
+						}
+					} else {
+						throw new WindowsApiException("GetPointerType", GetLastError());
+					}
+
+					//wind.dispatchXInputEvent
+
+				break;
+				case 0x024C /* WM_POINTERCAPTURECHANGED */:
+				break;
 				case 0x020a /*WM_MOUSEWHEEL*/:
 					// send click
 					mouse.type = cast(MouseEventType) 1;
@@ -12951,6 +13331,17 @@ version(Windows) {
 					// also send release
 					mouse.type = cast(MouseEventType) 2;
 					mouse.button = ((GET_WHEEL_DELTA_WPARAM(wParam) > 0) ? MouseButton.wheelUp : MouseButton.wheelDown);
+					mouseEvent(true, LOWORD(wParam));
+				break;
+				case 0x020E /* WM_MOUSEHWHEEL */:
+					// send click
+					mouse.type = cast(MouseEventType) 1;
+					mouse.button = ((GET_WHEEL_DELTA_WPARAM(wParam) < 0) ? MouseButton.wheelLeft : MouseButton.wheelRight);
+					mouseEvent(true, LOWORD(wParam));
+
+					// also send release
+					mouse.type = cast(MouseEventType) 2;
+					mouse.button = ((GET_WHEEL_DELTA_WPARAM(wParam) < 0) ? MouseButton.wheelLeft : MouseButton.wheelRight);
 					mouseEvent(true, LOWORD(wParam));
 				break;
 				case WM_MOUSEMOVE:
@@ -16769,8 +17160,8 @@ version(X11) {
 				case 3: mouse.button = MouseButton.right; break; // right
 				case 4: mouse.button = MouseButton.wheelUp; break; // scroll up
 				case 5: mouse.button = MouseButton.wheelDown; break; // scroll down
-				case 6: break; // idk
-				case 7: break; // idk
+				case 6: mouse.button = MouseButton.wheelLeft; break; // scroll left
+				case 7: mouse.button = MouseButton.wheelRight; break; // scroll right
 				case 8: mouse.button = MouseButton.backButton; break;
 				case 9: mouse.button = MouseButton.forwardButton; break;
 				default:
@@ -16792,6 +17183,70 @@ version(X11) {
 			}
 			version(with_eventloop)
 				send(mouse);
+		  break;
+
+		  case EventType.GenericEvent:
+			import arsd.core;
+
+			auto cookie = &e.xcookie;
+			if(XGetEventData(XDisplayConnection.get, cookie)) {
+				scope(exit)
+					XFreeEventData(XDisplayConnection.get, cookie);
+
+				// should only happen if it was already loaded since otherwise we wouldn't have subscribed to the events
+				if(xi2.loadAttempted && cookie.extension == xi_opcode) {
+					// if(cookie.evtype == XIEventType.XI_Motion)
+
+					auto deviceEvent = cast(XIDeviceEvent*) cookie.data;
+
+					static void interpretXI2MaskThing(ubyte* mask, int mask_len, scope void delegate(int idx, bool value) inspector) {
+						foreach(idx, by; mask[0 .. mask_len]) {
+							foreach(bitIdx; 0 .. 8) {
+								inspector(cast(int) (idx * 8 + bitIdx), (by & (1 << bitIdx)) ? true : false);
+							}
+						}
+					}
+
+					InputDeviceEvent ide;
+
+					ide.event = cookie.evtype;
+					ide.deviceId = deviceEvent.deviceid;
+					// deviceEvent.sourceid is the physical device an event came from
+
+					// for a touchscreen, detail is the touch id
+					ide.detail = deviceEvent.detail;
+					ide.flags = deviceEvent.flags;
+					ide.rootX = deviceEvent.root_x;
+					ide.rootY = deviceEvent.root_y;
+					ide.windowX = deviceEvent.event_x;
+					ide.windowY = deviceEvent.event_y;
+					ide.buttons = 0;
+					ide.valuators[] = double.nan;
+
+					interpretXI2MaskThing(deviceEvent.buttons.mask, deviceEvent.buttons.mask_len, (idx, value) {
+						if(idx < 64) {
+							if(value)
+								ide.buttons |= 1 << idx;
+
+						}
+					});
+
+					auto values = deviceEvent.valuators.values;
+					interpretXI2MaskThing(deviceEvent.valuators.mask, deviceEvent.valuators.mask_len, (idx, value) {
+						if(value && idx < ide.valuators.length) {
+							ide.valuators[idx] = *values;
+							values++;
+						}
+					});
+
+					if(auto win = deviceEvent.event in SimpleWindow.nativeMapping) {
+						ide.window = *win;
+						XUnlockDisplay(display);
+						scope(exit) XLockDisplay(display);
+						(*win).dispatchXInputEvent(ide);
+					}
+				}
+			}
 		  break;
 
 		  case EventType.KeyPress:
@@ -17244,6 +17699,9 @@ extern(C) nothrow @nogc {
 
 	XIOErrorHandler XSetIOErrorHandler (XIOErrorHandler handler);
 
+	Bool XGetEventData(Display* dpy, XGenericEventCookie* cookie);
+	void XFreeEventData(Display* dpy, XGenericEventCookie* cookie);
+
 }
 }
 
@@ -17302,6 +17760,317 @@ shared static this() {
 	xext.loadDynamicLibrary();
 }
 
+// See WM_POINTERDOWN and friends for Windows
+interface XI2 { extern(C) nothrow @nogc:
+	Status XIQueryVersion(Display*, int*, int*);
+	XIDeviceInfo* XIQueryDevice(Display*, int deviceId, int* ndev_return);
+	void XIFreeDeviceInfo(XIDeviceInfo* info);
+	int XISelectEvents(Display* dpy, Window win, XIEventMask* mask, int num_masks);
+
+	Status XISetFocus(Display* dpy, int deviceid, Window focus, Time time);
+	Status XIGetFocus(Display* dpy, int deviceid, Window *focus_return);
+
+	Status XIGrabDevice(
+	     Display*           dpy,
+	     int                deviceid,
+	     Window             grab_window,
+	     Time               time,
+	     Cursor             cursor,
+	     int                grab_mode,
+	     int                paired_device_mode,
+	     Bool               owner_events,
+	     XIEventMask        *mask
+	);
+
+	Status XIUngrabDevice(Display* dpy, int deviceid, Time time);
+
+	// FIXME: i might want the ability to float a device and maybe reattach it
+	// and there's even more in there
+	// see /usr/include/X11/extensions/XInput2.h and /usr/include/X11/extensions/XI2.h
+}
+__gshared bool xi2SuccessfullyLoaded = true;
+mixin DynamicLoad!(XI2, "Xi", 6, xi2SuccessfullyLoaded) xi2;
+
+int xi_opcode() @system {
+	__gshared int code;
+	__gshared int status;
+	// FIXME: disconnect and reconnect
+
+	if(code && status == 3)
+		return code;
+	if(status) {
+		throw new Exception("XInput failed previously");
+	}
+
+	if(!xi2.loadAttempted) {
+		xi2.loadDynamicLibrary();
+	}
+	if(!xi2SuccessfullyLoaded) {
+		throw new Exception("XInput2 library load failure");
+	}
+
+	auto dpy = XDisplayConnection.get;
+
+	int ev, err;
+	if(!XQueryExtension(dpy, "XInputExtension", &code, &ev, &err)) {
+		status = 1;
+		throw new Exception("XInputExtension not supported by server");
+	}
+
+	int major = 2;
+	int minor = 4;
+
+	if(XIQueryVersion(dpy, &major, &minor) != Success) {
+		status = 2;
+		throw new Exception("XInput2 not supported by server");
+	}
+
+	status = 3;
+
+	return code;
+}
+
+void XISetMask(ubyte[] mask, int event) {
+	mask[event >> 3] |= (1 << (event & 7));
+}
+
+int XIMaskLen(int event) {
+	return (event >> 3) + 1;
+}
+
+struct XIEventMask {
+	int deviceid;
+	int mask_len;
+	ubyte* mask_ptr;
+
+	// my extensions
+	ubyte[XIMaskLen(XIEventType.max)] buffer;
+	this(int deviceid) {
+		this.deviceid = deviceid;
+		this.mask_len = cast(int) buffer.length;
+		this.mask_ptr = buffer.ptr;
+	}
+
+	void set(XIEventType[] val...) {
+		foreach(item; val)
+			XISetMask(buffer[], item);
+	}
+}
+
+/+
+// this can be sent for logical devices almost randomly just as the user switches which physical device they use...
+struct XIDeviceChangedEvent {
+    int           type;         /* GenericEvent */
+    unsigned long serial;       /* # of last request processed by server */
+    Bool          send_event;   /* true if this came from a SendEvent request */
+    Display       *display;     /* Display the event was read from */
+    int           extension;    /* XI extension offset */
+    int           evtype;       /* XI_DeviceChanged */
+    Time          time;
+    int           deviceid;     /* id of the device that changed */
+    int           sourceid;     /* Source for the new classes. */
+    int           reason;       /* Reason for the change */
+    int           num_classes;
+    XIAnyClassInfo **classes; /* same as in XIDeviceInfo */
+}
++/
+
+struct XIDeviceEvent {
+    int           type;         /* GenericEvent */
+    arch_ulong serial;       /* # of last request processed by server */
+    Bool          send_event;   /* true if this came from a SendEvent request */
+    Display       *display;     /* Display the event was read from */
+    int           extension;    /* XI extension offset */
+    XIEventType   evtype;
+    Time          time;
+    int           deviceid;
+    int           sourceid;
+    int           detail;
+    Window        root;
+    Window        event;
+    Window        child;
+    double        root_x;
+    double        root_y;
+    double        event_x;
+    double        event_y;
+    int           flags;
+    XIButtonState       buttons;
+    XIValuatorState     valuators;
+    XIModifierState     mods;
+    XIGroupState        group;
+}
+
+struct XIModifierState {
+    int    base;
+    int    latched;
+    int    locked;
+    int    effective;
+}
+
+alias XIGroupState = XIModifierState;
+
+enum XIAllDevices = 0;
+struct XIDeviceInfo {
+	int deviceid;
+	char* name;
+	int use;
+	int attachment;
+	Bool enabled;
+	int num_classes;
+	XIAnyClassInfo **classes;
+}
+// device classes
+enum XIDeviceClass : int {
+	XIKeyClass       = 0,
+	XIButtonClass    = 1,
+	XIValuatorClass  = 2,
+	XIScrollClass    = 3,
+	XITouchClass     = 8,
+	XIGestureClass   = 9,
+}
+
+enum XIDeviceType : int {
+	XIMasterPointer  = 1,
+	XIMasterKeyboard = 2,
+	XISlavePointer   = 3,
+	XISlaveKeyboard  = 4,
+	XIFloatingSlave  = 5,
+}
+
+enum XIValuatorMode : int {
+	XIModeRelative   = 0,
+	XIModeAbsolute   = 1,
+}
+
+enum XIScrollType : int {
+	XIScrollTypeVertical = 1,
+	XIScrollTypeHorizontal = 2,
+}
+
+enum XIEventType : int {
+	XI_DeviceChanged               = 1,
+	XI_KeyPress                    = 2,
+	XI_KeyRelease                  = 3,
+	XI_ButtonPress                 = 4,
+	XI_ButtonRelease               = 5,
+	XI_Motion                      = 6,
+	XI_Enter                       = 7,
+	XI_Leave                       = 8,
+	XI_FocusIn                     = 9,
+	XI_FocusOut                    = 10,
+	XI_HierarchyChanged            = 11,
+	XI_PropertyEvent               = 12,
+	XI_RawKeyPress                 = 13,
+	XI_RawKeyRelease               = 14,
+	XI_RawButtonPress              = 15,
+	XI_RawButtonRelease            = 16,
+	XI_RawMotion                   = 17,
+	XI_TouchBegin                  = 18, /* XI 2.2 */
+	XI_TouchUpdate                 = 19,
+	XI_TouchEnd                    = 20,
+	XI_TouchOwnership              = 21,
+	XI_RawTouchBegin               = 22,
+	XI_RawTouchUpdate              = 23,
+	XI_RawTouchEnd                 = 24,
+	XI_BarrierHit                  = 25, /* XI 2.3 */
+	XI_BarrierLeave                = 26,
+	XI_GesturePinchBegin           = 27, /* XI 2.4 */
+	XI_GesturePinchUpdate          = 28,
+	XI_GesturePinchEnd             = 29,
+	XI_GestureSwipeBegin           = 30,
+	XI_GestureSwipeUpdate          = 31,
+	XI_GestureSwipeEnd             = 32,
+}
+
+enum XIEventMaskValues : int {
+	XI_DeviceChangedMask           = (1 << XIEventType.XI_DeviceChanged),
+	XI_KeyPressMask                = (1 << XIEventType.XI_KeyPress),
+	XI_KeyReleaseMask              = (1 << XIEventType.XI_KeyRelease),
+	XI_ButtonPressMask             = (1 << XIEventType.XI_ButtonPress),
+	XI_ButtonReleaseMask           = (1 << XIEventType.XI_ButtonRelease),
+	XI_MotionMask                  = (1 << XIEventType.XI_Motion),
+	XI_EnterMask                   = (1 << XIEventType.XI_Enter),
+	XI_LeaveMask                   = (1 << XIEventType.XI_Leave),
+	XI_FocusInMask                 = (1 << XIEventType.XI_FocusIn),
+	XI_FocusOutMask                = (1 << XIEventType.XI_FocusOut),
+	XI_HierarchyChangedMask        = (1 << XIEventType.XI_HierarchyChanged),
+	XI_PropertyEventMask           = (1 << XIEventType.XI_PropertyEvent),
+	XI_RawKeyPressMask             = (1 << XIEventType.XI_RawKeyPress),
+	XI_RawKeyReleaseMask           = (1 << XIEventType.XI_RawKeyRelease),
+	XI_RawButtonPressMask          = (1 << XIEventType.XI_RawButtonPress),
+	XI_RawButtonReleaseMask        = (1 << XIEventType.XI_RawButtonRelease),
+	XI_RawMotionMask               = (1 << XIEventType.XI_RawMotion),
+	XI_TouchBeginMask              = (1 << XIEventType.XI_TouchBegin),
+	XI_TouchEndMask                = (1 << XIEventType.XI_TouchEnd),
+	XI_TouchOwnershipChangedMask   = (1 << XIEventType.XI_TouchOwnership),
+	XI_TouchUpdateMask             = (1 << XIEventType.XI_TouchUpdate),
+	XI_RawTouchBeginMask           = (1 << XIEventType.XI_RawTouchBegin),
+	XI_RawTouchEndMask             = (1 << XIEventType.XI_RawTouchEnd),
+	XI_RawTouchUpdateMask          = (1 << XIEventType.XI_RawTouchUpdate),
+	XI_BarrierHitMask              = (1 << XIEventType.XI_BarrierHit),
+	XI_BarrierLeaveMask            = (1 << XIEventType.XI_BarrierLeave),
+}
+
+struct XIAnyClassInfo {
+	XIDeviceClass type;
+	int sourceid;
+}
+struct XIKeyClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+	int num_keycodes;
+	int* keycodes;
+}
+struct XIButtonState {
+	int mask_len;
+	ubyte* mask;
+}
+
+// https://who-t.blogspot.com/2009/07/xi2-recipes-part-4.html
+struct XIValuatorState {
+	int mask_len;
+	ubyte* mask;
+	double* values;
+}
+struct XIButtonClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+	int num_buttons;
+	Atom* labels;
+	XIButtonState state;
+}
+struct XIValuatorClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+
+	int number;
+	Atom label;
+	double min;
+	double max;
+	double value;
+	int resolution;
+	int mode;
+}
+struct XIScrollClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+
+	int number;
+	int scroll_type;
+	double increment;
+	int flags;
+}
+struct XITouchClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+	int mode;
+	int num_touches;
+}
+struct XIGestureClassInfo {
+	XIAnyClassInfo any;
+	alias any this;
+	int num_touches;
+}
 
 extern(C) nothrow @nogc {
 
@@ -17913,7 +18682,8 @@ enum EventType:int
 	ColormapNotify		=32,
 	ClientMessage		=33,
 	MappingNotify		=34,
-	LASTEvent			=35	/* must be bigger than any event # */
+	GenericEvent            = 35,
+	LASTEvent			=36	/* must be bigger than any event # */
 }
 /* generated on EnterWindow and FocusIn  when KeyMapState selected */
 struct XKeymapEvent
@@ -18261,9 +19031,29 @@ union XEvent{
 	XMappingEvent xmapping;
 	XErrorEvent xerror;
 	XKeymapEvent xkeymap;
+	XGenericEvent xgeneric;
+	XGenericEventCookie xcookie;
 	arch_ulong[24] pad;
 }
+struct XGenericEvent {
+	int            type;
+	arch_ulong  serial;
+	Bool           send_event;
+	Display        *display;
+	int            extension;
+	int            evtype;
+}
 
+struct XGenericEventCookie {
+	int            type;
+	arch_ulong  serial;
+	Bool           send_event;
+	Display        *display;
+	int            extension;
+	int            evtype;
+	uint   cookie;
+	void           *data;
+}
 
 	struct Display {
 		XExtData *ext_data;	/* hook for extension to hang data */
@@ -22470,3 +23260,120 @@ private int minInternal(int a, int b) {
 }
 
 private alias scriptable = arsd_jsvar_compatible;
+
+
+version(Windows) {
+	enum POINTER_FLAGS : DWORD {
+		LOL
+	}
+
+	enum POINTER_INPUT_TYPE {
+		PT_POINTER = 1,
+		PT_TOUCH = 2,
+		PT_PEN = 3,
+		PT_MOUSE = 4,
+		PT_TOUCHPAD = 5,
+	}
+
+	enum POINTER_BUTTON_CHANGE_TYPE {
+		POINTER_CHANGE_NONE,
+		POINTER_CHANGE_FIRSTBUTTON_DOWN,
+		POINTER_CHANGE_FIRSTBUTTON_UP,
+		POINTER_CHANGE_SECONDBUTTON_DOWN,
+		POINTER_CHANGE_SECONDBUTTON_UP,
+		POINTER_CHANGE_THIRDBUTTON_DOWN,
+		POINTER_CHANGE_THIRDBUTTON_UP,
+		POINTER_CHANGE_FOURTHBUTTON_DOWN,
+		POINTER_CHANGE_FOURTHBUTTON_UP,
+		POINTER_CHANGE_FIFTHBUTTON_DOWN,
+		POINTER_CHANGE_FIFTHBUTTON_UP
+	}
+
+	struct POINTER_INFO {
+		POINTER_INPUT_TYPE         pointerType;
+		UINT32                     pointerId;
+		UINT32                     frameId;
+		POINTER_FLAGS              pointerFlags;
+		HANDLE                     sourceDevice;
+		HWND                       hwndTarget;
+		POINT                      ptPixelLocation;
+		POINT                      ptHimetricLocation;
+		POINT                      ptPixelLocationRaw;
+		POINT                      ptHimetricLocationRaw;
+		DWORD                      dwTime;
+		UINT32                     historyCount;
+		INT32                      InputData;
+		DWORD                      dwKeyStates;
+		UINT64                     PerformanceCount;
+		POINTER_BUTTON_CHANGE_TYPE ButtonChangeType;
+	}
+
+	enum PEN_FLAGS : DWORD {
+		PEN_FLAG_NONE = 0,
+		PEN_FLAG_BARREL = 1,
+		PEN_FLAG_INVERTED = 2,
+		PEN_FLAG_ERASER = 4
+	}
+	enum PEN_MASK : DWORD {
+		PEN_MASK_NONE = 0,
+		PEN_MASK_PRESSURE = 1,
+		PEN_MASK_ROTATION = 2,
+		PEN_MASK_TILT_X = 4,
+		PEN_MASK_TILT_Y = 8,
+	}
+	struct POINTER_PEN_INFO {
+		POINTER_INFO pointerInfo;
+		PEN_FLAGS    penFlags;
+		PEN_MASK     penMask;
+		UINT32       pressure;
+		UINT32       rotation;
+		INT32        tiltX;
+		INT32        tiltY;
+	}
+
+	enum TOUCH_FLAGS : DWORD {
+		none
+	}
+
+	enum TOUCH_MASK : DWORD {
+		TOUCH_MASK_NONE = 0,
+		TOUCH_MASK_CONTACTAREA = 1,
+		TOUCH_MASK_ORIENTATION = 2,
+		TOUCH_MASK_PRESSURE = 4,
+	}
+
+	struct POINTER_TOUCH_INFO {
+		POINTER_INFO pointerInfo;
+		TOUCH_FLAGS  touchFlags;
+		TOUCH_MASK   touchMask;
+		RECT         rcContact;
+		RECT         rcContactRaw;
+		UINT32       orientation;
+		UINT32       pressure;
+	}
+
+	enum POINTER_DEVICE_TYPE : DWORD {
+		POINTER_DEVICE_TYPE_INTEGRATED_PEN = 0x00000001,
+		POINTER_DEVICE_TYPE_EXTERNAL_PEN = 0x00000002,
+		POINTER_DEVICE_TYPE_TOUCH = 0x00000003,
+		POINTER_DEVICE_TYPE_TOUCH_PAD = 0x00000004,
+	}
+
+	struct POINTER_DEVICE_INFO {
+		DWORD               displayOrientation;
+		HANDLE              device;
+		POINTER_DEVICE_TYPE pointerDeviceType;
+		HMONITOR            monitor;
+		ULONG               startingCursorId;
+		USHORT              maxActiveContacts;
+		WCHAR[520]          productString;
+	}
+
+	extern(Windows) {
+		BOOL GetPointerType(UINT32 pointerId, POINTER_INPUT_TYPE* type);
+		BOOL GetPointerInfo(UINT32 pointerId, POINTER_INFO* info);
+		BOOL GetPointerFramePenInfo(UINT32 pointerId, UINT32* pointerCount, POINTER_PEN_INFO *penInfo);
+		BOOL GetPointerFrameTouchInfo(UINT32 pointerId, UINT32* pointerCount, POINTER_TOUCH_INFO *touchInfo);
+		BOOL GetPointerDevices(UINT32* deviceCount, POINTER_DEVICE_INFO* pointerDevices);
+	}
+}

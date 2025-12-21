@@ -3177,6 +3177,10 @@ class FreeEntrySelection : ComboboxBase {
 		else static assert(0);
 	}
 
+	override string getSelectionString() {
+		return content;
+	}
+
 	version(custom_widgets) {
 		LineEdit lineEdit;
 
@@ -6274,6 +6278,10 @@ class ScrollableWidget : Widget {
 			verticalScroll(scaleWithDpi(-16));
 		if(event.button == MouseButton.wheelDown)
 			verticalScroll(scaleWithDpi(16));
+		if(event.button == MouseButton.wheelLeft)
+			horizontalScroll(scaleWithDpi(-16));
+		if(event.button == MouseButton.wheelRight)
+			horizontalScroll(scaleWithDpi(16));
 		super.defaultEventHandler_click(event);
 	}
 
@@ -6712,6 +6720,14 @@ class ScrollableContainerWidget : ContainerWidget {
 			} else if(e.button == MouseButton.wheelDown) {
 				if(!e.defaultPrevented)
 					scrollBy(0, scaleWithDpi(16));
+				e.stopPropagation();
+			} else if(e.button == MouseButton.wheelLeft) {
+				if(!e.defaultPrevented)
+					scrollBy(scaleWithDpi(-16), 0);
+				e.stopPropagation();
+			} else if(e.button == MouseButton.wheelRight) {
+				if(!e.defaultPrevented)
+					scrollBy(scaleWithDpi(16), 0);
 				e.stopPropagation();
 			}
 		});
@@ -8367,6 +8383,7 @@ class TabWidget : TabMessageWidget {
 	}
 
 	protected override void tabIndexClicked(int item) {
+		super.tabIndexClicked(item);
 		foreach(idx, child; children) {
 			child.showing(false, false); // batch the recalculates for the end
 		}
@@ -8920,6 +8937,19 @@ class ScrollMessageWidget : Widget {
 				else
 					_this.scrollUp(verticalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
 			}
+			else
+			if(ce.button == MouseButton.wheelRight) {
+				if(ce.altKey)
+					_this.scrollDown(verticalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+				else
+					_this.scrollRight(horizontalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+			} else if(ce.button == MouseButton.wheelLeft) {
+				if(ce.altKey)
+					_this.scrollUp(verticalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+				else
+					_this.scrollLeft(horizontalWheelScrollAmount * (ce.shiftKey ? shiftMultiplier : 1));
+			}
+
 		});
 	}
 
@@ -9593,7 +9623,7 @@ class Window : Widget {
 
 	version(custom_widgets)
 	override void defaultEventHandler_click(ClickEvent event) {
-		if(event.button != MouseButton.wheelDown && event.button != MouseButton.wheelUp) {
+		if(!event.isMouseWheel()) {
 			if(event.target && event.target.tabStop)
 				event.target.focus();
 		}
@@ -9909,7 +9939,7 @@ class Window : Widget {
 				event.dispatch();
 			}
 
-			if(ev.button != MouseButton.wheelDown && ev.button != MouseButton.wheelUp && mouseLastDownOn is ele && ev.doubleClick) {
+			if(!ev.isMouseWheel && mouseLastDownOn is ele && ev.doubleClick) {
 				auto event = new DoubleClickEvent(captureEle);
 				populateMouseEventBase(event);
 				event.dispatch();
@@ -16389,7 +16419,7 @@ class Event : ReflectableProperties {
 	/// Prevents the default event handler (if there is one) from being called
 	void preventDefault() {
 		lastDefaultPrevented = true;
-		defaultPrevented = true;
+		defaultPrevented_ = true;
 	}
 
 	/// Stops the event propagation immediately.
@@ -16397,7 +16427,10 @@ class Event : ReflectableProperties {
 		propagationStopped = true;
 	}
 
-	private bool defaultPrevented;
+	private bool defaultPrevented_;
+	public bool defaultPrevented() {
+		return defaultPrevented_;
+	}
 	private bool propagationStopped;
 	private string eventName;
 
@@ -16974,7 +17007,7 @@ abstract class MouseEventBase : Event {
 			Added May 15, 2021
 	+/
 	bool isMouseWheel() {
-		return button == MouseButton.wheelUp || button == MouseButton.wheelDown;
+		return button == MouseButton.wheelUp || button == MouseButton.wheelDown || button == MouseButton.wheelLeft || button == MouseButton.wheelRight;
 	}
 
 	// private
@@ -17460,8 +17493,8 @@ void getSaveFileName(
 	return getFileName(owner, false, onOK, prefilledName, filters, onCancel, initialDirectory);
 }
 
-// deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 /// ditto
+deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 void getOpenFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
@@ -17474,6 +17507,7 @@ void getOpenFileName(
 }
 
 /// ditto
+deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 void getSaveFileName(
 	void delegate(string) onOK,
 	string prefilledName = null,
@@ -17583,13 +17617,12 @@ class FileDialogDelegate {
 			}
 		} else version(custom_widgets) {
 			filters ~= ["All Files\0*.*"];
-			auto picker = new FilePicker(openOrSave, prefilledName, filters, initialDirectory, owner);
+			auto picker = new FilePicker(false, openOrSave, prefilledName, filters, initialDirectory, owner);
 			picker.onOK = onOK;
 			picker.onCancel = onCancel;
 			picker.show();
 		}
 	}
-
 }
 
 /// ditto
@@ -17702,6 +17735,7 @@ class FilePicker : Dialog {
 	void delegate() onCancel;
 	LabeledLineEdit lineEdit;
 	bool isOpenDialogInsteadOfSave;
+	bool requireExistingFile;
 
 	static struct HistoryItem {
 		string cwd;
@@ -17986,9 +18020,10 @@ class FilePicker : Dialog {
 	// FIXME: allow many files to be picked too sometimes
 
 	//string[] filters = null, // format here is like ["Text files\0*.txt;*.text", "Image files\0*.png;*.jpg"]
-	this(bool isOpenDialogInsteadOfSave, string prefilledName, string[] filtersInWindowsFormat, string initialDirectory, Window owner = null) {
+	this(bool requireExistingFile, bool isOpenDialogInsteadOfSave, string prefilledName, string[] filtersInWindowsFormat, string initialDirectory, Window owner = null) {
 		this.filterOptions = FileNameFilterSet.fromWindowsFileNameFilterDescription(filtersInWindowsFormat);
 		this.isOpenDialogInsteadOfSave = isOpenDialogInsteadOfSave;
+		this.requireExistingFile = requireExistingFile;
 		super(owner, 500, 400, "Choose File..."); // owner);
 
 		{
@@ -18233,7 +18268,7 @@ class FilePicker : Dialog {
 
 			auto ft = getFileType(accepted.toString);
 
-			if(ft == FileType.error && isOpenDialogInsteadOfSave) {
+			if(ft == FileType.error && requireExistingFile) {
 				// FIXME: tell the user why
 				messageBox("Cannot open file: " ~ accepted.toString ~ "\nTry another or cancel.");
 				lineEdit.focus();
@@ -18439,10 +18474,12 @@ class ObjectInspectionWindowImpl(T) : ObjectInspectionWindow {
 		be deprecated soon.
 +/
 /// Group: generating_from_code
+deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 void dialog(T)(void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
 	dialog(null, T.init, onOK, onCancel, title);
 }
 /// ditto
+deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 void dialog(T)(T initialData, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
 	dialog(null, T.init, onOK, onCancel, title);
 }
@@ -18451,6 +18488,7 @@ void dialog(T)(Window parent, void delegate(T) onOK, void delegate() onCancel = 
 	dialog(parent, T.init, onOK, onCancel, title);
 }
 /// ditto
+deprecated("Pass an explicit owner window as the first argument, even if `null`. You can usually pass the `parentWindow` member of the widget that prompted this interaction.")
 void dialog(T)(T initialData, Window parent, void delegate(T) onOK, void delegate() onCancel = null, string title = T.stringof) {
 	dialog(parent, initialData, onOK, onCancel, title);
 }
