@@ -721,7 +721,8 @@ class Document : FileResource, DomParent {
 
 		string readTagName() {
 
-			data.markDataDiscardable(pos);
+			// this messes up the whereThisTagStarted in the error messages if we uncomment.....
+			//data.markDataDiscardable(pos);
 
 			// remember to include : for namespaces
 			// basically just keep going until >, /, or whitespace
@@ -4806,6 +4807,12 @@ struct AttributesHolder {
 		return null;
 	}
 
+	void opAssign(string[string] aa) @trusted {
+		this.attributes = null;
+		foreach(k, v; aa)
+			this[k] = v;
+	}
+
 	void remove(scope const char[] key) @trusted {
 		if(attributes is null)
 			return;
@@ -4885,11 +4892,17 @@ struct AttributesHolder {
 		}
 		return ret;
 	}
+
+	bool empty() const @trusted {
+		return attributes is null;
+	}
 }
 
 unittest {
 	AttributesHolder holder;
+	assert(holder.empty);
 	holder["one"] = "1";
+	assert(!holder.empty);
 	holder["two"] = "2";
 	holder["three"] = "3";
 
@@ -4951,6 +4964,11 @@ unittest {
 			count++;
 		}
 	}
+
+	holder = ["foo": "bar"];
+	assert("foo" in holder);
+	assert(holder["foo"] == "bar");
+	assert("four" !in holder);
 }
 
 /// for style, i want to be able to set it with a string like a plain attribute,
@@ -8237,8 +8255,9 @@ class StyleSheet {
 				// since givenExplicitly is likely destroyed here
 				auto current = element.computedStyle;
 
-				foreach(item; rule.properties)
+				foreach(item; rule.properties) {
 					current.setValue(item.name, item.value, item.specificity);
+				}
 			}
 		}
 	}
