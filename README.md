@@ -26,6 +26,9 @@ Please note that I DO consider changes to build process to be a breaking change,
 
 Future release, likely May 2026 or later.
 
+Pending changes:
+    * arsd.jsvar's toJson function now includes `null` values by default. This is to make json use cases easier. You can get the old behavior back by setting the `var.includeExplicitNullsWhenConvertingToJson = false;` setting in your thread.
+
 Planned changes:
 
     * Make arsd.http2 use arsd.core event loop by default (currently you still opt in with -version=use_arsd_core)
