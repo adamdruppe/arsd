@@ -9,7 +9,9 @@
 
 	I currently built against the version listed below and it uses UTF-16 strings.
 
-	July 2024-present: 126.2.10+g61241e4+chromium-126.0.6478.127
+	November 2025: cef_binary_142.0.15+g6dfdb28+chromium-142.0.7444.176_linux64_minimal.tar.bz2
+
+	July 2024: 126.2.10+g61241e4+chromium-126.0.6478.127
 
 	November 2023: cef_binary_119.3.1+gf768881+chromium-119.0.6045.124_linux64_minimal.tar.bz2
 
@@ -433,7 +435,7 @@ class BrowserProcessHandler : CEF!cef_browser_process_handler_t {
 
 	private void delegate(string dir, string[] args) onAlreadyRunningAppRelaunch;
 
-	override void on_context_initialized() { }
+	override void on_context_initialized() { /* sdpyPrintDebugString("on_context_initialized"); */ }
 
 	override void on_before_child_process_launch(RC!cef_command_line_t) { }
 	override void on_schedule_message_pump_work(long delayMs) { }
@@ -481,29 +483,24 @@ class BrowserProcessHandler : CEF!cef_browser_process_handler_t {
 }
 
 
-int cefProcessHelper() {
+int cefProcessHelper(CEF!cef_app_t app, cef_main_args_t* main_args) {
 	import core.runtime;
 	import core.stdc.stdlib;
 
-	cef_main_args_t main_args;
-	version(linux) {
-		main_args.argc = Runtime.cArgs.argc;
-		main_args.argv = Runtime.cArgs.argv;
-	} else version(Windows) {
-		main_args.instance = GetModuleHandle(null);
-	}
+	app.add_ref();
 
 	if(libcef.loadDynamicLibrary()) {
-		int code = libcef.execute_process(&main_args, null, null);
-		if(code >= 0)
+		import std.stdio;
+		//writeln("cef process begin");
+		int code = libcef.execute_process(main_args, app.passable, null);
+		//writeln("cef process ", Runtime.args, " ", code);
+		if(code >= 0) {
+			//writeln("exiting process");
 			exit(code);
+		}
 		return code;
 	}
 	return -1;
-}
-
-shared static this() {
-	cefProcessHelper();
 }
 
 public struct CefApp {
@@ -535,8 +532,9 @@ public struct CefApp {
 
 		cef_settings_t settings;
 		settings.size = cef_settings_t.sizeof;
-		//settings.log_severity = cef_log_severity_t.LOGSEVERITY_DISABLE; // Show only warnings/errors
-		settings.log_severity = cef_log_severity_t.LOGSEVERITY_INFO; // Show only warnings/errors
+		settings.log_severity = cef_log_severity_t.LOGSEVERITY_DISABLE;
+		//settings.log_severity = cef_log_severity_t.LOGSEVERITY_VERBOSE;
+		//settings.log_severity = cef_log_severity_t.LOGSEVERITY_INFO; // Show only warnings/errors
 		settings.multi_threaded_message_loop = 1;
 		settings.no_sandbox = 1;
 
@@ -558,6 +556,7 @@ public struct CefApp {
 				return null;
 			}
 			override cef_browser_process_handler_t* get_browser_process_handler() {
+				//sdpyPrintDebugString("bph returned");
 				return bph.returnable;
 			}
 			override cef_render_process_handler_t* get_render_process_handler() {
@@ -567,6 +566,8 @@ public struct CefApp {
 
 			}
 		};
+
+		cefProcessHelper(app, &main_args);
 
 		if(!libcef.initialize(&main_args, &settings, app.passable, null)) {
 			throw new Exception("cef_initialize failed");
@@ -661,14 +662,19 @@ struct libcef {
 			alias mem = __traits(getMember, libcef, memberName);
 			mem = cast(typeof(mem)) loadsym("cef_" ~ memberName);
 			if(mem is null) {
-				 // import std.stdio; writeln(memberName); throw new Exception("cef_" ~ memberName ~ " failed to load");
+				import std.stdio; writeln(memberName); throw new Exception("cef_" ~ memberName ~ " failed to load");
 				return false;
 			}
 		}
 
+
+		libcef.api_hash(CEF_API_VERSION, 0);
+
+		/+
 		import core.stdc.string;
-		if(strcmp(libcef.api_hash(1), CEF_API_HASH_UNIVERSAL) != 0)
+		if(strcmp(libcef.api_hash(CEF_API_VERSION, 0), CEF_API_HASH_PLATFORM) != 0)
 			throw new Exception("libcef versions not matching bindings");
+		+/
 
 		isLoaded = true;
 		return true;
@@ -1204,7 +1210,7 @@ abstract class CEF(Base) {
 
 		import core.memory;
 		GC.addRoot(cast(void*) this);
-		inner.c.base.size = Inner.sizeof;
+		inner.c.base.size = Base.sizeof;//Inner.sizeof;
 		inner.c.base.add_ref = &c_add_ref;
 		inner.c.base.release = &c_release;
 		inner.c.base.has_one_ref = &c_has_one_ref;
@@ -1505,12 +1511,12 @@ struct cef_time_t {
 
 version(linux)
 struct cef_window_info_t {
+
+  size_t size;
+
   cef_string_t window_name;
 
-  uint x;
-  uint y;
-  uint width;
-  uint height;
+  cef_rect_t bounds;
 
   cef_window_handle_t parent_window;
 
@@ -1521,6 +1527,7 @@ struct cef_window_info_t {
   int external_begin_frame_enabled;
 
   cef_window_handle_t window;
+  cef_runtime_style_t runtime_style;
 }
 
 version(Windows)
@@ -1600,7 +1607,27 @@ version=embedded_cef_bindings;
 // everything inside these brackets are the bindings you can replace if update needed
 
 version(embedded_cef_bindings) {
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+enum cef_color_type_t {
+  CEF_COLOR_TYPE_RGBA_8888,
+
+  ///
+  /// BGRA with 8 bits per pixel (32bits total).
+  ///
+  CEF_COLOR_TYPE_BGRA_8888,
+
+  CEF_COLOR_TYPE_NUM_VALUES,
+}
+
+enum cef_runtime_style_t {
+	CEF_RUNTIME_STYLE_DEFAULT,
+	CEF_RUNTIME_STYLE_CHROME,
+	CEF_RUNTIME_STYLE_ALLOY,
+}
+alias OS_EVENT* cef_event_handle_t;
+struct cef_accelerated_paint_info_t;
+
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -1636,38 +1663,26 @@ version(embedded_cef_bindings) {
 
 extern (C):
 
-enum CEF_VERSION = "126.2.10+g61241e4+chromium-126.0.6478.127";
-enum CEF_VERSION_MAJOR = 126;
-enum CEF_VERSION_MINOR = 2;
-enum CEF_VERSION_PATCH = 10;
-enum CEF_COMMIT_NUMBER = 3011;
-enum CEF_COMMIT_HASH = "61241e448276eee53d2b20ca045f5b5ae53a937a";
-enum COPYRIGHT_YEAR = 2024;
+enum CEF_VERSION = "142.0.15+g6dfdb28+chromium-142.0.7444.176";
+enum CEF_VERSION_MAJOR = 142;
+enum CEF_VERSION_MINOR = 0;
+enum CEF_VERSION_PATCH = 15;
+enum CEF_COMMIT_NUMBER = 3314;
+enum CEF_COMMIT_HASH = "6dfdb28d752a47e189d7a23b01f368ab0bdb378d";
+enum COPYRIGHT_YEAR = 2025;
 
-enum CHROME_VERSION_MAJOR = 126;
+enum CHROME_VERSION_MAJOR = 142;
 enum CHROME_VERSION_MINOR = 0;
-enum CHROME_VERSION_BUILD = 6478;
-enum CHROME_VERSION_PATCH = 127;
+enum CHROME_VERSION_BUILD = 7444;
+enum CHROME_VERSION_PATCH = 176;
 
 
-
-// Returns CEF version information for the libcef library. The |entry|
-// parameter describes which version component will be returned:
-// 0 - CEF_VERSION_MAJOR
-// 1 - CEF_VERSION_MINOR
-// 2 - CEF_VERSION_PATCH
-// 3 - CEF_COMMIT_NUMBER
-// 4 - CHROME_VERSION_MAJOR
-// 5 - CHROME_VERSION_MINOR
-// 6 - CHROME_VERSION_BUILD
-// 7 - CHROME_VERSION_PATCH
-///
-int cef_version_info (int entry);
-
-// APSTUDIO_HIDDEN_SYMBOLS
 
 // CEF_INCLUDE_CEF_VERSION_H_
 // Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+extern (C):
+
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -1696,33 +1711,74 @@ int cef_version_info (int entry);
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
-// ---------------------------------------------------------------------------
+// Versions are managed using the version_manager.py tool. For usage details
+// see https://bitbucket.org/chromiumembedded/cef/wiki/ApiVersioning.md
 //
-// This file was generated by the make_api_hash_header.py tool.
-//
 
-extern (C):
+// Experimental CEF API. Experimental API is unversioned, meaning that it is
+// excluded (compiled out) when clients explicitly set the CEF_API_VERSION
+// value in their project configuration. Experimental API is not back/forward
+// compatible with different CEF versions.
+enum CEF_API_VERSION_EXPERIMENTAL = 999999;
 
-// The API hash is created by analyzing CEF header files for C API type
-// definitions. The hash value will change when header files are modified in a
-// way that may cause binary incompatibility with other builds. The universal
-// hash value will change if any platform is affected whereas the platform hash
-// values will change only if that particular platform is affected.
-enum CEF_API_HASH_UNIVERSAL = "ed1dfa5ff8a041241f8fb72eb7454811f358f0d3";
+// Placeholder for the next CEF version currently under development. This is a
+// temporary value that must be replaced with the actual next version number
+// (output of running `version_manager.py -n`) prior to upstream merge. As an
+// added reminder, use of this value will cause version_manager.py to fail when
+// computing hashes for explicit API versions. When adding new API consider
+// using CEF_API_VERSION_EXPERIMENTAL instead.
 
-enum CEF_API_HASH_PLATFORM = "09d3e280ed38f7a082b794c56ff71c52f86f0ea8";
+enum CEF_API_VERSION_NEXT = 999998;
+
+// Shorter versions of the above for convenience use in comparison macros.
+enum CEF_NEXT = CEF_API_VERSION_NEXT;
+enum CEF_EXPERIMENTAL = CEF_API_VERSION_EXPERIMENTAL;
+
+// API version that will be compiled client-side. The experimental (unversioned)
+// API is selected by default. Clients can set the CEF_API_VERSION value in
+// their project configuration to configure an explicit API version. Unlike
+// the experimental API, explicit API versions are back/forward compatible with
+// a specific range of CEF versions.
+
+enum CEF_API_VERSION = CEF_API_VERSION_EXPERIMENTAL;
+
+
+
+// API hashes for the selected CEF_API_VERSION. API hashes are created for
+// each version by analyzing CEF header files for C API type definitions. The
+// hash value will change when header files are modified in a way that may
+// cause binary incompatibility with other builds.
+//enum CEF_API_HASH_PLATFORM = _CEF_AH_DECLARE(CEF_API_VERSION);
+
+// !defined(BUILDING_CEF_SHARED)
+
+// !defined(BUILDING_CEF_SHARED)
 
 ///
-// Returns CEF API hashes for the libcef library. The returned string is owned
-// by the library and should not be freed. The |entry| parameter describes which
-// hash value will be returned:
-// 0 - CEF_API_HASH_PLATFORM
-// 1 - CEF_API_HASH_UNIVERSAL
-// 2 - CEF_COMMIT_HASH (from cef_version.h)
+/// API exists only in the specified version range.
 ///
-const(char)* cef_api_hash (int entry);
 
-// CEF_INCLUDE_API_HASH_H_
+
+///
+/// Configures the CEF API version and returns API hashes for the libcef
+/// library. The returned string is owned by the library and should not be
+/// freed. The |version| parameter should be CEF_API_VERSION and any changes to
+/// this value will be ignored after the first call to this method. The |entry|
+/// parameter describes which hash value will be returned:
+///
+/// 0 - CEF_API_HASH_PLATFORM
+/// 1 - CEF_API_HASH_UNIVERSAL (deprecated, same as CEF_API_HASH_PLATFORM)
+/// 2 - CEF_COMMIT_HASH (from cef_version.h)
+///
+const(char)* cef_api_hash (int version_, int entry);
+
+///
+/// Returns the CEF API version that was configured by the first call to
+/// cef_api_hash().
+///
+int cef_api_version ();
+
+// CEF_INCLUDE_CEF_API_HASH_H_
 // Copyright (c) 2014 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -1836,16 +1892,17 @@ extern (C):
 
 ///
 /// Supported content setting types. Some types are platform-specific or only
-/// supported with the Chrome runtime. Should be kept in sync with Chromium's
+/// supported with Chrome style. Should be kept in sync with Chromium's
 /// ContentSettingsType type.
 ///
 enum cef_content_setting_types_t
 {
-    // This setting governs whether cookies are enabled by the user in the
+    /// This setting governs whether cookies are enabled by the user in the
     /// provided context. However, it may be overridden by other settings. This
     /// enum should NOT be read directly to determine whether cookies are enabled;
     /// the client should instead rely on the CookieSettings API.
     CEF_CONTENT_SETTING_TYPE_COOKIES = 0,
+
     CEF_CONTENT_SETTING_TYPE_IMAGES = 1,
     CEF_CONTENT_SETTING_TYPE_JAVASCRIPT = 2,
 
@@ -1919,8 +1976,8 @@ enum cef_content_setting_types_t
     /// permission to respond to accessibility events, which can be used to
     /// provide a custom accessibility experience. Requires explicit user consent
     /// because some users may not want sites to know they're using assistive
-    /// technology.
-    CEF_CONTENT_SETTING_TYPE_ACCESSIBILITY_EVENTS = 33,
+    /// technology. Deprecated in M131.
+    CEF_CONTENT_SETTING_TYPE_DEPRECATED_ACCESSIBILITY_EVENTS = 33,
 
     /// Used to store whether to allow a website to install a payment handler.
     CEF_CONTENT_SETTING_TYPE_PAYMENT_HANDLER = 34,
@@ -2037,7 +2094,8 @@ enum cef_content_setting_types_t
     /// requests.
     /// See also: https://wicg.github.io/cors-rfc1918
     /// Set through enterprise policies only.
-    CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK = 60,
+
+    CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK_DEPRECATED = 60,
 
     /// Content setting which stores whether or not a site can access low-level
     /// locally installed font data using the Local Fonts Access API.
@@ -2117,17 +2175,18 @@ enum cef_content_setting_types_t
     /// store origin blocklist from review notification permissions feature.
     CEF_CONTENT_SETTING_TYPE_NOTIFICATION_PERMISSION_REVIEW = 76,
 
+    CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD_DEPRECATED = 77,
+    CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA_DEPRECATED = 78,
+
     /// Website setting to store permissions granted to access particular devices
     /// in private network.
-    CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD = 77,
-    CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA = 78,
 
     /// Website setting which stores whether the browser has observed the user
     /// signing into an identity-provider based on observing the IdP-SignIn-Status
     /// HTTP header.
     CEF_CONTENT_SETTING_TYPE_FEDERATED_IDENTITY_IDENTITY_PROVIDER_SIGNIN_STATUS = 79,
 
-    /// Website setting which is used for UnusedSitePermissionsService to
+    /// Website setting which is used for RevokedPermissionsService to
     /// store revoked permissions of unused sites from unused site permissions
     /// feature.
     CEF_CONTENT_SETTING_TYPE_REVOKED_UNUSED_SITE_PERMISSIONS = 80,
@@ -2185,7 +2244,8 @@ enum cef_content_setting_types_t
     /// ALLOW (default): no effect (e.g. third-party cookies allowed, if not
     ///                  blocked otherwise).
     /// BLOCK: third-party cookies blocked, but 3PCD mitigations enabled.
-    CEF_CONTENT_SETTING_TOP_LEVEL_TPCD_ORIGIN_TRIAL = 93,
+
+    CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_TPCD_ORIGIN_TRIAL = 93,
 
     /// Content setting used to indicate whether entering picture-in-picture
     /// automatically should be enabled.
@@ -2236,14 +2296,103 @@ enum cef_content_setting_types_t
     /// access to mouse inputs.
     CEF_CONTENT_SETTING_TYPE_POINTER_LOCK = 106,
 
-    /// Website setting which is used for UnusedSitePermissionsService to store
+    /// Website setting which is used for RevokedPermissionsService to store
     /// auto-revoked notification permissions from abusive sites.
-    REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS = 107,
+    CEF_CONTENT_SETTING_TYPE_REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS = 107,
 
     /// Content setting that controls tracking protection status per site.
     /// BLOCK: Protections enabled. This is the default state.
     /// ALLOW: Protections disabled.
-    TRACKING_PROTECTION = 108
+    CEF_CONTENT_SETTING_TYPE_TRACKING_PROTECTION = 108,
+
+    /// With this permission, when the application calls `getDisplayMedia()`, a
+    /// system audio track can be returned without showing the display media
+    /// selection picker. The application can explicitly specify
+    /// `systemAudio: 'exclude'` or `video: true` to still show the display media
+    /// selection picker if needed. Please note that the setting only works for
+    /// WebUI.
+    CEF_CONTENT_SETTING_TYPE_DISPLAY_MEDIA_SYSTEM_AUDIO = 109,
+
+    /// Whether to use the higher-tier v8 optimizers for running JavaScript on the
+    /// page.
+    CEF_CONTENT_SETTING_TYPE_JAVASCRIPT_OPTIMIZER = 110,
+
+    /// Content Setting for the Storage Access Headers persistent origin trial
+    /// that allows origins to opt into the storage access header behavior. Should
+    /// be scoped to `REQUESTING_ORIGIN_AND_TOP_SCHEMEFUL_SITE_SCOPE` in order to
+    /// correspond to the design of persistent origin trials. See also:
+    /// https://github.com/cfredric/storage-access-headers
+    /// ALLOW: storage access request headers will be attached to cross-site
+    ///        requests, and url requests will look for response headers from
+    ///        origins to retry a request or load with storage access.
+    /// BLOCK (default): no effect.
+    CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS_HEADER_ORIGIN_TRIAL = 111,
+
+    /// Whether or not sites can request Hand Tracking data within WebXR Sessions.
+    CEF_CONTENT_SETTING_TYPE_HAND_TRACKING = 112,
+
+    /// Website setting to indicate whether user has opted in to allow web apps to
+    /// install other web apps.
+    CEF_CONTENT_SETTING_TYPE_WEB_APP_INSTALLATION = 113,
+
+    /// Content settings for private network access in the context of the
+    /// Direct Sockets API.
+    CEF_CONTENT_SETTING_TYPE_DIRECT_SOCKETS_PRIVATE_NETWORK_ACCESS = 114,
+
+    /// Content settings for legacy cookie scope.
+    /// Checks whether cookies scope is handled according to origin-bound cookies
+    /// or legacy behavior.
+    CEF_CONTENT_SETTING_TYPE_LEGACY_COOKIE_SCOPE = 115,
+
+    /// Website setting to indicate whether the user has allowlisted suspicious
+    /// notifications for the origin.
+    CEF_CONTENT_SETTING_TYPE_ARE_SUSPICIOUS_NOTIFICATIONS_ALLOWLISTED_BY_USER = 116,
+
+    /// Content settings for access to the Controlled Frame API.
+    CEF_CONTENT_SETTING_TYPE_CONTROLLED_FRAME = 117,
+
+    /// Website setting which is used for RevokedPermissionsService to
+    /// store revoked notification permissions of disruptive sites.
+    CEF_CONTENT_SETTING_TYPE_REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS = 118,
+
+    /// Content setting for whether the site is allowed to make local network
+    /// requests.
+    CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK_ACCESS = 119,
+
+    /// Stores information on-device language packs for which a site has
+    /// installed using the Web Speech API.
+    CEF_CONTENT_SETTING_TYPE_ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED = 120,
+
+    /// Stores which Translator API language packs the site has initialized.
+    CEF_CONTENT_SETTING_TYPE_INITIALIZED_TRANSLATIONS = 121,
+
+    /// Stores a list of notification ids where content detection found the
+    /// notification to be suspicious and a warning has already been shown for the
+    /// site. Used for recovering notification contents from the database if the
+    /// user decides they would like to see all of these notifications.
+    CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_IDS = 122,
+
+    /// To support approximate geolocation, the permission is migrating to use
+    /// permissions with options, which won't be stored as ContentSettings. Upon
+    /// launch of the feature, GEOLOCATION and GEOLOCATION_WITH_OPTIONS should be
+    /// merged.
+    CEF_CONTENT_SETTING_TYPE_GEOLOCATION_WITH_OPTIONS = 123,
+
+    /// Setting for enabling the Device Attributes API. Spec link:
+    /// https://wicg.github.io/WebApiDevice/device_attributes/
+    CEF_CONTENT_SETTING_TYPE_DEVICE_ATTRIBUTES = 124,
+
+    /// Stores per-origin state for permission heuristics. Currently used for
+    /// auto-granting geolocation element permission request after repeated
+    /// temporary grants.
+    CEF_CONTENT_SETTING_TYPE_PERMISSION_ACTIONS_HISTORY = 125,
+
+    /// Website setting to indicate whether the user has selected "show original"
+    /// when suspicious warning is shown. If the user has selected this, the
+    /// notification permission will not be revoked based on suspicious verdict.
+    CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_SHOW_ORIGINAL = 126,
+
+    CEF_CONTENT_SETTING_TYPE_NUM_VALUES = 127
 }
 
 alias CEF_CONTENT_SETTING_TYPE_COOKIES = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_COOKIES;
@@ -2279,7 +2428,7 @@ alias CEF_CONTENT_SETTING_TYPE_MEDIA_ENGAGEMENT = cef_content_setting_types_t.CE
 alias CEF_CONTENT_SETTING_TYPE_SOUND = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_SOUND;
 alias CEF_CONTENT_SETTING_TYPE_CLIENT_HINTS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_CLIENT_HINTS;
 alias CEF_CONTENT_SETTING_TYPE_SENSORS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_SENSORS;
-alias CEF_CONTENT_SETTING_TYPE_ACCESSIBILITY_EVENTS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_ACCESSIBILITY_EVENTS;
+alias CEF_CONTENT_SETTING_TYPE_DEPRECATED_ACCESSIBILITY_EVENTS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_DEPRECATED_ACCESSIBILITY_EVENTS;
 alias CEF_CONTENT_SETTING_TYPE_PAYMENT_HANDLER = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PAYMENT_HANDLER;
 alias CEF_CONTENT_SETTING_TYPE_USB_GUARD = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_USB_GUARD;
 alias CEF_CONTENT_SETTING_TYPE_BACKGROUND_FETCH = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_BACKGROUND_FETCH;
@@ -2306,7 +2455,7 @@ alias CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_READ_GUARD = cef_content_setting_type
 alias CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS;
 alias CEF_CONTENT_SETTING_TYPE_CAMERA_PAN_TILT_ZOOM = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_CAMERA_PAN_TILT_ZOOM;
 alias CEF_CONTENT_SETTING_TYPE_WINDOW_MANAGEMENT = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_WINDOW_MANAGEMENT;
-alias CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK;
+alias CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK_DEPRECATED = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_INSECURE_PRIVATE_NETWORK_DEPRECATED;
 alias CEF_CONTENT_SETTING_TYPE_LOCAL_FONTS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_LOCAL_FONTS;
 alias CEF_CONTENT_SETTING_TYPE_PERMISSION_AUTOREVOCATION_DATA = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PERMISSION_AUTOREVOCATION_DATA;
 alias CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_LAST_PICKED_DIRECTORY = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_LAST_PICKED_DIRECTORY;
@@ -2323,8 +2472,8 @@ alias CEF_CONTENT_SETTING_TYPE_FEDERATED_IDENTITY_API = cef_content_setting_type
 alias CEF_CONTENT_SETTING_TYPE_NOTIFICATION_INTERACTIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_NOTIFICATION_INTERACTIONS;
 alias CEF_CONTENT_SETTING_TYPE_REDUCED_ACCEPT_LANGUAGE = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_REDUCED_ACCEPT_LANGUAGE;
 alias CEF_CONTENT_SETTING_TYPE_NOTIFICATION_PERMISSION_REVIEW = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_NOTIFICATION_PERMISSION_REVIEW;
-alias CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD;
-alias CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA;
+alias CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD_DEPRECATED = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_GUARD_DEPRECATED;
+alias CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA_DEPRECATED = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PRIVATE_NETWORK_CHOOSER_DATA_DEPRECATED;
 alias CEF_CONTENT_SETTING_TYPE_FEDERATED_IDENTITY_IDENTITY_PROVIDER_SIGNIN_STATUS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_FEDERATED_IDENTITY_IDENTITY_PROVIDER_SIGNIN_STATUS;
 alias CEF_CONTENT_SETTING_TYPE_REVOKED_UNUSED_SITE_PERMISSIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_REVOKED_UNUSED_SITE_PERMISSIONS;
 alias CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_STORAGE_ACCESS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_STORAGE_ACCESS;
@@ -2339,7 +2488,7 @@ alias CEF_CONTENT_SETTING_TYPE_TPCD_HEURISTICS_GRANTS = cef_content_setting_type
 alias CEF_CONTENT_SETTING_TYPE_TPCD_METADATA_GRANTS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TPCD_METADATA_GRANTS;
 alias CEF_CONTENT_SETTING_TYPE_TPCD_TRIAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TPCD_TRIAL;
 alias CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_TPCD_TRIAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_TPCD_TRIAL;
-alias CEF_CONTENT_SETTING_TOP_LEVEL_TPCD_ORIGIN_TRIAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TOP_LEVEL_TPCD_ORIGIN_TRIAL;
+alias CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_TPCD_ORIGIN_TRIAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_TPCD_ORIGIN_TRIAL;
 alias CEF_CONTENT_SETTING_TYPE_AUTO_PICTURE_IN_PICTURE = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_AUTO_PICTURE_IN_PICTURE;
 alias CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_ACCESS_EXTENDED_PERMISSION = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_ACCESS_EXTENDED_PERMISSION;
 alias CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_ACCESS_RESTORE_PERMISSION = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_FILE_SYSTEM_ACCESS_RESTORE_PERMISSION;
@@ -2353,8 +2502,27 @@ alias CEF_CONTENT_SETTING_TYPE_SPEAKER_SELECTION = cef_content_setting_types_t.C
 alias CEF_CONTENT_SETTING_TYPE_DIRECT_SOCKETS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_DIRECT_SOCKETS;
 alias CEF_CONTENT_SETTING_TYPE_KEYBOARD_LOCK = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_KEYBOARD_LOCK;
 alias CEF_CONTENT_SETTING_TYPE_POINTER_LOCK = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_POINTER_LOCK;
-alias REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS = cef_content_setting_types_t.REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS;
-alias TRACKING_PROTECTION = cef_content_setting_types_t.TRACKING_PROTECTION;
+alias CEF_CONTENT_SETTING_TYPE_REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS;
+alias CEF_CONTENT_SETTING_TYPE_TRACKING_PROTECTION = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_TRACKING_PROTECTION;
+alias CEF_CONTENT_SETTING_TYPE_DISPLAY_MEDIA_SYSTEM_AUDIO = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_DISPLAY_MEDIA_SYSTEM_AUDIO;
+alias CEF_CONTENT_SETTING_TYPE_JAVASCRIPT_OPTIMIZER = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_JAVASCRIPT_OPTIMIZER;
+alias CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS_HEADER_ORIGIN_TRIAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS_HEADER_ORIGIN_TRIAL;
+alias CEF_CONTENT_SETTING_TYPE_HAND_TRACKING = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_HAND_TRACKING;
+alias CEF_CONTENT_SETTING_TYPE_WEB_APP_INSTALLATION = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_WEB_APP_INSTALLATION;
+alias CEF_CONTENT_SETTING_TYPE_DIRECT_SOCKETS_PRIVATE_NETWORK_ACCESS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_DIRECT_SOCKETS_PRIVATE_NETWORK_ACCESS;
+alias CEF_CONTENT_SETTING_TYPE_LEGACY_COOKIE_SCOPE = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_LEGACY_COOKIE_SCOPE;
+alias CEF_CONTENT_SETTING_TYPE_ARE_SUSPICIOUS_NOTIFICATIONS_ALLOWLISTED_BY_USER = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_ARE_SUSPICIOUS_NOTIFICATIONS_ALLOWLISTED_BY_USER;
+alias CEF_CONTENT_SETTING_TYPE_CONTROLLED_FRAME = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_CONTROLLED_FRAME;
+alias CEF_CONTENT_SETTING_TYPE_REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS;
+alias CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK_ACCESS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK_ACCESS;
+alias CEF_CONTENT_SETTING_TYPE_ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED;
+alias CEF_CONTENT_SETTING_TYPE_INITIALIZED_TRANSLATIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_INITIALIZED_TRANSLATIONS;
+alias CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_IDS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_IDS;
+alias CEF_CONTENT_SETTING_TYPE_GEOLOCATION_WITH_OPTIONS = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_GEOLOCATION_WITH_OPTIONS;
+alias CEF_CONTENT_SETTING_TYPE_DEVICE_ATTRIBUTES = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_DEVICE_ATTRIBUTES;
+alias CEF_CONTENT_SETTING_TYPE_PERMISSION_ACTIONS_HISTORY = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_PERMISSION_ACTIONS_HISTORY;
+alias CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_SHOW_ORIGINAL = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_SUSPICIOUS_NOTIFICATION_SHOW_ORIGINAL;
+alias CEF_CONTENT_SETTING_TYPE_NUM_VALUES = cef_content_setting_types_t.CEF_CONTENT_SETTING_TYPE_NUM_VALUES;
 
 ///
 /// Supported content setting values. Should be kept in sync with Chromium's
@@ -2367,7 +2535,8 @@ enum cef_content_setting_values_t
     CEF_CONTENT_SETTING_VALUE_BLOCK = 2,
     CEF_CONTENT_SETTING_VALUE_ASK = 3,
     CEF_CONTENT_SETTING_VALUE_SESSION_ONLY = 4,
-    CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT = 5,
+
+    CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT_DEPRECATED = 5,
 
     CEF_CONTENT_SETTING_VALUE_NUM_VALUES = 6
 }
@@ -2377,7 +2546,7 @@ alias CEF_CONTENT_SETTING_VALUE_ALLOW = cef_content_setting_values_t.CEF_CONTENT
 alias CEF_CONTENT_SETTING_VALUE_BLOCK = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_BLOCK;
 alias CEF_CONTENT_SETTING_VALUE_ASK = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_ASK;
 alias CEF_CONTENT_SETTING_VALUE_SESSION_ONLY = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_SESSION_ONLY;
-alias CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT;
+alias CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT_DEPRECATED = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_DETECT_IMPORTANT_CONTENT_DEPRECATED;
 alias CEF_CONTENT_SETTING_VALUE_NUM_VALUES = cef_content_setting_values_t.CEF_CONTENT_SETTING_VALUE_NUM_VALUES;
 
 // CEF_INCLUDE_INTERNAL_CEF_TYPES_CONTENT_SETTINGS_H_
@@ -2412,6 +2581,7 @@ alias CEF_CONTENT_SETTING_VALUE_NUM_VALUES = cef_content_setting_values_t.CEF_CO
 
 import core.stdc.config;
 import core.stdc.limits;
+import core.stdc.stdint;
 
 extern (C):
 
@@ -2444,6 +2614,10 @@ alias cef_color_t = uint;
 
 
 // Return the high int32_t value from an int64_t value.
+
+
+// Check that the structure |s|, which is defined with a `size_t size` member
+// at the top, is large enough to contain the specified member |f|.
 
 
 ///
@@ -2580,7 +2754,6 @@ struct cef_settings_t
     ///
     /// Size of this structure.
     ///
-    alias size_t = c_ulong;
     size_t size;
 
     ///
@@ -2600,7 +2773,6 @@ struct cef_settings_t
     /// non-empty then it must be an absolute path. Also configurable using the
     /// "browser-subprocess-path" command-line switch.
     ///
-    alias cef_string_t = cef_string_utf16_t;
     cef_string_t browser_subprocess_path;
 
     ///
@@ -2619,13 +2791,6 @@ struct cef_settings_t
     /// command-line switch.
     ///
     cef_string_t main_bundle_path;
-
-    ///
-    /// Set to true (1) to enable use of the Chrome runtime in CEF. This feature
-    /// is considered experimental and is not recommended for most users at this
-    /// time. See issue #2969 for details.
-    ///
-    int chrome_runtime;
 
     ///
     /// Set to true (1) to have the browser process message loop run in a separate
@@ -2673,9 +2838,9 @@ struct cef_settings_t
     /// in root_cache_path). HTML5 databases such as localStorage will only
     /// persist across sessions if a cache path is specified. Can be overridden
     /// for individual CefRequestContext instances via the
-    /// CefRequestContextSettings.cache_path value. When using the Chrome runtime
-    /// any child directory value will be ignored and the "default" profile (also
-    /// a child directory) will be used instead.
+    /// CefRequestContextSettings.cache_path value. Any child directory value will
+    /// be ignored and the "default" profile (also a child directory) will be used
+    /// instead.
     ///
     cef_string_t cache_path;
 
@@ -2718,16 +2883,6 @@ struct cef_settings_t
     /// CefRequestContextSettings.persist_session_cookies value.
     ///
     int persist_session_cookies;
-
-    ///
-    /// To persist user preferences as a JSON file in the cache path directory set
-    /// this value to true (1). A |cache_path| value must also be specified
-    /// to enable this feature. Also configurable using the
-    /// "persist-user-preferences" command-line switch. Can be overridden for
-    /// individual CefRequestContext instances via the
-    /// CefRequestContextSettings.persist_user_preferences value.
-    ///
-    int persist_user_preferences;
 
     ///
     /// Value that will be returned as the User-Agent HTTP header. If empty the
@@ -2807,15 +2962,6 @@ struct cef_settings_t
     cef_string_t locales_dir_path;
 
     ///
-    /// Set to true (1) to disable loading of pack files for resources and
-    /// locales. A resource bundle handler must be provided for the browser and
-    /// render processes via CefApp::GetResourceBundleHandler() if loading of pack
-    /// files is disabled. Also configurable using the "disable-pack-loading"
-    /// command- line switch.
-    ///
-    int pack_loading_disabled;
-
-    ///
     /// Set to a value between 1024 and 65535 to enable remote debugging on the
     /// specified port. Also configurable using the "remote-debugging-port"
     /// command-line switch. Specifying 0 via the command-line switch will result
@@ -2879,7 +3025,7 @@ struct cef_settings_t
     /// policies. On Windows, this is a registry key like
     /// "SOFTWARE\\Policies\\Google\\Chrome". On MacOS, this is a bundle ID like
     /// "com.google.Chrome". On Linux, this is an absolute directory path like
-    /// "/etc/opt/chrome/policies". Only supported with the Chrome runtime. See
+    /// "/etc/opt/chrome/policies". Only supported with Chrome style. See
     /// https://support.google.com/chrome/a/answer/9037717 for details.
     ///
     /// Chrome Browser Cloud Management integration, when enabled via the
@@ -2893,10 +3039,15 @@ struct cef_settings_t
     /// Specify an ID for an ICON resource that can be loaded from the main
     /// executable and used when creating default Chrome windows such as DevTools
     /// and Task Manager. If unspecified the default Chromium ICON (IDR_MAINFRAME
-    /// [101]) will be loaded from libcef.dll. Only supported with the Chrome
-    /// runtime on Windows.
+    /// [101]) will be loaded from libcef.dll. Only supported with Chrome style on
+    /// Windows.
     ///
     int chrome_app_icon_id;
+
+    ///
+    /// Specify whether signal handlers must be disabled on POSIX systems.
+    ///
+    int disable_signal_handlers;
 }
 
 
@@ -2935,14 +3086,6 @@ struct cef_request_context_settings_t
     /// |cache_path| is empty or if it matches the CefSettings.cache_path value.
     ///
     int persist_session_cookies;
-
-    ///
-    /// To persist user preferences as a JSON file in the cache path directory set
-    /// this value to true (1). Can be set globally using the
-    /// CefSettings.persist_user_preferences value. This value will be ignored if
-    /// |cache_path| is empty or if it matches the CefSettings.cache_path value.
-    ///
-    int persist_user_preferences;
 
     ///
     /// Comma delimited ordered list of language codes without any whitespace that
@@ -2986,8 +3129,8 @@ struct cef_browser_settings_t
     /// The maximum rate in frames per second (fps) that CefRenderHandler::OnPaint
     /// will be called for a windowless browser. The actual fps may be lower if
     /// the browser cannot generate frames at the requested rate. The minimum
-    /// value is 1 and the maximum value is 60 (default 30). This value can also
-    /// be changed dynamically via CefBrowserHost::SetWindowlessFrameRate.
+    /// value is 1 and the default value is 30. This value can also be changed
+    /// dynamically via CefBrowserHost::SetWindowlessFrameRate.
     ///
     int windowless_frame_rate;
 
@@ -3084,7 +3227,8 @@ struct cef_browser_settings_t
     /// Controls whether databases can be used. Also configurable using the
     /// "disable-databases" command-line switch.
     ///
-    cef_state_t databases;
+
+    cef_state_t databases_deprecated;
 
     ///
     /// Controls whether WebGL can be used. Note that WebGL requires hardware
@@ -3109,14 +3253,14 @@ struct cef_browser_settings_t
 
     ///
     /// Controls whether the Chrome status bubble will be used. Only supported
-    /// with the Chrome runtime. For details about the status bubble see
+    /// with Chrome style. For details about the status bubble see
     /// https://www.chromium.org/user-experience/status-bubble/
     ///
     cef_state_t chrome_status_bubble;
 
     ///
     /// Controls whether the Chrome zoom bubble will be shown when zooming. Only
-    /// supported with the Chrome runtime.
+    /// supported with Chrome style.
     ///
     cef_state_t chrome_zoom_bubble;
 }
@@ -3153,6 +3297,11 @@ alias RV_CONTINUE_ASYNC = cef_return_value_t.RV_CONTINUE_ASYNC;
 ///
 struct cef_urlparts_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// The complete URL specification.
     ///
@@ -3232,19 +3381,26 @@ enum cef_cookie_same_site_t
     CEF_COOKIE_SAME_SITE_UNSPECIFIED = 0,
     CEF_COOKIE_SAME_SITE_NO_RESTRICTION = 1,
     CEF_COOKIE_SAME_SITE_LAX_MODE = 2,
-    CEF_COOKIE_SAME_SITE_STRICT_MODE = 3
+    CEF_COOKIE_SAME_SITE_STRICT_MODE = 3,
+    CEF_COOKIE_SAME_SITE_NUM_VALUES = 4
 }
 
 alias CEF_COOKIE_SAME_SITE_UNSPECIFIED = cef_cookie_same_site_t.CEF_COOKIE_SAME_SITE_UNSPECIFIED;
 alias CEF_COOKIE_SAME_SITE_NO_RESTRICTION = cef_cookie_same_site_t.CEF_COOKIE_SAME_SITE_NO_RESTRICTION;
 alias CEF_COOKIE_SAME_SITE_LAX_MODE = cef_cookie_same_site_t.CEF_COOKIE_SAME_SITE_LAX_MODE;
 alias CEF_COOKIE_SAME_SITE_STRICT_MODE = cef_cookie_same_site_t.CEF_COOKIE_SAME_SITE_STRICT_MODE;
+alias CEF_COOKIE_SAME_SITE_NUM_VALUES = cef_cookie_same_site_t.CEF_COOKIE_SAME_SITE_NUM_VALUES;
 
 ///
 /// Cookie information.
 ///
 struct cef_cookie_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// The cookie name.
     ///
@@ -3343,7 +3499,9 @@ enum cef_termination_status_t
     ///
     /// On Windows, the OS terminated the process due to code integrity failure.
     ///
-    TS_INTEGRITY_FAILURE = 5
+    TS_INTEGRITY_FAILURE = 5,
+
+    TS_NUM_VALUES = 6
 }
 
 alias TS_ABNORMAL_TERMINATION = cef_termination_status_t.TS_ABNORMAL_TERMINATION;
@@ -3352,6 +3510,7 @@ alias TS_PROCESS_CRASHED = cef_termination_status_t.TS_PROCESS_CRASHED;
 alias TS_PROCESS_OOM = cef_termination_status_t.TS_PROCESS_OOM;
 alias TS_LAUNCH_FAILED = cef_termination_status_t.TS_LAUNCH_FAILED;
 alias TS_INTEGRITY_FAILURE = cef_termination_status_t.TS_INTEGRITY_FAILURE;
+alias TS_NUM_VALUES = cef_termination_status_t.TS_NUM_VALUES;
 
 ///
 /// Path key values.
@@ -3405,7 +3564,9 @@ enum cef_path_key_t
     /// Directory containing application resources. Can be configured via
     /// CefSettings.resources_dir_path.
     ///
-    PK_DIR_RESOURCES = 8
+    PK_DIR_RESOURCES = 8,
+
+    PK_NUM_VALUES = 9
 }
 
 alias PK_DIR_CURRENT = cef_path_key_t.PK_DIR_CURRENT;
@@ -3417,6 +3578,7 @@ alias PK_FILE_MODULE = cef_path_key_t.PK_FILE_MODULE;
 alias PK_LOCAL_APP_DATA = cef_path_key_t.PK_LOCAL_APP_DATA;
 alias PK_USER_DATA = cef_path_key_t.PK_USER_DATA;
 alias PK_DIR_RESOURCES = cef_path_key_t.PK_DIR_RESOURCES;
+alias PK_NUM_VALUES = cef_path_key_t.PK_NUM_VALUES;
 
 ///
 /// Storage types.
@@ -3466,9 +3628,9 @@ enum cef_errorcode_t
     ERR_BLOCKED_BY_RESPONSE = -27,
     ERR_CLEARTEXT_NOT_PERMITTED = -29,
     ERR_BLOCKED_BY_CSP = -30,
-    ERR_H2_OR_QUIC_REQUIRED = -31,
     ERR_BLOCKED_BY_ORB = -32,
     ERR_NETWORK_ACCESS_REVOKED = -33,
+    ERR_BLOCKED_BY_FINGERPRINTING_PROTECTION = -34,
     ERR_CONNECTION_CLOSED = -100,
     ERR_CONNECTION_RESET = -101,
     ERR_CONNECTION_REFUSED = -102,
@@ -3541,6 +3703,7 @@ enum cef_errorcode_t
     ERR_INVALID_ECH_CONFIG_LIST = -182,
     ERR_ECH_NOT_NEGOTIATED = -183,
     ERR_ECH_FALLBACK_CERTIFICATE_INVALID = -184,
+    ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION = -186,
     ERR_CERT_COMMON_NAME_INVALID = -200,
     ERR_CERT_DATE_INVALID = -201,
     ERR_CERT_AUTHORITY_INVALID = -202,
@@ -3555,9 +3718,9 @@ enum cef_errorcode_t
     ERR_CERT_NAME_CONSTRAINT_VIOLATION = -212,
     ERR_CERT_VALIDITY_TOO_LONG = -213,
     ERR_CERTIFICATE_TRANSPARENCY_REQUIRED = -214,
-    ERR_CERT_SYMANTEC_LEGACY = -215,
     ERR_CERT_KNOWN_INTERCEPTION_BLOCKED = -217,
-    ERR_CERT_END = -219,
+    ERR_CERT_SELF_SIGNED_LOCAL_NETWORK = -219,
+    ERR_CERT_END = -220,
     ERR_INVALID_URL = -300,
     ERR_DISALLOWED_URL_SCHEME = -301,
     ERR_UNKNOWN_URL_SCHEME = -302,
@@ -3609,6 +3772,7 @@ enum cef_errorcode_t
     ERR_HTTP_1_1_REQUIRED = -365,
     ERR_PROXY_HTTP_1_1_REQUIRED = -366,
     ERR_PAC_SCRIPT_TERMINATED = -367,
+    ERR_PROXY_REQUIRED = -368,
     ERR_INVALID_HTTP_RESPONSE = -370,
     ERR_CONTENT_DECODING_INIT_FAILED = -371,
     ERR_HTTP2_RST_STREAM_NO_ERROR_RECEIVED = -372,
@@ -3631,129 +3795,206 @@ enum cef_errorcode_t
     ERR_CACHE_OPEN_FAILURE = -404,
     ERR_CACHE_CREATE_FAILURE = -405,
     ERR_CACHE_RACE = -406,
-    ERR_CACHE_CHECKSUM_READ_FAILURE = -407,
-    ERR_CACHE_CHECKSUM_MISMATCH = -408,
-    ERR_CACHE_LOCK_TIMEOUT = -409,
-    ERR_CACHE_AUTH_FAILURE_AFTER_READ = -410,
-    ERR_CACHE_ENTRY_NOT_SUITABLE = -411,
-    ERR_CACHE_DOOM_FAILURE = -412,
-    ERR_CACHE_OPEN_OR_CREATE_FAILURE = -413,
-    ERR_INSECURE_RESPONSE = -501,
-    ERR_NO_PRIVATE_KEY_FOR_CERT = -502,
-    ERR_ADD_USER_CERT_FAILED = -503,
-    ERR_INVALID_SIGNED_EXCHANGE = -504,
-    ERR_INVALID_WEB_BUNDLE = -505,
-    ERR_TRUST_TOKEN_OPERATION_FAILED = -506,
 
     ///
     /// Supported certificate status code values. See net\cert\cert_status_flags.h
     /// for more information. CERT_STATUS_NONE is new in CEF because we use an
     /// enum while cert_status_flags.h uses a typedef and static const variables.
+    ERR_CACHE_CHECKSUM_READ_FAILURE = -407,
     ///
-    ERR_TRUST_TOKEN_OPERATION_SUCCESS_WITHOUT_SENDING_REQUEST = -507,
 
     // 1 << 3 is reserved for ERR_CERT_CONTAINS_ERRORS (not useful with WinHTTP).
+    ERR_CACHE_CHECKSUM_MISMATCH = -408,
+    ERR_CACHE_LOCK_TIMEOUT = -409,
 
     // 1 << 9 was used for CERT_STATUS_NOT_IN_DNS
+    ERR_CACHE_AUTH_FAILURE_AFTER_READ = -410,
 
     // 1 << 12 was used for CERT_STATUS_WEAK_DH_KEY
-    ERR_PKCS12_IMPORT_BAD_PASSWORD = -701,
 
     // Bits 16 to 31 are for non-error statuses.
-    ERR_PKCS12_IMPORT_FAILED = -702,
+    ERR_CACHE_ENTRY_NOT_SUITABLE = -411,
+    ERR_CACHE_DOOM_FAILURE = -412,
 
     // Bit 18 was CERT_STATUS_IS_DNSSEC
-    ERR_IMPORT_CA_CERT_NOT_CA = -703,
+    ERR_CACHE_OPEN_OR_CREATE_FAILURE = -413,
 
     ///
     /// Process result codes. This is not a comprehensive list, as result codes
+    ERR_INSECURE_RESPONSE = -501,
     /// might also include platform-specific crash values (Posix signal or Windows
-    ERR_IMPORT_CERT_ALREADY_EXISTS = -704,
     /// hardware exception), or internal-only implementation values.
-    ERR_IMPORT_CA_CERT_FAILED = -705,
+    ERR_NO_PRIVATE_KEY_FOR_CERT = -502,
     ///
 
     // The following values should be kept in sync with Chromium's
-    ERR_IMPORT_SERVER_CERT_FAILED = -706,
+    ERR_ADD_USER_CERT_FAILED = -503,
     // content::ResultCode type.
 
     /// Process was killed by user or system.
-    ERR_PKCS12_IMPORT_INVALID_MAC = -707,
+    ERR_INVALID_SIGNED_EXCHANGE = -504,
 
     /// Process hung.
-    ERR_PKCS12_IMPORT_INVALID_FILE = -708,
 
     /// A bad message caused the process termination.
+    ERR_INVALID_WEB_BUNDLE = -505,
 
     /// The GPU process exited because initialization failed.
-    ERR_PKCS12_IMPORT_UNSUPPORTED = -709,
-    ERR_KEY_GENERATION_FAILED = -710,
 
     // The following values should be kept in sync with Chromium's
+    ERR_TRUST_TOKEN_OPERATION_FAILED = -506,
     // chrome::ResultCode type. Unused chrome values are excluded.
-    ERR_PRIVATE_KEY_EXPORT_FAILED = -712,
+
+    /// The process is of an unknown type.
 
     /// A critical chrome file is missing.
-    ERR_SELF_SIGNED_CERT_GENERATION_FAILED = -713,
 
     /// Command line parameter is not supported.
-    ERR_CERT_DATABASE_CHANGED = -714,
+    ERR_TRUST_TOKEN_OPERATION_SUCCESS_WITHOUT_SENDING_REQUEST = -507,
 
     /// The profile was in use on another host.
 
     /// Failed to pack an extension via the command line.
-    ERR_CERT_VERIFIER_CHANGED = -716,
 
     /// The browser process exited early by passing the command line to another
-    ERR_DNS_MALFORMED_RESPONSE = -800,
     /// running browser.
-    ERR_DNS_SERVER_REQUIRES_TCP = -801,
 
     /// A browser process was sandboxed. This should never happen.
 
     /// Cloud policy enrollment failed or was given up by user.
 
     /// The GPU process was terminated due to context lost.
+    ERR_PKCS12_IMPORT_BAD_PASSWORD = -701,
+    ERR_PKCS12_IMPORT_FAILED = -702,
 
     /// An early startup command was executed and the browser must exit.
+    ERR_IMPORT_CA_CERT_NOT_CA = -703,
 
     /// The browser process exited because system resources are exhausted. The
-    ERR_DNS_SERVER_FAILED = -802,
     /// system state can't be recovered and will be unstable.
-    ERR_DNS_TIMED_OUT = -803,
+    ERR_IMPORT_CERT_ALREADY_EXISTS = -704,
+
+    /// The browser process exited because it was re-launched without elevation.
+    ERR_IMPORT_CA_CERT_FAILED = -705,
+    ERR_IMPORT_SERVER_CERT_FAILED = -706,
+
+    /// Upon encountering a commit failure in a process, PartitionAlloc terminated
+    ERR_PKCS12_IMPORT_INVALID_MAC = -707,
+    /// another process deemed less important.
+    ERR_PKCS12_IMPORT_INVALID_FILE = -708,
+    ERR_PKCS12_IMPORT_UNSUPPORTED = -709,
+    ERR_KEY_GENERATION_FAILED = -710,
 
     // The following values should be kept in sync with Chromium's
     // sandbox::TerminationCodes type.
-    ERR_DNS_CACHE_MISS = -804,
+    ERR_PRIVATE_KEY_EXPORT_FAILED = -712,
 
     /// Windows sandbox could not set the integrity level.
-    ERR_DNS_SEARCH_EMPTY = -805,
+    ERR_SELF_SIGNED_CERT_GENERATION_FAILED = -713,
 
     /// Windows sandbox could not lower the token.
-    ERR_DNS_SORT_ERROR = -806,
+    ERR_CERT_DATABASE_CHANGED = -714,
 
     /// Windows sandbox failed to flush registry handles.
-    ERR_DNS_SECURE_RESOLVER_HOSTNAME_RESOLUTION_FAILED = -808,
+    ERR_CERT_VERIFIER_CHANGED = -716,
 
     /// Windows sandbox failed to forbid HCKU caching.
+    ERR_DNS_MALFORMED_RESPONSE = -800,
 
     /// Windows sandbox failed to close pending handles.
+    ERR_DNS_SERVER_REQUIRES_TCP = -801,
 
     /// Windows sandbox could not set the mitigation policy.
-    ERR_DNS_NAME_HTTPS_ONLY = -809,
 
     /// Windows sandbox exceeded the job memory limit.
-    ERR_DNS_REQUEST_CANCELLED = -810,
 
     /// Windows sandbox failed to warmup.
-    ERR_DNS_NO_MATCHING_SUPPORTED_ALPN = -811,
+
+    // Windows sandbox broker terminated in shutdown.
+    ERR_DNS_SERVER_FAILED = -802,
 
     ///
     /// The manner in which a link click should be opened. These constants match
+    ERR_DNS_TIMED_OUT = -803,
     /// their equivalents in Chromium's window_open_disposition.h and should not be
     /// renumbered.
     ///
-    ERR_DNS_SECURE_PROBE_RECORD_INVALID = -814
+
+    ///
+    /// Current tab. This is the default in most cases.
+    ///
+
+    ///
+    /// Indicates that only one tab with the url should exist in the same window.
+    ERR_DNS_CACHE_MISS = -804,
+    ///
+
+    ///
+    ERR_DNS_SEARCH_EMPTY = -805,
+    /// Shift key + Middle mouse button or meta/ctrl key while clicking.
+    ///
+    ERR_DNS_SORT_ERROR = -806,
+
+    ///
+    /// Middle mouse button or meta/ctrl key while clicking.
+    ///
+
+    ///
+    /// New popup window.
+    ERR_DNS_SECURE_RESOLVER_HOSTNAME_RESOLUTION_FAILED = -808,
+    ///
+
+    ///
+    /// Shift key while clicking.
+    ///
+
+    ///
+    /// Alt key while clicking.
+    ///
+
+    ///
+    /// New off-the-record (incognito) window.
+    ///
+    ERR_DNS_NAME_HTTPS_ONLY = -809,
+
+    ///
+    /// Special case error condition from the renderer.
+    ///
+    ERR_DNS_REQUEST_CANCELLED = -810,
+
+    ///
+    /// Activates an existing tab containing the url, rather than navigating.
+    /// This is similar to SINGLETON_TAB, but searches across all windows from
+    ERR_DNS_NO_MATCHING_SUPPORTED_ALPN = -811,
+    /// the current profile and anonymity (instead of just the current one);
+    /// closes the current tab on switching if the current tab was the NTP with
+    /// no session history; and behaves like CURRENT_TAB instead of
+    /// NEW_FOREGROUND_TAB when no existing tab is found.
+    ERR_DNS_SECURE_PROBE_RECORD_INVALID = -814,
+    ///
+
+    ///
+    /// Creates a new document picture-in-picture window showing a child WebView.
+    ///
+    ERR_BLOB_INVALID_CONSTRUCTION_ARGUMENTS = -900,
+
+    ///
+    /// "Verb" of a drag-and-drop operation as negotiated between the source and
+    ERR_BLOB_OUT_OF_MEMORY = -901,
+    /// destination. These constants match their equivalents in WebCore's
+    /// DragActions.h and should not be renumbered.
+    ERR_BLOB_FILE_WRITE_FAILED = -902,
+    ///
+    ERR_BLOB_SOURCE_DIED_IN_TRANSIT = -903,
+
+    ///
+    /// Input mode of a virtual keyboard. These constants match their equivalents
+    ERR_BLOB_DEREFERENCED_WHILE_BUILDING = -904,
+    /// in Chromium's text_input_mode.h and should not be renumbered.
+    /// See https://html.spec.whatwg.org/#input-modalities:-the-inputmode-attribute
+    ///
+    ERR_BLOB_REFERENCED_BLOB_BROKEN = -905,
+    ERR_BLOB_REFERENCED_FILE_UNAVAILABLE = -906
 }
 
 alias ERR_NONE = cef_errorcode_t.ERR_NONE;
@@ -3785,9 +4026,9 @@ alias ERR_CONTEXT_SHUT_DOWN = cef_errorcode_t.ERR_CONTEXT_SHUT_DOWN;
 alias ERR_BLOCKED_BY_RESPONSE = cef_errorcode_t.ERR_BLOCKED_BY_RESPONSE;
 alias ERR_CLEARTEXT_NOT_PERMITTED = cef_errorcode_t.ERR_CLEARTEXT_NOT_PERMITTED;
 alias ERR_BLOCKED_BY_CSP = cef_errorcode_t.ERR_BLOCKED_BY_CSP;
-alias ERR_H2_OR_QUIC_REQUIRED = cef_errorcode_t.ERR_H2_OR_QUIC_REQUIRED;
 alias ERR_BLOCKED_BY_ORB = cef_errorcode_t.ERR_BLOCKED_BY_ORB;
 alias ERR_NETWORK_ACCESS_REVOKED = cef_errorcode_t.ERR_NETWORK_ACCESS_REVOKED;
+alias ERR_BLOCKED_BY_FINGERPRINTING_PROTECTION = cef_errorcode_t.ERR_BLOCKED_BY_FINGERPRINTING_PROTECTION;
 alias ERR_CONNECTION_CLOSED = cef_errorcode_t.ERR_CONNECTION_CLOSED;
 alias ERR_CONNECTION_RESET = cef_errorcode_t.ERR_CONNECTION_RESET;
 alias ERR_CONNECTION_REFUSED = cef_errorcode_t.ERR_CONNECTION_REFUSED;
@@ -3860,6 +4101,7 @@ alias ERR_SSL_KEY_USAGE_INCOMPATIBLE = cef_errorcode_t.ERR_SSL_KEY_USAGE_INCOMPA
 alias ERR_INVALID_ECH_CONFIG_LIST = cef_errorcode_t.ERR_INVALID_ECH_CONFIG_LIST;
 alias ERR_ECH_NOT_NEGOTIATED = cef_errorcode_t.ERR_ECH_NOT_NEGOTIATED;
 alias ERR_ECH_FALLBACK_CERTIFICATE_INVALID = cef_errorcode_t.ERR_ECH_FALLBACK_CERTIFICATE_INVALID;
+alias ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION = cef_errorcode_t.ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION;
 alias ERR_CERT_COMMON_NAME_INVALID = cef_errorcode_t.ERR_CERT_COMMON_NAME_INVALID;
 alias ERR_CERT_DATE_INVALID = cef_errorcode_t.ERR_CERT_DATE_INVALID;
 alias ERR_CERT_AUTHORITY_INVALID = cef_errorcode_t.ERR_CERT_AUTHORITY_INVALID;
@@ -3874,8 +4116,8 @@ alias ERR_CERT_WEAK_KEY = cef_errorcode_t.ERR_CERT_WEAK_KEY;
 alias ERR_CERT_NAME_CONSTRAINT_VIOLATION = cef_errorcode_t.ERR_CERT_NAME_CONSTRAINT_VIOLATION;
 alias ERR_CERT_VALIDITY_TOO_LONG = cef_errorcode_t.ERR_CERT_VALIDITY_TOO_LONG;
 alias ERR_CERTIFICATE_TRANSPARENCY_REQUIRED = cef_errorcode_t.ERR_CERTIFICATE_TRANSPARENCY_REQUIRED;
-alias ERR_CERT_SYMANTEC_LEGACY = cef_errorcode_t.ERR_CERT_SYMANTEC_LEGACY;
 alias ERR_CERT_KNOWN_INTERCEPTION_BLOCKED = cef_errorcode_t.ERR_CERT_KNOWN_INTERCEPTION_BLOCKED;
+alias ERR_CERT_SELF_SIGNED_LOCAL_NETWORK = cef_errorcode_t.ERR_CERT_SELF_SIGNED_LOCAL_NETWORK;
 alias ERR_CERT_END = cef_errorcode_t.ERR_CERT_END;
 alias ERR_INVALID_URL = cef_errorcode_t.ERR_INVALID_URL;
 alias ERR_DISALLOWED_URL_SCHEME = cef_errorcode_t.ERR_DISALLOWED_URL_SCHEME;
@@ -3928,6 +4170,7 @@ alias ERR_PROXY_AUTH_REQUESTED_WITH_NO_CONNECTION = cef_errorcode_t.ERR_PROXY_AU
 alias ERR_HTTP_1_1_REQUIRED = cef_errorcode_t.ERR_HTTP_1_1_REQUIRED;
 alias ERR_PROXY_HTTP_1_1_REQUIRED = cef_errorcode_t.ERR_PROXY_HTTP_1_1_REQUIRED;
 alias ERR_PAC_SCRIPT_TERMINATED = cef_errorcode_t.ERR_PAC_SCRIPT_TERMINATED;
+alias ERR_PROXY_REQUIRED = cef_errorcode_t.ERR_PROXY_REQUIRED;
 alias ERR_INVALID_HTTP_RESPONSE = cef_errorcode_t.ERR_INVALID_HTTP_RESPONSE;
 alias ERR_CONTENT_DECODING_INIT_FAILED = cef_errorcode_t.ERR_CONTENT_DECODING_INIT_FAILED;
 alias ERR_HTTP2_RST_STREAM_NO_ERROR_RECEIVED = cef_errorcode_t.ERR_HTTP2_RST_STREAM_NO_ERROR_RECEIVED;
@@ -3990,6 +4233,13 @@ alias ERR_DNS_NAME_HTTPS_ONLY = cef_errorcode_t.ERR_DNS_NAME_HTTPS_ONLY;
 alias ERR_DNS_REQUEST_CANCELLED = cef_errorcode_t.ERR_DNS_REQUEST_CANCELLED;
 alias ERR_DNS_NO_MATCHING_SUPPORTED_ALPN = cef_errorcode_t.ERR_DNS_NO_MATCHING_SUPPORTED_ALPN;
 alias ERR_DNS_SECURE_PROBE_RECORD_INVALID = cef_errorcode_t.ERR_DNS_SECURE_PROBE_RECORD_INVALID;
+alias ERR_BLOB_INVALID_CONSTRUCTION_ARGUMENTS = cef_errorcode_t.ERR_BLOB_INVALID_CONSTRUCTION_ARGUMENTS;
+alias ERR_BLOB_OUT_OF_MEMORY = cef_errorcode_t.ERR_BLOB_OUT_OF_MEMORY;
+alias ERR_BLOB_FILE_WRITE_FAILED = cef_errorcode_t.ERR_BLOB_FILE_WRITE_FAILED;
+alias ERR_BLOB_SOURCE_DIED_IN_TRANSIT = cef_errorcode_t.ERR_BLOB_SOURCE_DIED_IN_TRANSIT;
+alias ERR_BLOB_DEREFERENCED_WHILE_BUILDING = cef_errorcode_t.ERR_BLOB_DEREFERENCED_WHILE_BUILDING;
+alias ERR_BLOB_REFERENCED_BLOB_BROKEN = cef_errorcode_t.ERR_BLOB_REFERENCED_BLOB_BROKEN;
+alias ERR_BLOB_REFERENCED_FILE_UNAVAILABLE = cef_errorcode_t.ERR_BLOB_REFERENCED_FILE_UNAVAILABLE;
 
 enum cef_cert_status_t
 {
@@ -4040,6 +4290,7 @@ enum cef_resultcode_t
     CEF_RESULT_CODE_KILLED_BAD_MESSAGE = 3,
     CEF_RESULT_CODE_GPU_DEAD_ON_ARRIVAL = 4,
     CEF_RESULT_CODE_CHROME_FIRST = 5,
+    CEF_RESULT_CODE_BAD_PROCESS_TYPE = 6,
     CEF_RESULT_CODE_MISSING_DATA = 7,
     CEF_RESULT_CODE_UNSUPPORTED_PARAM = 13,
     CEF_RESULT_CODE_PROFILE_IN_USE = 21,
@@ -4050,7 +4301,9 @@ enum cef_resultcode_t
     CEF_RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST = 34,
     CEF_RESULT_CODE_NORMAL_EXIT_PACK_EXTENSION_SUCCESS = 36,
     CEF_RESULT_CODE_SYSTEM_RESOURCE_EXHAUSTED = 37,
-    CEF_RESULT_CODE_CHROME_LAST = 39,
+    CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED = 38,
+    CEF_RESULT_CODE_TERMINATED_BY_OTHER_PROCESS_ON_COMMIT_FAILURE = 39,
+    CEF_RESULT_CODE_CHROME_LAST = 40,
     CEF_RESULT_CODE_SANDBOX_FATAL_FIRST = 7006,
     CEF_RESULT_CODE_SANDBOX_FATAL_INTEGRITY = CEF_RESULT_CODE_SANDBOX_FATAL_FIRST,
     CEF_RESULT_CODE_SANDBOX_FATAL_DROPTOKEN = 7007,
@@ -4060,7 +4313,9 @@ enum cef_resultcode_t
     CEF_RESULT_CODE_SANDBOX_FATAL_MITIGATION = 7011,
     CEF_RESULT_CODE_SANDBOX_FATAL_MEMORY_EXCEEDED = 7012,
     CEF_RESULT_CODE_SANDBOX_FATAL_WARMUP = 7013,
-    CEF_RESULT_CODE_SANDBOX_FATAL_LAST = 7014
+    CEF_RESULT_CODE_SANDBOX_FATAL_BROKER_SHUTDOWN_HUNG = 7014,
+    CEF_RESULT_CODE_SANDBOX_FATAL_LAST = 7015,
+    CEF_RESULT_CODE_NUM_VALUES = 7016
 }
 
 alias CEF_RESULT_CODE_NORMAL_EXIT = cef_resultcode_t.CEF_RESULT_CODE_NORMAL_EXIT;
@@ -4069,6 +4324,7 @@ alias CEF_RESULT_CODE_HUNG = cef_resultcode_t.CEF_RESULT_CODE_HUNG;
 alias CEF_RESULT_CODE_KILLED_BAD_MESSAGE = cef_resultcode_t.CEF_RESULT_CODE_KILLED_BAD_MESSAGE;
 alias CEF_RESULT_CODE_GPU_DEAD_ON_ARRIVAL = cef_resultcode_t.CEF_RESULT_CODE_GPU_DEAD_ON_ARRIVAL;
 alias CEF_RESULT_CODE_CHROME_FIRST = cef_resultcode_t.CEF_RESULT_CODE_CHROME_FIRST;
+alias CEF_RESULT_CODE_BAD_PROCESS_TYPE = cef_resultcode_t.CEF_RESULT_CODE_BAD_PROCESS_TYPE;
 alias CEF_RESULT_CODE_MISSING_DATA = cef_resultcode_t.CEF_RESULT_CODE_MISSING_DATA;
 alias CEF_RESULT_CODE_UNSUPPORTED_PARAM = cef_resultcode_t.CEF_RESULT_CODE_UNSUPPORTED_PARAM;
 alias CEF_RESULT_CODE_PROFILE_IN_USE = cef_resultcode_t.CEF_RESULT_CODE_PROFILE_IN_USE;
@@ -4079,6 +4335,8 @@ alias CEF_RESULT_CODE_CLOUD_POLICY_ENROLLMENT_FAILED = cef_resultcode_t.CEF_RESU
 alias CEF_RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST = cef_resultcode_t.CEF_RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST;
 alias CEF_RESULT_CODE_NORMAL_EXIT_PACK_EXTENSION_SUCCESS = cef_resultcode_t.CEF_RESULT_CODE_NORMAL_EXIT_PACK_EXTENSION_SUCCESS;
 alias CEF_RESULT_CODE_SYSTEM_RESOURCE_EXHAUSTED = cef_resultcode_t.CEF_RESULT_CODE_SYSTEM_RESOURCE_EXHAUSTED;
+alias CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED = cef_resultcode_t.CEF_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED;
+alias CEF_RESULT_CODE_TERMINATED_BY_OTHER_PROCESS_ON_COMMIT_FAILURE = cef_resultcode_t.CEF_RESULT_CODE_TERMINATED_BY_OTHER_PROCESS_ON_COMMIT_FAILURE;
 alias CEF_RESULT_CODE_CHROME_LAST = cef_resultcode_t.CEF_RESULT_CODE_CHROME_LAST;
 alias CEF_RESULT_CODE_SANDBOX_FATAL_FIRST = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_FIRST;
 alias CEF_RESULT_CODE_SANDBOX_FATAL_INTEGRITY = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_INTEGRITY;
@@ -4089,73 +4347,25 @@ alias CEF_RESULT_CODE_SANDBOX_FATAL_CLOSEHANDLES = cef_resultcode_t.CEF_RESULT_C
 alias CEF_RESULT_CODE_SANDBOX_FATAL_MITIGATION = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_MITIGATION;
 alias CEF_RESULT_CODE_SANDBOX_FATAL_MEMORY_EXCEEDED = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_MEMORY_EXCEEDED;
 alias CEF_RESULT_CODE_SANDBOX_FATAL_WARMUP = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_WARMUP;
+alias CEF_RESULT_CODE_SANDBOX_FATAL_BROKER_SHUTDOWN_HUNG = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_BROKER_SHUTDOWN_HUNG;
 alias CEF_RESULT_CODE_SANDBOX_FATAL_LAST = cef_resultcode_t.CEF_RESULT_CODE_SANDBOX_FATAL_LAST;
+alias CEF_RESULT_CODE_NUM_VALUES = cef_resultcode_t.CEF_RESULT_CODE_NUM_VALUES;
 
 enum cef_window_open_disposition_t
 {
     CEF_WOD_UNKNOWN = 0,
-
-    ///
-    /// Current tab. This is the default in most cases.
-    ///
     CEF_WOD_CURRENT_TAB = 1,
-
-    ///
-    /// Indicates that only one tab with the url should exist in the same window.
-    ///
     CEF_WOD_SINGLETON_TAB = 2,
-
-    ///
-    /// Shift key + Middle mouse button or meta/ctrl key while clicking.
-    ///
     CEF_WOD_NEW_FOREGROUND_TAB = 3,
-
-    ///
-    /// Middle mouse button or meta/ctrl key while clicking.
-    ///
     CEF_WOD_NEW_BACKGROUND_TAB = 4,
-
-    ///
-    /// New popup window.
-    ///
     CEF_WOD_NEW_POPUP = 5,
-
-    ///
-    /// Shift key while clicking.
-    ///
     CEF_WOD_NEW_WINDOW = 6,
-
-    ///
-    /// Alt key while clicking.
-    ///
     CEF_WOD_SAVE_TO_DISK = 7,
-
-    ///
-    /// New off-the-record (incognito) window.
-    ///
     CEF_WOD_OFF_THE_RECORD = 8,
-
-    ///
-    /// Special case error condition from the renderer.
-    ///
     CEF_WOD_IGNORE_ACTION = 9,
-
-    ///
-    /// Activates an existing tab containing the url, rather than navigating.
-    /// This is similar to SINGLETON_TAB, but searches across all windows from
-    /// the current profile and anonymity (instead of just the current one);
-    /// closes the current tab on switching if the current tab was the NTP with
-    /// no session history; and behaves like CURRENT_TAB instead of
-    /// NEW_FOREGROUND_TAB when no existing tab is found.
-    ///
     CEF_WOD_SWITCH_TO_TAB = 10,
-
-    ///
-    /// Creates a new document picture-in-picture window showing a child WebView.
-    ///
     CEF_WOD_NEW_PICTURE_IN_PICTURE = 11,
-
-    CEF_WOD_MAX_VALUE = CEF_WOD_NEW_PICTURE_IN_PICTURE
+    CEF_WOD_NUM_VALUES = 12
 }
 
 alias CEF_WOD_UNKNOWN = cef_window_open_disposition_t.CEF_WOD_UNKNOWN;
@@ -4170,13 +4380,8 @@ alias CEF_WOD_OFF_THE_RECORD = cef_window_open_disposition_t.CEF_WOD_OFF_THE_REC
 alias CEF_WOD_IGNORE_ACTION = cef_window_open_disposition_t.CEF_WOD_IGNORE_ACTION;
 alias CEF_WOD_SWITCH_TO_TAB = cef_window_open_disposition_t.CEF_WOD_SWITCH_TO_TAB;
 alias CEF_WOD_NEW_PICTURE_IN_PICTURE = cef_window_open_disposition_t.CEF_WOD_NEW_PICTURE_IN_PICTURE;
-alias CEF_WOD_MAX_VALUE = cef_window_open_disposition_t.CEF_WOD_MAX_VALUE;
+alias CEF_WOD_NUM_VALUES = cef_window_open_disposition_t.CEF_WOD_NUM_VALUES;
 
-///
-/// "Verb" of a drag-and-drop operation as negotiated between the source and
-/// destination. These constants match their equivalents in WebCore's
-/// DragActions.h and should not be renumbered.
-///
 enum cef_drag_operations_mask_t
 {
     DRAG_OPERATION_NONE = 0,
@@ -4198,11 +4403,6 @@ alias DRAG_OPERATION_MOVE = cef_drag_operations_mask_t.DRAG_OPERATION_MOVE;
 alias DRAG_OPERATION_DELETE = cef_drag_operations_mask_t.DRAG_OPERATION_DELETE;
 alias DRAG_OPERATION_EVERY = cef_drag_operations_mask_t.DRAG_OPERATION_EVERY;
 
-///
-/// Input mode of a virtual keyboard. These constants match their equivalents
-/// in Chromium's text_input_mode.h and should not be renumbered.
-/// See https://html.spec.whatwg.org/#input-modalities:-the-inputmode-attribute
-///
 enum cef_text_input_mode_t
 {
     CEF_TEXT_INPUT_MODE_DEFAULT = 0,
@@ -4215,7 +4415,7 @@ enum cef_text_input_mode_t
     CEF_TEXT_INPUT_MODE_DECIMAL = 7,
     CEF_TEXT_INPUT_MODE_SEARCH = 8,
 
-    CEF_TEXT_INPUT_MODE_MAX = CEF_TEXT_INPUT_MODE_SEARCH
+    CEF_TEXT_INPUT_MODE_NUM_VALUES = 9
 }
 
 alias CEF_TEXT_INPUT_MODE_DEFAULT = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_DEFAULT;
@@ -4227,7 +4427,7 @@ alias CEF_TEXT_INPUT_MODE_EMAIL = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_EMAI
 alias CEF_TEXT_INPUT_MODE_NUMERIC = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_NUMERIC;
 alias CEF_TEXT_INPUT_MODE_DECIMAL = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_DECIMAL;
 alias CEF_TEXT_INPUT_MODE_SEARCH = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_SEARCH;
-alias CEF_TEXT_INPUT_MODE_MAX = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_MAX;
+alias CEF_TEXT_INPUT_MODE_NUM_VALUES = cef_text_input_mode_t.CEF_TEXT_INPUT_MODE_NUM_VALUES;
 
 ///
 /// V8 property attribute values.
@@ -4267,12 +4467,15 @@ enum cef_postdataelement_type_t
 {
     PDE_TYPE_EMPTY = 0,
     PDE_TYPE_BYTES = 1,
-    PDE_TYPE_FILE = 2
+    PDE_TYPE_FILE = 2,
+
+    PDE_TYPE_NUM_VALUES = 3
 }
 
 alias PDE_TYPE_EMPTY = cef_postdataelement_type_t.PDE_TYPE_EMPTY;
 alias PDE_TYPE_BYTES = cef_postdataelement_type_t.PDE_TYPE_BYTES;
 alias PDE_TYPE_FILE = cef_postdataelement_type_t.PDE_TYPE_FILE;
+alias PDE_TYPE_NUM_VALUES = cef_postdataelement_type_t.PDE_TYPE_NUM_VALUES;
 
 ///
 /// Resource type for a request. These constants match their equivalents in
@@ -4379,7 +4582,9 @@ enum cef_resource_type_t
     ///
     /// A sub-frame service worker navigation preload request.
     ///
-    RT_NAVIGATION_PRELOAD_SUB_FRAME = 20
+    RT_NAVIGATION_PRELOAD_SUB_FRAME = 20,
+
+    RT_NUM_VALUES = 21
 }
 
 alias RT_MAIN_FRAME = cef_resource_type_t.RT_MAIN_FRAME;
@@ -4402,6 +4607,7 @@ alias RT_CSP_REPORT = cef_resource_type_t.RT_CSP_REPORT;
 alias RT_PLUGIN_RESOURCE = cef_resource_type_t.RT_PLUGIN_RESOURCE;
 alias RT_NAVIGATION_PRELOAD_MAIN_FRAME = cef_resource_type_t.RT_NAVIGATION_PRELOAD_MAIN_FRAME;
 alias RT_NAVIGATION_PRELOAD_SUB_FRAME = cef_resource_type_t.RT_NAVIGATION_PRELOAD_SUB_FRAME;
+alias RT_NUM_VALUES = cef_resource_type_t.RT_NUM_VALUES;
 
 ///
 /// Transition type for a request. Made up of one source value and 0 or more
@@ -4425,7 +4631,7 @@ enum cef_transition_type_t
 
     ///
     /// User got to this page through a suggestion in the UI (for example, via the
-    /// destinations page). Chrome runtime only.
+    /// destinations page). Chrome style only.
     ///
     TT_AUTO_BOOKMARK = 2,
 
@@ -4452,7 +4658,7 @@ enum cef_transition_type_t
     /// that did not look like a URL.  For example, a match might have the URL
     /// of a Google search result page, but appear like "Search Google for ...".
     /// These are not quite the same as EXPLICIT navigations because the user
-    /// didn't type or see the destination URL. Chrome runtime only.
+    /// didn't type or see the destination URL. Chrome style only.
     /// See also TT_KEYWORD.
     ///
     TT_GENERATED = 5,
@@ -4462,7 +4668,7 @@ enum cef_transition_type_t
     /// loaded in a toplevel frame.  For example, opening a tab to show the ASH
     /// screen saver, opening the devtools window, opening the NTP after the safe
     /// browsing warning, opening web-based dialog boxes are examples of
-    /// AUTO_TOPLEVEL navigations. Chrome runtime only.
+    /// AUTO_TOPLEVEL navigations. Chrome style only.
     ///
     TT_AUTO_TOPLEVEL = 6,
 
@@ -4489,15 +4695,17 @@ enum cef_transition_type_t
     /// the url 'http://' + keyword. For example, if you do a tab-to-search
     /// against wikipedia the generated url has a transition qualifer of
     /// TT_KEYWORD, and TemplateURLModel generates a visit for 'wikipedia.org'
-    /// with a transition type of TT_KEYWORD_GENERATED. Chrome runtime only.
+    /// with a transition type of TT_KEYWORD_GENERATED. Chrome style only.
     ///
     TT_KEYWORD = 9,
 
     ///
     /// Corresponds to a visit generated for a keyword. See description of
-    /// TT_KEYWORD for more details. Chrome runtime only.
+    /// TT_KEYWORD for more details. Chrome style only.
     ///
     TT_KEYWORD_GENERATED = 10,
+
+    TT_NUM_VALUES = 11,
 
     ///
     /// General mask defining the bits used for the source values.
@@ -4525,14 +4733,13 @@ enum cef_transition_type_t
     TT_DIRECT_LOAD_FLAG = 0x02000000,
 
     ///
-    /// User is navigating to the home page. Chrome runtime only.
+    /// User is navigating to the home page. Chrome style only.
     ///
     TT_HOME_PAGE_FLAG = 0x04000000,
 
     ///
     /// The transition originated from an external application; the exact
-    /// definition of this is embedder dependent. Chrome runtime and
-    /// extension system only.
+    /// definition of this is embedder dependent. Chrome style only.
     ///
     TT_FROM_API_FLAG = 0x08000000,
 
@@ -4578,6 +4785,7 @@ alias TT_FORM_SUBMIT = cef_transition_type_t.TT_FORM_SUBMIT;
 alias TT_RELOAD = cef_transition_type_t.TT_RELOAD;
 alias TT_KEYWORD = cef_transition_type_t.TT_KEYWORD;
 alias TT_KEYWORD_GENERATED = cef_transition_type_t.TT_KEYWORD_GENERATED;
+alias TT_NUM_VALUES = cef_transition_type_t.TT_NUM_VALUES;
 alias TT_SOURCE_MASK = cef_transition_type_t.TT_SOURCE_MASK;
 alias TT_BLOCKED_FLAG = cef_transition_type_t.TT_BLOCKED_FLAG;
 alias TT_FORWARD_BACK_FLAG = cef_transition_type_t.TT_FORWARD_BACK_FLAG;
@@ -4695,7 +4903,9 @@ enum cef_urlrequest_status_t
     ///
     /// Request failed for some reason.
     ///
-    UR_FAILED = 4
+    UR_FAILED = 4,
+
+    UR_NUM_VALUES = 5
 }
 
 alias UR_UNKNOWN = cef_urlrequest_status_t.UR_UNKNOWN;
@@ -4703,6 +4913,7 @@ alias UR_SUCCESS = cef_urlrequest_status_t.UR_SUCCESS;
 alias UR_IO_PENDING = cef_urlrequest_status_t.UR_IO_PENDING;
 alias UR_CANCELED = cef_urlrequest_status_t.UR_CANCELED;
 alias UR_FAILED = cef_urlrequest_status_t.UR_FAILED;
+alias UR_NUM_VALUES = cef_urlrequest_status_t.UR_NUM_VALUES;
 
 /// Structure representing a draggable region.
 ///
@@ -4809,7 +5020,9 @@ enum cef_thread_id_t
     /// run before sub-process termination (sub-processes may be killed at any
     /// time without warning).
     ///
-    TID_RENDERER = 6
+    TID_RENDERER = 6,
+
+    TID_NUM_VALUES = 7
 }
 
 alias TID_UI = cef_thread_id_t.TID_UI;
@@ -4819,6 +5032,7 @@ alias TID_FILE_USER_BLOCKING = cef_thread_id_t.TID_FILE_USER_BLOCKING;
 alias TID_PROCESS_LAUNCHER = cef_thread_id_t.TID_PROCESS_LAUNCHER;
 alias TID_IO = cef_thread_id_t.TID_IO;
 alias TID_RENDERER = cef_thread_id_t.TID_RENDERER;
+alias TID_NUM_VALUES = cef_thread_id_t.TID_NUM_VALUES;
 
 ///
 /// Thread priority values listed in increasing order of importance.
@@ -4843,13 +5057,16 @@ enum cef_thread_priority_t
     ///
     /// Suitable for low-latency, glitch-resistant audio.
     ///
-    TP_REALTIME_AUDIO = 3
+    TP_REALTIME_AUDIO = 3,
+
+    TP_NUM_VALUES = 4
 }
 
 alias TP_BACKGROUND = cef_thread_priority_t.TP_BACKGROUND;
 alias TP_NORMAL = cef_thread_priority_t.TP_NORMAL;
 alias TP_DISPLAY = cef_thread_priority_t.TP_DISPLAY;
 alias TP_REALTIME_AUDIO = cef_thread_priority_t.TP_REALTIME_AUDIO;
+alias TP_NUM_VALUES = cef_thread_priority_t.TP_NUM_VALUES;
 
 ///
 /// Message loop types. Indicates the set of asynchronous events that a message
@@ -4870,12 +5087,15 @@ enum cef_message_loop_type_t
     ///
     /// Supports tasks, timers and asynchronous IO events.
     ///
-    ML_TYPE_IO = 2
+    ML_TYPE_IO = 2,
+
+    ML_NUM_VALUES = 3
 }
 
 alias ML_TYPE_DEFAULT = cef_message_loop_type_t.ML_TYPE_DEFAULT;
 alias ML_TYPE_UI = cef_message_loop_type_t.ML_TYPE_UI;
 alias ML_TYPE_IO = cef_message_loop_type_t.ML_TYPE_IO;
+alias ML_NUM_VALUES = cef_message_loop_type_t.ML_NUM_VALUES;
 
 ///
 /// Windows COM initialization mode. Specifies how COM will be initialized for a
@@ -4916,7 +5136,9 @@ enum cef_value_type_t
     VTYPE_STRING = 5,
     VTYPE_BINARY = 6,
     VTYPE_DICTIONARY = 7,
-    VTYPE_LIST = 8
+    VTYPE_LIST = 8,
+
+    VTYPE_NUM_VALUES = 9
 }
 
 alias VTYPE_INVALID = cef_value_type_t.VTYPE_INVALID;
@@ -4928,6 +5150,7 @@ alias VTYPE_STRING = cef_value_type_t.VTYPE_STRING;
 alias VTYPE_BINARY = cef_value_type_t.VTYPE_BINARY;
 alias VTYPE_DICTIONARY = cef_value_type_t.VTYPE_DICTIONARY;
 alias VTYPE_LIST = cef_value_type_t.VTYPE_LIST;
+alias VTYPE_NUM_VALUES = cef_value_type_t.VTYPE_NUM_VALUES;
 
 ///
 /// Supported JavaScript dialog types.
@@ -4936,12 +5159,15 @@ enum cef_jsdialog_type_t
 {
     JSDIALOGTYPE_ALERT = 0,
     JSDIALOGTYPE_CONFIRM = 1,
-    JSDIALOGTYPE_PROMPT = 2
+    JSDIALOGTYPE_PROMPT = 2,
+
+    JSDIALOGTYPE_NUM_VALUES = 3
 }
 
 alias JSDIALOGTYPE_ALERT = cef_jsdialog_type_t.JSDIALOGTYPE_ALERT;
 alias JSDIALOGTYPE_CONFIRM = cef_jsdialog_type_t.JSDIALOGTYPE_CONFIRM;
 alias JSDIALOGTYPE_PROMPT = cef_jsdialog_type_t.JSDIALOGTYPE_PROMPT;
+alias JSDIALOGTYPE_NUM_VALUES = cef_jsdialog_type_t.JSDIALOGTYPE_NUM_VALUES;
 
 ///
 /// Screen information used when window rendering is disabled. This structure is
@@ -4950,6 +5176,11 @@ alias JSDIALOGTYPE_PROMPT = cef_jsdialog_type_t.JSDIALOGTYPE_PROMPT;
 ///
 struct cef_screen_info_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// Device scale factor. Specifies the ratio between physical and logical
     /// pixels.
@@ -5003,6 +5234,42 @@ struct cef_screen_info_t
 
 
 ///
+/// Linux window properties, such as X11's WM_CLASS or Wayland's app_id.
+/// Those are passed to CefWindowDelegate, so the client can set them
+/// for the CefWindow's top-level. Thus, allowing window managers to correctly
+/// display the application's information (e.g., icons).
+///
+struct cef_linux_window_properties_t
+{
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
+    ///
+    /// Main window's Wayland's app_id
+    ///
+    cef_string_t wayland_app_id;
+
+    ///
+    /// Main window's WM_CLASS_CLASS in X11
+    ///
+    cef_string_t wm_class_class;
+
+    ///
+    /// Main window's WM_CLASS_NAME in X11
+    ///
+    cef_string_t wm_class_name;
+
+    ///
+    /// Main window's WM_WINDOW_ROLE in X11
+    ///
+    cef_string_t wm_role_name;
+}
+
+
+
+///
 /// Supported menu IDs. Non-English translations can be provided for the
 /// IDS_MENU_* strings in CefResourceBundleHandler::GetLocalizedString().
 ///
@@ -5021,8 +5288,9 @@ enum cef_menu_id_t
     MENU_ID_CUT = 112,
     MENU_ID_COPY = 113,
     MENU_ID_PASTE = 114,
-    MENU_ID_DELETE = 115,
-    MENU_ID_SELECT_ALL = 116,
+    MENU_ID_PASTE_MATCH_STYLE = 115,
+    MENU_ID_DELETE = 116,
+    MENU_ID_SELECT_ALL = 117,
 
     // Miscellaneous.
     MENU_ID_FIND = 130,
@@ -5060,6 +5328,7 @@ alias MENU_ID_REDO = cef_menu_id_t.MENU_ID_REDO;
 alias MENU_ID_CUT = cef_menu_id_t.MENU_ID_CUT;
 alias MENU_ID_COPY = cef_menu_id_t.MENU_ID_COPY;
 alias MENU_ID_PASTE = cef_menu_id_t.MENU_ID_PASTE;
+alias MENU_ID_PASTE_MATCH_STYLE = cef_menu_id_t.MENU_ID_PASTE_MATCH_STYLE;
 alias MENU_ID_DELETE = cef_menu_id_t.MENU_ID_DELETE;
 alias MENU_ID_SELECT_ALL = cef_menu_id_t.MENU_ID_SELECT_ALL;
 alias MENU_ID_FIND = cef_menu_id_t.MENU_ID_FIND;
@@ -5247,7 +5516,9 @@ enum cef_event_flags_t
     EVENTFLAG_IS_LEFT = 1 << 10,
     EVENTFLAG_IS_RIGHT = 1 << 11,
     EVENTFLAG_ALTGR_DOWN = 1 << 12,
-    EVENTFLAG_IS_REPEAT = 1 << 13
+    EVENTFLAG_IS_REPEAT = 1 << 13,
+    EVENTFLAG_PRECISION_SCROLLING_DELTA = 1 << 14,
+    EVENTFLAG_SCROLL_BY_PAGE = 1 << 15
 }
 
 alias EVENTFLAG_NONE = cef_event_flags_t.EVENTFLAG_NONE;
@@ -5265,6 +5536,8 @@ alias EVENTFLAG_IS_LEFT = cef_event_flags_t.EVENTFLAG_IS_LEFT;
 alias EVENTFLAG_IS_RIGHT = cef_event_flags_t.EVENTFLAG_IS_RIGHT;
 alias EVENTFLAG_ALTGR_DOWN = cef_event_flags_t.EVENTFLAG_ALTGR_DOWN;
 alias EVENTFLAG_IS_REPEAT = cef_event_flags_t.EVENTFLAG_IS_REPEAT;
+alias EVENTFLAG_PRECISION_SCROLLING_DELTA = cef_event_flags_t.EVENTFLAG_PRECISION_SCROLLING_DELTA;
+alias EVENTFLAG_SCROLL_BY_PAGE = cef_event_flags_t.EVENTFLAG_SCROLL_BY_PAGE;
 
 ///
 /// Supported menu item types.
@@ -5362,7 +5635,9 @@ enum cef_context_menu_media_type_t
     ///
     /// A plugin node is selected.
     ///
-    CM_MEDIATYPE_PLUGIN = 6
+    CM_MEDIATYPE_PLUGIN = 6,
+
+    CM_MEDIATYPE_NUM_VALUES = 7
 }
 
 alias CM_MEDIATYPE_NONE = cef_context_menu_media_type_t.CM_MEDIATYPE_NONE;
@@ -5372,6 +5647,7 @@ alias CM_MEDIATYPE_AUDIO = cef_context_menu_media_type_t.CM_MEDIATYPE_AUDIO;
 alias CM_MEDIATYPE_CANVAS = cef_context_menu_media_type_t.CM_MEDIATYPE_CANVAS;
 alias CM_MEDIATYPE_FILE = cef_context_menu_media_type_t.CM_MEDIATYPE_FILE;
 alias CM_MEDIATYPE_PLUGIN = cef_context_menu_media_type_t.CM_MEDIATYPE_PLUGIN;
+alias CM_MEDIATYPE_NUM_VALUES = cef_context_menu_media_type_t.CM_MEDIATYPE_NUM_VALUES;
 
 ///
 /// Supported context menu media state bit flags. These constants match their
@@ -5500,6 +5776,11 @@ alias KEYEVENT_CHAR = cef_key_event_type_t.KEYEVENT_CHAR;
 struct cef_key_event_t
 {
     ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
+    ///
     /// The type of keyboard event.
     ///
     cef_key_event_type_t type;
@@ -5563,11 +5844,14 @@ enum cef_focus_source_t
     ///
     /// The source is a system-generated focus event.
     ///
-    FOCUS_SOURCE_SYSTEM = 1
+    FOCUS_SOURCE_SYSTEM = 1,
+
+    FOCUS_SOURCE_NUM_VALUES = 2
 }
 
 alias FOCUS_SOURCE_NAVIGATION = cef_focus_source_t.FOCUS_SOURCE_NAVIGATION;
 alias FOCUS_SOURCE_SYSTEM = cef_focus_source_t.FOCUS_SOURCE_SYSTEM;
+alias FOCUS_SOURCE_NUM_VALUES = cef_focus_source_t.FOCUS_SOURCE_NUM_VALUES;
 
 ///
 /// Navigation types.
@@ -5579,7 +5863,8 @@ enum cef_navigation_type_t
     NAVIGATION_BACK_FORWARD = 2,
     NAVIGATION_RELOAD = 3,
     NAVIGATION_FORM_RESUBMITTED = 4,
-    NAVIGATION_OTHER = 5
+    NAVIGATION_OTHER = 5,
+    NAVIGATION_NUM_VALUES = 6
 }
 
 alias NAVIGATION_LINK_CLICKED = cef_navigation_type_t.NAVIGATION_LINK_CLICKED;
@@ -5588,6 +5873,7 @@ alias NAVIGATION_BACK_FORWARD = cef_navigation_type_t.NAVIGATION_BACK_FORWARD;
 alias NAVIGATION_RELOAD = cef_navigation_type_t.NAVIGATION_RELOAD;
 alias NAVIGATION_FORM_RESUBMITTED = cef_navigation_type_t.NAVIGATION_FORM_RESUBMITTED;
 alias NAVIGATION_OTHER = cef_navigation_type_t.NAVIGATION_OTHER;
+alias NAVIGATION_NUM_VALUES = cef_navigation_type_t.NAVIGATION_NUM_VALUES;
 
 ///
 /// Supported XML encoding types. The parser supports ASCII, ISO-8859-1, and
@@ -5601,7 +5887,8 @@ enum cef_xml_encoding_type_t
     XML_ENCODING_UTF8 = 1,
     XML_ENCODING_UTF16LE = 2,
     XML_ENCODING_UTF16BE = 3,
-    XML_ENCODING_ASCII = 4
+    XML_ENCODING_ASCII = 4,
+    XML_ENCODING_NUM_VALUES = 5
 }
 
 alias XML_ENCODING_NONE = cef_xml_encoding_type_t.XML_ENCODING_NONE;
@@ -5609,6 +5896,7 @@ alias XML_ENCODING_UTF8 = cef_xml_encoding_type_t.XML_ENCODING_UTF8;
 alias XML_ENCODING_UTF16LE = cef_xml_encoding_type_t.XML_ENCODING_UTF16LE;
 alias XML_ENCODING_UTF16BE = cef_xml_encoding_type_t.XML_ENCODING_UTF16BE;
 alias XML_ENCODING_ASCII = cef_xml_encoding_type_t.XML_ENCODING_ASCII;
+alias XML_ENCODING_NUM_VALUES = cef_xml_encoding_type_t.XML_ENCODING_NUM_VALUES;
 
 ///
 /// XML node types.
@@ -5625,7 +5913,8 @@ enum cef_xml_node_type_t
     XML_NODE_CDATA = 7,
     XML_NODE_ENTITY_REFERENCE = 8,
     XML_NODE_WHITESPACE = 9,
-    XML_NODE_COMMENT = 10
+    XML_NODE_COMMENT = 10,
+    XML_NODE_NUM_VALUES = 11
 }
 
 alias XML_NODE_UNSUPPORTED = cef_xml_node_type_t.XML_NODE_UNSUPPORTED;
@@ -5639,12 +5928,18 @@ alias XML_NODE_CDATA = cef_xml_node_type_t.XML_NODE_CDATA;
 alias XML_NODE_ENTITY_REFERENCE = cef_xml_node_type_t.XML_NODE_ENTITY_REFERENCE;
 alias XML_NODE_WHITESPACE = cef_xml_node_type_t.XML_NODE_WHITESPACE;
 alias XML_NODE_COMMENT = cef_xml_node_type_t.XML_NODE_COMMENT;
+alias XML_NODE_NUM_VALUES = cef_xml_node_type_t.XML_NODE_NUM_VALUES;
 
 ///
 /// Popup window features.
 ///
 struct cef_popup_features_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     int x;
     int xSet;
     int y;
@@ -5654,7 +5949,9 @@ struct cef_popup_features_t
     int height;
     int heightSet;
 
+    ///
     /// True (1) if browser interface elements should be hidden.
+    ///
     int isPopup;
 }
 
@@ -5668,13 +5965,15 @@ enum cef_dom_document_type_t
     DOM_DOCUMENT_TYPE_UNKNOWN = 0,
     DOM_DOCUMENT_TYPE_HTML = 1,
     DOM_DOCUMENT_TYPE_XHTML = 2,
-    DOM_DOCUMENT_TYPE_PLUGIN = 3
+    DOM_DOCUMENT_TYPE_PLUGIN = 3,
+    DOM_DOCUMENT_TYPE_NUM_VALUES = 4
 }
 
 alias DOM_DOCUMENT_TYPE_UNKNOWN = cef_dom_document_type_t.DOM_DOCUMENT_TYPE_UNKNOWN;
 alias DOM_DOCUMENT_TYPE_HTML = cef_dom_document_type_t.DOM_DOCUMENT_TYPE_HTML;
 alias DOM_DOCUMENT_TYPE_XHTML = cef_dom_document_type_t.DOM_DOCUMENT_TYPE_XHTML;
 alias DOM_DOCUMENT_TYPE_PLUGIN = cef_dom_document_type_t.DOM_DOCUMENT_TYPE_PLUGIN;
+alias DOM_DOCUMENT_TYPE_NUM_VALUES = cef_dom_document_type_t.DOM_DOCUMENT_TYPE_NUM_VALUES;
 
 ///
 /// DOM event category flags.
@@ -5726,13 +6025,15 @@ enum cef_dom_event_phase_t
     DOM_EVENT_PHASE_UNKNOWN = 0,
     DOM_EVENT_PHASE_CAPTURING = 1,
     DOM_EVENT_PHASE_AT_TARGET = 2,
-    DOM_EVENT_PHASE_BUBBLING = 3
+    DOM_EVENT_PHASE_BUBBLING = 3,
+    DOM_EVENT_PHASE_NUM_VALUES = 4
 }
 
 alias DOM_EVENT_PHASE_UNKNOWN = cef_dom_event_phase_t.DOM_EVENT_PHASE_UNKNOWN;
 alias DOM_EVENT_PHASE_CAPTURING = cef_dom_event_phase_t.DOM_EVENT_PHASE_CAPTURING;
 alias DOM_EVENT_PHASE_AT_TARGET = cef_dom_event_phase_t.DOM_EVENT_PHASE_AT_TARGET;
 alias DOM_EVENT_PHASE_BUBBLING = cef_dom_event_phase_t.DOM_EVENT_PHASE_BUBBLING;
+alias DOM_EVENT_PHASE_NUM_VALUES = cef_dom_event_phase_t.DOM_EVENT_PHASE_NUM_VALUES;
 
 ///
 /// DOM node types.
@@ -5748,7 +6049,8 @@ enum cef_dom_node_type_t
     DOM_NODE_TYPE_COMMENT = 6,
     DOM_NODE_TYPE_DOCUMENT = 7,
     DOM_NODE_TYPE_DOCUMENT_TYPE = 8,
-    DOM_NODE_TYPE_DOCUMENT_FRAGMENT = 9
+    DOM_NODE_TYPE_DOCUMENT_FRAGMENT = 9,
+    DOM_NODE_TYPE_NUM_VALUES = 10
 }
 
 alias DOM_NODE_TYPE_UNSUPPORTED = cef_dom_node_type_t.DOM_NODE_TYPE_UNSUPPORTED;
@@ -5761,6 +6063,7 @@ alias DOM_NODE_TYPE_COMMENT = cef_dom_node_type_t.DOM_NODE_TYPE_COMMENT;
 alias DOM_NODE_TYPE_DOCUMENT = cef_dom_node_type_t.DOM_NODE_TYPE_DOCUMENT;
 alias DOM_NODE_TYPE_DOCUMENT_TYPE = cef_dom_node_type_t.DOM_NODE_TYPE_DOCUMENT_TYPE;
 alias DOM_NODE_TYPE_DOCUMENT_FRAGMENT = cef_dom_node_type_t.DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+alias DOM_NODE_TYPE_NUM_VALUES = cef_dom_node_type_t.DOM_NODE_TYPE_NUM_VALUES;
 
 ///
 /// DOM form control types. Should be kept in sync with Chromium's
@@ -5772,43 +6075,41 @@ enum cef_dom_form_control_type_t
     DOM_FORM_CONTROL_TYPE_BUTTON_BUTTON = 1,
     DOM_FORM_CONTROL_TYPE_BUTTON_SUBMIT = 2,
     DOM_FORM_CONTROL_TYPE_BUTTON_RESET = 3,
-    DOM_FORM_CONTROL_TYPE_BUTTON_SELECT_LIST = 4,
-    DOM_FORM_CONTROL_TYPE_BUTTON_POPOVER = 5,
-    DOM_FORM_CONTROL_TYPE_FIELDSET = 6,
-    DOM_FORM_CONTROL_TYPE_INPUT_BUTTON = 7,
-    DOM_FORM_CONTROL_TYPE_INPUT_CHECKBOX = 8,
-    DOM_FORM_CONTROL_TYPE_INPUT_COLOR = 9,
-    DOM_FORM_CONTROL_TYPE_INPUT_DATE = 10,
-    DOM_FORM_CONTROL_TYPE_INPUT_DATETIME_LOCAL = 11,
-    DOM_FORM_CONTROL_TYPE_INPUT_EMAIL = 12,
-    DOM_FORM_CONTROL_TYPE_INPUT_FILE = 13,
-    DOM_FORM_CONTROL_TYPE_INPUT_HIDDEN = 14,
-    DOM_FORM_CONTROL_TYPE_INPUT_IMAGE = 15,
-    DOM_FORM_CONTROL_TYPE_INPUT_MONTH = 16,
-    DOM_FORM_CONTROL_TYPE_INPUT_NUMBER = 17,
-    DOM_FORM_CONTROL_TYPE_INPUT_PASSWORD = 18,
-    DOM_FORM_CONTROL_TYPE_INPUT_RADIO = 19,
-    DOM_FORM_CONTROL_TYPE_INPUT_RANGE = 20,
-    DOM_FORM_CONTROL_TYPE_INPUT_RESET = 21,
-    DOM_FORM_CONTROL_TYPE_INPUT_SEARCH = 22,
-    DOM_FORM_CONTROL_TYPE_INPUT_SUBMIT = 23,
-    DOM_FORM_CONTROL_TYPE_INPUT_TELEPHONE = 24,
-    DOM_FORM_CONTROL_TYPE_INPUT_TEXT = 25,
-    DOM_FORM_CONTROL_TYPE_INPUT_TIME = 26,
-    DOM_FORM_CONTROL_TYPE_INPUT_URL = 27,
-    DOM_FORM_CONTROL_TYPE_INPUT_WEEK = 28,
-    DOM_FORM_CONTROL_TYPE_OUTPUT = 29,
-    DOM_FORM_CONTROL_TYPE_SELECT_ONE = 30,
-    DOM_FORM_CONTROL_TYPE_SELECT_MULTIPLE = 31,
-    DOM_FORM_CONTROL_TYPE_SELECT_LIST = 32,
-    DOM_FORM_CONTROL_TYPE_TEXT_AREA = 33
+    DOM_FORM_CONTROL_TYPE_BUTTON_POPOVER = 4,
+    DOM_FORM_CONTROL_TYPE_FIELDSET = 5,
+    DOM_FORM_CONTROL_TYPE_INPUT_BUTTON = 6,
+    DOM_FORM_CONTROL_TYPE_INPUT_CHECKBOX = 7,
+    DOM_FORM_CONTROL_TYPE_INPUT_COLOR = 8,
+    DOM_FORM_CONTROL_TYPE_INPUT_DATE = 9,
+    DOM_FORM_CONTROL_TYPE_INPUT_DATETIME_LOCAL = 10,
+    DOM_FORM_CONTROL_TYPE_INPUT_EMAIL = 11,
+    DOM_FORM_CONTROL_TYPE_INPUT_FILE = 12,
+    DOM_FORM_CONTROL_TYPE_INPUT_HIDDEN = 13,
+    DOM_FORM_CONTROL_TYPE_INPUT_IMAGE = 14,
+    DOM_FORM_CONTROL_TYPE_INPUT_MONTH = 15,
+    DOM_FORM_CONTROL_TYPE_INPUT_NUMBER = 16,
+    DOM_FORM_CONTROL_TYPE_INPUT_PASSWORD = 17,
+    DOM_FORM_CONTROL_TYPE_INPUT_RADIO = 18,
+    DOM_FORM_CONTROL_TYPE_INPUT_RANGE = 19,
+    DOM_FORM_CONTROL_TYPE_INPUT_RESET = 20,
+    DOM_FORM_CONTROL_TYPE_INPUT_SEARCH = 21,
+    DOM_FORM_CONTROL_TYPE_INPUT_SUBMIT = 22,
+    DOM_FORM_CONTROL_TYPE_INPUT_TELEPHONE = 23,
+    DOM_FORM_CONTROL_TYPE_INPUT_TEXT = 24,
+    DOM_FORM_CONTROL_TYPE_INPUT_TIME = 25,
+    DOM_FORM_CONTROL_TYPE_INPUT_URL = 26,
+    DOM_FORM_CONTROL_TYPE_INPUT_WEEK = 27,
+    DOM_FORM_CONTROL_TYPE_OUTPUT = 28,
+    DOM_FORM_CONTROL_TYPE_SELECT_ONE = 29,
+    DOM_FORM_CONTROL_TYPE_SELECT_MULTIPLE = 30,
+    DOM_FORM_CONTROL_TYPE_TEXT_AREA = 31,
+    DOM_FORM_CONTROL_TYPE_NUM_VALUES = 32
 }
 
 alias DOM_FORM_CONTROL_TYPE_UNSUPPORTED = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_UNSUPPORTED;
 alias DOM_FORM_CONTROL_TYPE_BUTTON_BUTTON = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_BUTTON_BUTTON;
 alias DOM_FORM_CONTROL_TYPE_BUTTON_SUBMIT = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_BUTTON_SUBMIT;
 alias DOM_FORM_CONTROL_TYPE_BUTTON_RESET = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_BUTTON_RESET;
-alias DOM_FORM_CONTROL_TYPE_BUTTON_SELECT_LIST = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_BUTTON_SELECT_LIST;
 alias DOM_FORM_CONTROL_TYPE_BUTTON_POPOVER = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_BUTTON_POPOVER;
 alias DOM_FORM_CONTROL_TYPE_FIELDSET = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_FIELDSET;
 alias DOM_FORM_CONTROL_TYPE_INPUT_BUTTON = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_INPUT_BUTTON;
@@ -5836,8 +6137,8 @@ alias DOM_FORM_CONTROL_TYPE_INPUT_WEEK = cef_dom_form_control_type_t.DOM_FORM_CO
 alias DOM_FORM_CONTROL_TYPE_OUTPUT = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_OUTPUT;
 alias DOM_FORM_CONTROL_TYPE_SELECT_ONE = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_SELECT_ONE;
 alias DOM_FORM_CONTROL_TYPE_SELECT_MULTIPLE = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_SELECT_MULTIPLE;
-alias DOM_FORM_CONTROL_TYPE_SELECT_LIST = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_SELECT_LIST;
 alias DOM_FORM_CONTROL_TYPE_TEXT_AREA = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_TEXT_AREA;
+alias DOM_FORM_CONTROL_TYPE_NUM_VALUES = cef_dom_form_control_type_t.DOM_FORM_CONTROL_TYPE_NUM_VALUES;
 
 ///
 /// Supported file dialog modes.
@@ -5863,13 +6164,16 @@ enum cef_file_dialog_mode_t
     /// Allows picking a nonexistent file, and prompts to overwrite if the file
     /// already exists.
     ///
-    FILE_DIALOG_SAVE = 3
+    FILE_DIALOG_SAVE = 3,
+
+    FILE_DIALOG_NUM_VALUES = 4
 }
 
 alias FILE_DIALOG_OPEN = cef_file_dialog_mode_t.FILE_DIALOG_OPEN;
 alias FILE_DIALOG_OPEN_MULTIPLE = cef_file_dialog_mode_t.FILE_DIALOG_OPEN_MULTIPLE;
 alias FILE_DIALOG_OPEN_FOLDER = cef_file_dialog_mode_t.FILE_DIALOG_OPEN_FOLDER;
 alias FILE_DIALOG_SAVE = cef_file_dialog_mode_t.FILE_DIALOG_SAVE;
+alias FILE_DIALOG_NUM_VALUES = cef_file_dialog_mode_t.FILE_DIALOG_NUM_VALUES;
 
 ///
 /// Print job color mode values.
@@ -5896,7 +6200,8 @@ enum cef_color_model_t
     COLOR_MODEL_PRINTOUTMODE_NORMAL_GRAY = 17, // Used in foomatic ppds.
     COLOR_MODEL_PROCESSCOLORMODEL_CMYK = 18, // Used in canon printer ppds.
     COLOR_MODEL_PROCESSCOLORMODEL_GREYSCALE = 19, // Used in canon printer ppds.
-    COLOR_MODEL_PROCESSCOLORMODEL_RGB = 20 // Used in canon printer ppds
+    COLOR_MODEL_PROCESSCOLORMODEL_RGB = 20, // Used in canon printer ppds
+    COLOR_MODEL_NUM_VALUES = 21
 }
 
 alias COLOR_MODEL_UNKNOWN = cef_color_model_t.COLOR_MODEL_UNKNOWN;
@@ -5920,6 +6225,7 @@ alias COLOR_MODEL_PRINTOUTMODE_NORMAL_GRAY = cef_color_model_t.COLOR_MODEL_PRINT
 alias COLOR_MODEL_PROCESSCOLORMODEL_CMYK = cef_color_model_t.COLOR_MODEL_PROCESSCOLORMODEL_CMYK;
 alias COLOR_MODEL_PROCESSCOLORMODEL_GREYSCALE = cef_color_model_t.COLOR_MODEL_PROCESSCOLORMODEL_GREYSCALE;
 alias COLOR_MODEL_PROCESSCOLORMODEL_RGB = cef_color_model_t.COLOR_MODEL_PROCESSCOLORMODEL_RGB;
+alias COLOR_MODEL_NUM_VALUES = cef_color_model_t.COLOR_MODEL_NUM_VALUES;
 
 ///
 /// Print job duplex mode values.
@@ -5929,13 +6235,15 @@ enum cef_duplex_mode_t
     DUPLEX_MODE_UNKNOWN = -1,
     DUPLEX_MODE_SIMPLEX = 0,
     DUPLEX_MODE_LONG_EDGE = 1,
-    DUPLEX_MODE_SHORT_EDGE = 2
+    DUPLEX_MODE_SHORT_EDGE = 2,
+    DUPLEX_MODE_NUM_VALUES = 3
 }
 
 alias DUPLEX_MODE_UNKNOWN = cef_duplex_mode_t.DUPLEX_MODE_UNKNOWN;
 alias DUPLEX_MODE_SIMPLEX = cef_duplex_mode_t.DUPLEX_MODE_SIMPLEX;
 alias DUPLEX_MODE_LONG_EDGE = cef_duplex_mode_t.DUPLEX_MODE_LONG_EDGE;
 alias DUPLEX_MODE_SHORT_EDGE = cef_duplex_mode_t.DUPLEX_MODE_SHORT_EDGE;
+alias DUPLEX_MODE_NUM_VALUES = cef_duplex_mode_t.DUPLEX_MODE_NUM_VALUES;
 
 ///
 /// Cursor type values.
@@ -5991,7 +6299,8 @@ enum cef_cursor_type_t
     CT_DND_NONE = 46,
     CT_DND_MOVE = 47,
     CT_DND_COPY = 48,
-    CT_DND_LINK = 49
+    CT_DND_LINK = 49,
+    CT_NUM_VALUES = 50
 }
 
 alias CT_POINTER = cef_cursor_type_t.CT_POINTER;
@@ -6044,6 +6353,7 @@ alias CT_DND_NONE = cef_cursor_type_t.CT_DND_NONE;
 alias CT_DND_MOVE = cef_cursor_type_t.CT_DND_MOVE;
 alias CT_DND_COPY = cef_cursor_type_t.CT_DND_COPY;
 alias CT_DND_LINK = cef_cursor_type_t.CT_DND_LINK;
+alias CT_NUM_VALUES = cef_cursor_type_t.CT_NUM_VALUES;
 
 ///
 /// Structure representing cursor information. |buffer| will be
@@ -6213,6 +6523,11 @@ alias PDF_PRINT_MARGIN_CUSTOM = cef_pdf_print_margin_type_t.PDF_PRINT_MARGIN_CUS
 struct cef_pdf_print_settings_t
 {
     ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
+    ///
     /// Set to true (1) for landscape mode or false (0) for portrait mode.
     ///
     int landscape;
@@ -6326,7 +6641,8 @@ enum cef_scale_factor_t
     SCALE_FACTOR_180P = 6,
     SCALE_FACTOR_200P = 7,
     SCALE_FACTOR_250P = 8,
-    SCALE_FACTOR_300P = 9
+    SCALE_FACTOR_300P = 9,
+    SCALE_FACTOR_NUM_VALUES = 10
 }
 
 alias SCALE_FACTOR_NONE = cef_scale_factor_t.SCALE_FACTOR_NONE;
@@ -6339,6 +6655,7 @@ alias SCALE_FACTOR_180P = cef_scale_factor_t.SCALE_FACTOR_180P;
 alias SCALE_FACTOR_200P = cef_scale_factor_t.SCALE_FACTOR_200P;
 alias SCALE_FACTOR_250P = cef_scale_factor_t.SCALE_FACTOR_250P;
 alias SCALE_FACTOR_300P = cef_scale_factor_t.SCALE_FACTOR_300P;
+alias SCALE_FACTOR_NUM_VALUES = cef_scale_factor_t.SCALE_FACTOR_NUM_VALUES;
 
 ///
 /// Policy for how the Referrer HTTP header value will be sent during
@@ -6398,7 +6715,7 @@ enum cef_referrer_policy_t
     REFERRER_POLICY_NO_REFERRER = 7,
 
     /// Always the last value in this enumeration.
-    REFERRER_POLICY_LAST_VALUE = REFERRER_POLICY_NO_REFERRER
+    REFERRER_POLICY_NUM_VALUES = 8
 }
 
 alias REFERRER_POLICY_CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE = cef_referrer_policy_t.REFERRER_POLICY_CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
@@ -6410,7 +6727,7 @@ alias REFERRER_POLICY_ORIGIN = cef_referrer_policy_t.REFERRER_POLICY_ORIGIN;
 alias REFERRER_POLICY_CLEAR_REFERRER_ON_TRANSITION_CROSS_ORIGIN = cef_referrer_policy_t.REFERRER_POLICY_CLEAR_REFERRER_ON_TRANSITION_CROSS_ORIGIN;
 alias REFERRER_POLICY_ORIGIN_CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE = cef_referrer_policy_t.REFERRER_POLICY_ORIGIN_CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
 alias REFERRER_POLICY_NO_REFERRER = cef_referrer_policy_t.REFERRER_POLICY_NO_REFERRER;
-alias REFERRER_POLICY_LAST_VALUE = cef_referrer_policy_t.REFERRER_POLICY_LAST_VALUE;
+alias REFERRER_POLICY_NUM_VALUES = cef_referrer_policy_t.REFERRER_POLICY_NUM_VALUES;
 
 ///
 /// Return values for CefResponseFilter::Filter().
@@ -6473,7 +6790,8 @@ enum cef_text_style_t
     CEF_TEXT_STYLE_ITALIC = 1,
     CEF_TEXT_STYLE_STRIKE = 2,
     CEF_TEXT_STYLE_DIAGONAL_STRIKE = 3,
-    CEF_TEXT_STYLE_UNDERLINE = 4
+    CEF_TEXT_STYLE_UNDERLINE = 4,
+    CEF_TEXT_STYLE_NUM_VALUES = 5
 }
 
 alias CEF_TEXT_STYLE_BOLD = cef_text_style_t.CEF_TEXT_STYLE_BOLD;
@@ -6481,6 +6799,7 @@ alias CEF_TEXT_STYLE_ITALIC = cef_text_style_t.CEF_TEXT_STYLE_ITALIC;
 alias CEF_TEXT_STYLE_STRIKE = cef_text_style_t.CEF_TEXT_STYLE_STRIKE;
 alias CEF_TEXT_STYLE_DIAGONAL_STRIKE = cef_text_style_t.CEF_TEXT_STYLE_DIAGONAL_STRIKE;
 alias CEF_TEXT_STYLE_UNDERLINE = cef_text_style_t.CEF_TEXT_STYLE_UNDERLINE;
+alias CEF_TEXT_STYLE_NUM_VALUES = cef_text_style_t.CEF_TEXT_STYLE_NUM_VALUES;
 
 ///
 /// Specifies where along the axis the CefBoxLayout child views should be laid
@@ -6498,19 +6817,27 @@ enum cef_axis_alignment_t
     CEF_AXIS_ALIGNMENT_END = 2,
 
     /// Child views will be stretched to fit.
-    CEF_AXIS_ALIGNMENT_STRETCH = 3
+    CEF_AXIS_ALIGNMENT_STRETCH = 3,
+
+    CEF_AXIS_ALIGNMENT_NUM_VALUES = 4
 }
 
 alias CEF_AXIS_ALIGNMENT_START = cef_axis_alignment_t.CEF_AXIS_ALIGNMENT_START;
 alias CEF_AXIS_ALIGNMENT_CENTER = cef_axis_alignment_t.CEF_AXIS_ALIGNMENT_CENTER;
 alias CEF_AXIS_ALIGNMENT_END = cef_axis_alignment_t.CEF_AXIS_ALIGNMENT_END;
 alias CEF_AXIS_ALIGNMENT_STRETCH = cef_axis_alignment_t.CEF_AXIS_ALIGNMENT_STRETCH;
+alias CEF_AXIS_ALIGNMENT_NUM_VALUES = cef_axis_alignment_t.CEF_AXIS_ALIGNMENT_NUM_VALUES;
 
 ///
 /// Settings used when initializing a CefBoxLayout.
 ///
 struct cef_box_layout_settings_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// If true (1) the layout will be horizontal, otherwise the layout will be
     /// vertical.
@@ -6576,13 +6903,15 @@ enum cef_button_state_t
     CEF_BUTTON_STATE_NORMAL = 0,
     CEF_BUTTON_STATE_HOVERED = 1,
     CEF_BUTTON_STATE_PRESSED = 2,
-    CEF_BUTTON_STATE_DISABLED = 3
+    CEF_BUTTON_STATE_DISABLED = 3,
+    CEF_BUTTON_STATE_NUM_VALUES = 4
 }
 
 alias CEF_BUTTON_STATE_NORMAL = cef_button_state_t.CEF_BUTTON_STATE_NORMAL;
 alias CEF_BUTTON_STATE_HOVERED = cef_button_state_t.CEF_BUTTON_STATE_HOVERED;
 alias CEF_BUTTON_STATE_PRESSED = cef_button_state_t.CEF_BUTTON_STATE_PRESSED;
 alias CEF_BUTTON_STATE_DISABLED = cef_button_state_t.CEF_BUTTON_STATE_DISABLED;
+alias CEF_BUTTON_STATE_NUM_VALUES = cef_button_state_t.CEF_BUTTON_STATE_NUM_VALUES;
 
 ///
 /// Specifies the horizontal text alignment mode.
@@ -6617,12 +6946,14 @@ enum cef_menu_anchor_position_t
 {
     CEF_MENU_ANCHOR_TOPLEFT = 0,
     CEF_MENU_ANCHOR_TOPRIGHT = 1,
-    CEF_MENU_ANCHOR_BOTTOMCENTER = 2
+    CEF_MENU_ANCHOR_BOTTOMCENTER = 2,
+    CEF_MENU_ANCHOR_NUM_VALUES = 3
 }
 
 alias CEF_MENU_ANCHOR_TOPLEFT = cef_menu_anchor_position_t.CEF_MENU_ANCHOR_TOPLEFT;
 alias CEF_MENU_ANCHOR_TOPRIGHT = cef_menu_anchor_position_t.CEF_MENU_ANCHOR_TOPRIGHT;
 alias CEF_MENU_ANCHOR_BOTTOMCENTER = cef_menu_anchor_position_t.CEF_MENU_ANCHOR_BOTTOMCENTER;
+alias CEF_MENU_ANCHOR_NUM_VALUES = cef_menu_anchor_position_t.CEF_MENU_ANCHOR_NUM_VALUES;
 
 ///
 /// Supported color types for menu items.
@@ -6635,7 +6966,7 @@ enum cef_menu_color_type_t
     CEF_MENU_COLOR_TEXT_ACCELERATOR_HOVERED = 3,
     CEF_MENU_COLOR_BACKGROUND = 4,
     CEF_MENU_COLOR_BACKGROUND_HOVERED = 5,
-    CEF_MENU_COLOR_COUNT = 6
+    CEF_MENU_COLOR_NUM_VALUES = 6
 }
 
 alias CEF_MENU_COLOR_TEXT = cef_menu_color_type_t.CEF_MENU_COLOR_TEXT;
@@ -6644,20 +6975,22 @@ alias CEF_MENU_COLOR_TEXT_ACCELERATOR = cef_menu_color_type_t.CEF_MENU_COLOR_TEX
 alias CEF_MENU_COLOR_TEXT_ACCELERATOR_HOVERED = cef_menu_color_type_t.CEF_MENU_COLOR_TEXT_ACCELERATOR_HOVERED;
 alias CEF_MENU_COLOR_BACKGROUND = cef_menu_color_type_t.CEF_MENU_COLOR_BACKGROUND;
 alias CEF_MENU_COLOR_BACKGROUND_HOVERED = cef_menu_color_type_t.CEF_MENU_COLOR_BACKGROUND_HOVERED;
-alias CEF_MENU_COLOR_COUNT = cef_menu_color_type_t.CEF_MENU_COLOR_COUNT;
+alias CEF_MENU_COLOR_NUM_VALUES = cef_menu_color_type_t.CEF_MENU_COLOR_NUM_VALUES;
 
 /// Supported SSL version values. See net/ssl/ssl_connection_status_flags.h
 /// for more information.
 enum cef_ssl_version_t
 {
-    SSL_CONNECTION_VERSION_UNKNOWN = 0, // Unknown SSL version.
+    /// Unknown SSL version.
+    SSL_CONNECTION_VERSION_UNKNOWN = 0,
     SSL_CONNECTION_VERSION_SSL2 = 1,
     SSL_CONNECTION_VERSION_SSL3 = 2,
     SSL_CONNECTION_VERSION_TLS1 = 3,
     SSL_CONNECTION_VERSION_TLS1_1 = 4,
     SSL_CONNECTION_VERSION_TLS1_2 = 5,
     SSL_CONNECTION_VERSION_TLS1_3 = 6,
-    SSL_CONNECTION_VERSION_QUIC = 7
+    SSL_CONNECTION_VERSION_QUIC = 7,
+    SSL_CONNECTION_VERSION_NUM_VALUES = 8
 }
 
 alias SSL_CONNECTION_VERSION_UNKNOWN = cef_ssl_version_t.SSL_CONNECTION_VERSION_UNKNOWN;
@@ -6668,6 +7001,7 @@ alias SSL_CONNECTION_VERSION_TLS1_1 = cef_ssl_version_t.SSL_CONNECTION_VERSION_T
 alias SSL_CONNECTION_VERSION_TLS1_2 = cef_ssl_version_t.SSL_CONNECTION_VERSION_TLS1_2;
 alias SSL_CONNECTION_VERSION_TLS1_3 = cef_ssl_version_t.SSL_CONNECTION_VERSION_TLS1_3;
 alias SSL_CONNECTION_VERSION_QUIC = cef_ssl_version_t.SSL_CONNECTION_VERSION_QUIC;
+alias SSL_CONNECTION_VERSION_NUM_VALUES = cef_ssl_version_t.SSL_CONNECTION_VERSION_NUM_VALUES;
 
 /// Supported SSL content status flags. See content/public/common/ssl_status.h
 /// for more information.
@@ -6796,13 +7130,15 @@ enum cef_composition_underline_style_t
     CEF_CUS_SOLID = 0,
     CEF_CUS_DOT = 1,
     CEF_CUS_DASH = 2,
-    CEF_CUS_NONE = 3
+    CEF_CUS_NONE = 3,
+    CEF_CUS_NUM_VALUES = 4
 }
 
 alias CEF_CUS_SOLID = cef_composition_underline_style_t.CEF_CUS_SOLID;
 alias CEF_CUS_DOT = cef_composition_underline_style_t.CEF_CUS_DOT;
 alias CEF_CUS_DASH = cef_composition_underline_style_t.CEF_CUS_DASH;
 alias CEF_CUS_NONE = cef_composition_underline_style_t.CEF_CUS_NONE;
+alias CEF_CUS_NUM_VALUES = cef_composition_underline_style_t.CEF_CUS_NUM_VALUES;
 
 ///
 /// Structure representing IME composition underline information. This is a thin
@@ -6811,6 +7147,11 @@ alias CEF_CUS_NONE = cef_composition_underline_style_t.CEF_CUS_NONE;
 ///
 struct cef_composition_underline_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// Underline character range.
     ///
@@ -6960,8 +7301,7 @@ enum cef_channel_layout_t
     /// Front L, Front R, LFE, Back C
     CEF_CHANNEL_LAYOUT_3_1_BACK = 35,
 
-    /// Max value, must always equal the largest entry ever logged.
-    CEF_CHANNEL_LAYOUT_MAX = CEF_CHANNEL_LAYOUT_3_1_BACK
+    CEF_CHANNEL_NUM_VALUES = 36
 }
 
 alias CEF_CHANNEL_LAYOUT_NONE = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_NONE;
@@ -7000,7 +7340,7 @@ alias CEF_CHANNEL_LAYOUT_BITSTREAM = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_BIT
 alias CEF_CHANNEL_LAYOUT_5_1_4_DOWNMIX = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_5_1_4_DOWNMIX;
 alias CEF_CHANNEL_LAYOUT_1_1 = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_1_1;
 alias CEF_CHANNEL_LAYOUT_3_1_BACK = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_3_1_BACK;
-alias CEF_CHANNEL_LAYOUT_MAX = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_MAX;
+alias CEF_CHANNEL_NUM_VALUES = cef_channel_layout_t.CEF_CHANNEL_NUM_VALUES;
 
 ///
 /// Structure representing the audio parameters for setting up the audio
@@ -7008,6 +7348,11 @@ alias CEF_CHANNEL_LAYOUT_MAX = cef_channel_layout_t.CEF_CHANNEL_LAYOUT_MAX;
 ///
 struct cef_audio_parameters_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// Layout of the audio channels
     ///
@@ -7038,10 +7383,16 @@ enum cef_media_route_create_result_t
     CEF_MRCR_ROUTE_NOT_FOUND = 3,
     CEF_MRCR_SINK_NOT_FOUND = 4,
     CEF_MRCR_INVALID_ORIGIN = 5,
+    CEF_MRCR_OFF_THE_RECORD_MISMATCH_DEPRECATED = 6,
     CEF_MRCR_NO_SUPPORTED_PROVIDER = 7,
     CEF_MRCR_CANCELLED = 8,
     CEF_MRCR_ROUTE_ALREADY_EXISTS = 9,
-    CEF_MRCR_ROUTE_ALREADY_TERMINATED = 11
+    CEF_MRCR_DESKTOP_PICKER_FAILED = 10,
+    CEF_MRCR_ROUTE_ALREADY_TERMINATED = 11,
+    CEF_MRCR_REDUNDANT_REQUEST = 12,
+    CEF_MRCR_USER_NOT_ALLOWED = 13,
+    CEF_MRCR_NOTIFICATION_DISABLED = 14,
+    CEF_MRCR_NUM_VALUES = 15
 }
 
 alias CEF_MRCR_UNKNOWN_ERROR = cef_media_route_create_result_t.CEF_MRCR_UNKNOWN_ERROR;
@@ -7050,21 +7401,29 @@ alias CEF_MRCR_TIMED_OUT = cef_media_route_create_result_t.CEF_MRCR_TIMED_OUT;
 alias CEF_MRCR_ROUTE_NOT_FOUND = cef_media_route_create_result_t.CEF_MRCR_ROUTE_NOT_FOUND;
 alias CEF_MRCR_SINK_NOT_FOUND = cef_media_route_create_result_t.CEF_MRCR_SINK_NOT_FOUND;
 alias CEF_MRCR_INVALID_ORIGIN = cef_media_route_create_result_t.CEF_MRCR_INVALID_ORIGIN;
+alias CEF_MRCR_OFF_THE_RECORD_MISMATCH_DEPRECATED = cef_media_route_create_result_t.CEF_MRCR_OFF_THE_RECORD_MISMATCH_DEPRECATED;
 alias CEF_MRCR_NO_SUPPORTED_PROVIDER = cef_media_route_create_result_t.CEF_MRCR_NO_SUPPORTED_PROVIDER;
 alias CEF_MRCR_CANCELLED = cef_media_route_create_result_t.CEF_MRCR_CANCELLED;
 alias CEF_MRCR_ROUTE_ALREADY_EXISTS = cef_media_route_create_result_t.CEF_MRCR_ROUTE_ALREADY_EXISTS;
+alias CEF_MRCR_DESKTOP_PICKER_FAILED = cef_media_route_create_result_t.CEF_MRCR_DESKTOP_PICKER_FAILED;
 alias CEF_MRCR_ROUTE_ALREADY_TERMINATED = cef_media_route_create_result_t.CEF_MRCR_ROUTE_ALREADY_TERMINATED;
+alias CEF_MRCR_REDUNDANT_REQUEST = cef_media_route_create_result_t.CEF_MRCR_REDUNDANT_REQUEST;
+alias CEF_MRCR_USER_NOT_ALLOWED = cef_media_route_create_result_t.CEF_MRCR_USER_NOT_ALLOWED;
+alias CEF_MRCR_NOTIFICATION_DISABLED = cef_media_route_create_result_t.CEF_MRCR_NOTIFICATION_DISABLED;
+alias CEF_MRCR_NUM_VALUES = cef_media_route_create_result_t.CEF_MRCR_NUM_VALUES;
 
 ///
-/// Connection state for a MediaRoute object.
+/// Connection state for a MediaRoute object. Should be kept in sync with
+/// Chromium's blink::mojom::PresentationConnectionState type.
 ///
 enum cef_media_route_connection_state_t
 {
-    CEF_MRCS_UNKNOWN = 0,
-    CEF_MRCS_CONNECTING = 1,
-    CEF_MRCS_CONNECTED = 2,
-    CEF_MRCS_CLOSED = 3,
-    CEF_MRCS_TERMINATED = 4
+    CEF_MRCS_UNKNOWN = -1,
+    CEF_MRCS_CONNECTING = 0,
+    CEF_MRCS_CONNECTED = 1,
+    CEF_MRCS_CLOSED = 2,
+    CEF_MRCS_TERMINATED = 3,
+    CEF_MRCS_NUM_VALUES = 4
 }
 
 alias CEF_MRCS_UNKNOWN = cef_media_route_connection_state_t.CEF_MRCS_UNKNOWN;
@@ -7072,6 +7431,7 @@ alias CEF_MRCS_CONNECTING = cef_media_route_connection_state_t.CEF_MRCS_CONNECTI
 alias CEF_MRCS_CONNECTED = cef_media_route_connection_state_t.CEF_MRCS_CONNECTED;
 alias CEF_MRCS_CLOSED = cef_media_route_connection_state_t.CEF_MRCS_CLOSED;
 alias CEF_MRCS_TERMINATED = cef_media_route_connection_state_t.CEF_MRCS_TERMINATED;
+alias CEF_MRCS_NUM_VALUES = cef_media_route_connection_state_t.CEF_MRCS_NUM_VALUES;
 
 ///
 /// Icon types for a MediaSink object. Should be kept in sync with Chromium's
@@ -7087,8 +7447,7 @@ enum cef_media_sink_icon_type_t
     CEF_MSIT_EDUCATION = 5,
     CEF_MSIT_WIRED_DISPLAY = 6,
     CEF_MSIT_GENERIC = 7,
-
-    CEF_MSIT_TOTAL_COUNT = 8 // The total number of values.
+    CEF_MSIT_NUM_VALUES = 8
 }
 
 alias CEF_MSIT_CAST = cef_media_sink_icon_type_t.CEF_MSIT_CAST;
@@ -7099,13 +7458,18 @@ alias CEF_MSIT_HANGOUT = cef_media_sink_icon_type_t.CEF_MSIT_HANGOUT;
 alias CEF_MSIT_EDUCATION = cef_media_sink_icon_type_t.CEF_MSIT_EDUCATION;
 alias CEF_MSIT_WIRED_DISPLAY = cef_media_sink_icon_type_t.CEF_MSIT_WIRED_DISPLAY;
 alias CEF_MSIT_GENERIC = cef_media_sink_icon_type_t.CEF_MSIT_GENERIC;
-alias CEF_MSIT_TOTAL_COUNT = cef_media_sink_icon_type_t.CEF_MSIT_TOTAL_COUNT;
+alias CEF_MSIT_NUM_VALUES = cef_media_sink_icon_type_t.CEF_MSIT_NUM_VALUES;
 
 ///
 /// Device information for a MediaSink object.
 ///
 struct cef_media_sink_device_info_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     cef_string_t ip_address;
     int port;
     cef_string_t model_name;
@@ -7114,38 +7478,49 @@ struct cef_media_sink_device_info_t
 
 
 ///
-/// Represents commands available to TextField.
+/// Represents commands available to TextField. Should be kept in sync with
+/// Chromium's views::TextField::MenuCommands type.
 ///
 enum cef_text_field_commands_t
 {
+    CEF_TFC_UNKNOWN = 0,
     CEF_TFC_CUT = 1,
     CEF_TFC_COPY = 2,
     CEF_TFC_PASTE = 3,
-    CEF_TFC_UNDO = 4,
-    CEF_TFC_DELETE = 5,
-    CEF_TFC_SELECT_ALL = 6
+    CEF_TFC_SELECT_ALL = 4,
+    CEF_TFC_SELECT_WORD = 5,
+    CEF_TFC_UNDO = 6,
+    CEF_TFC_DELETE = 7,
+    CEF_TFC_NUM_VALUES = 8
 }
 
+alias CEF_TFC_UNKNOWN = cef_text_field_commands_t.CEF_TFC_UNKNOWN;
 alias CEF_TFC_CUT = cef_text_field_commands_t.CEF_TFC_CUT;
 alias CEF_TFC_COPY = cef_text_field_commands_t.CEF_TFC_COPY;
 alias CEF_TFC_PASTE = cef_text_field_commands_t.CEF_TFC_PASTE;
+alias CEF_TFC_SELECT_ALL = cef_text_field_commands_t.CEF_TFC_SELECT_ALL;
+alias CEF_TFC_SELECT_WORD = cef_text_field_commands_t.CEF_TFC_SELECT_WORD;
 alias CEF_TFC_UNDO = cef_text_field_commands_t.CEF_TFC_UNDO;
 alias CEF_TFC_DELETE = cef_text_field_commands_t.CEF_TFC_DELETE;
-alias CEF_TFC_SELECT_ALL = cef_text_field_commands_t.CEF_TFC_SELECT_ALL;
+alias CEF_TFC_NUM_VALUES = cef_text_field_commands_t.CEF_TFC_NUM_VALUES;
 
 ///
 /// Chrome toolbar types.
 ///
 enum cef_chrome_toolbar_type_t
 {
+    CEF_CTT_UNKNOWN = 0,
     CEF_CTT_NONE = 1,
     CEF_CTT_NORMAL = 2,
-    CEF_CTT_LOCATION = 3
+    CEF_CTT_LOCATION = 3,
+    CEF_CTT_NUM_VALUES = 4
 }
 
+alias CEF_CTT_UNKNOWN = cef_chrome_toolbar_type_t.CEF_CTT_UNKNOWN;
 alias CEF_CTT_NONE = cef_chrome_toolbar_type_t.CEF_CTT_NONE;
 alias CEF_CTT_NORMAL = cef_chrome_toolbar_type_t.CEF_CTT_NORMAL;
 alias CEF_CTT_LOCATION = cef_chrome_toolbar_type_t.CEF_CTT_LOCATION;
+alias CEF_CTT_NUM_VALUES = cef_chrome_toolbar_type_t.CEF_CTT_NUM_VALUES;
 
 ///
 /// Chrome page action icon types. Should be kept in sync with Chromium's
@@ -7171,19 +7546,30 @@ enum cef_chrome_page_action_icon_type_t
     CEF_CPAIT_SAVE_CARD = 15,
     CEF_CPAIT_SEND_TAB_TO_SELF_DEPRECATED = 16,
     CEF_CPAIT_SHARING_HUB = 17,
-    CEF_CPAIT_SIDE_SEARCH = 18,
+    CEF_CPAIT_SIDE_SEARCH_DEPRECATED = 18,
     CEF_CPAIT_SMS_REMOTE_FETCHER = 19,
     CEF_CPAIT_TRANSLATE = 20,
     CEF_CPAIT_VIRTUAL_CARD_ENROLL = 21,
-    CEF_CPAIT_VIRTUAL_CARD_MANUAL_FALLBACK = 22,
+    CEF_CPAIT_VIRTUAL_CARD_INFORMATION = 22,
     CEF_CPAIT_ZOOM = 23,
     CEF_CPAIT_SAVE_IBAN = 24,
     CEF_CPAIT_MANDATORY_REAUTH = 25,
     CEF_CPAIT_PRICE_INSIGHTS = 26,
-    CEF_CPAIT_PRICE_READ_ANYTHING = 27,
+    CEF_CPAIT_READ_ANYTHING_DEPRECATED = 27,
     CEF_CPAIT_PRODUCT_SPECIFICATIONS = 28,
     CEF_CPAIT_LENS_OVERLAY = 29,
-    CEF_CPAIT_MAX_VALUE = CEF_CPAIT_LENS_OVERLAY
+    CEF_CPAIT_DISCOUNTS = 30,
+    CEF_CPAIT_OPTIMIZATION_GUIDE = 31,
+
+    CEF_CPAIT_COLLABORATION_MESSAGING = 32,
+
+    CEF_CPAIT_CHANGE_PASSWORD = 33,
+
+    CEF_CPAIT_LENS_OVERLAY_HOMEWORK = 34,
+
+    CEF_CPAIT_AI_MODE = 35,
+
+    CEF_CPAIT_NUM_VALUES = 36
 }
 
 alias CEF_CPAIT_BOOKMARK_STAR = cef_chrome_page_action_icon_type_t.CEF_CPAIT_BOOKMARK_STAR;
@@ -7204,19 +7590,25 @@ alias CEF_CPAIT_SAVE_AUTOFILL_ADDRESS = cef_chrome_page_action_icon_type_t.CEF_C
 alias CEF_CPAIT_SAVE_CARD = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SAVE_CARD;
 alias CEF_CPAIT_SEND_TAB_TO_SELF_DEPRECATED = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SEND_TAB_TO_SELF_DEPRECATED;
 alias CEF_CPAIT_SHARING_HUB = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SHARING_HUB;
-alias CEF_CPAIT_SIDE_SEARCH = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SIDE_SEARCH;
+alias CEF_CPAIT_SIDE_SEARCH_DEPRECATED = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SIDE_SEARCH_DEPRECATED;
 alias CEF_CPAIT_SMS_REMOTE_FETCHER = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SMS_REMOTE_FETCHER;
 alias CEF_CPAIT_TRANSLATE = cef_chrome_page_action_icon_type_t.CEF_CPAIT_TRANSLATE;
 alias CEF_CPAIT_VIRTUAL_CARD_ENROLL = cef_chrome_page_action_icon_type_t.CEF_CPAIT_VIRTUAL_CARD_ENROLL;
-alias CEF_CPAIT_VIRTUAL_CARD_MANUAL_FALLBACK = cef_chrome_page_action_icon_type_t.CEF_CPAIT_VIRTUAL_CARD_MANUAL_FALLBACK;
+alias CEF_CPAIT_VIRTUAL_CARD_INFORMATION = cef_chrome_page_action_icon_type_t.CEF_CPAIT_VIRTUAL_CARD_INFORMATION;
 alias CEF_CPAIT_ZOOM = cef_chrome_page_action_icon_type_t.CEF_CPAIT_ZOOM;
 alias CEF_CPAIT_SAVE_IBAN = cef_chrome_page_action_icon_type_t.CEF_CPAIT_SAVE_IBAN;
 alias CEF_CPAIT_MANDATORY_REAUTH = cef_chrome_page_action_icon_type_t.CEF_CPAIT_MANDATORY_REAUTH;
 alias CEF_CPAIT_PRICE_INSIGHTS = cef_chrome_page_action_icon_type_t.CEF_CPAIT_PRICE_INSIGHTS;
-alias CEF_CPAIT_PRICE_READ_ANYTHING = cef_chrome_page_action_icon_type_t.CEF_CPAIT_PRICE_READ_ANYTHING;
+alias CEF_CPAIT_READ_ANYTHING_DEPRECATED = cef_chrome_page_action_icon_type_t.CEF_CPAIT_READ_ANYTHING_DEPRECATED;
 alias CEF_CPAIT_PRODUCT_SPECIFICATIONS = cef_chrome_page_action_icon_type_t.CEF_CPAIT_PRODUCT_SPECIFICATIONS;
 alias CEF_CPAIT_LENS_OVERLAY = cef_chrome_page_action_icon_type_t.CEF_CPAIT_LENS_OVERLAY;
-alias CEF_CPAIT_MAX_VALUE = cef_chrome_page_action_icon_type_t.CEF_CPAIT_MAX_VALUE;
+alias CEF_CPAIT_DISCOUNTS = cef_chrome_page_action_icon_type_t.CEF_CPAIT_DISCOUNTS;
+alias CEF_CPAIT_OPTIMIZATION_GUIDE = cef_chrome_page_action_icon_type_t.CEF_CPAIT_OPTIMIZATION_GUIDE;
+alias CEF_CPAIT_COLLABORATION_MESSAGING = cef_chrome_page_action_icon_type_t.CEF_CPAIT_COLLABORATION_MESSAGING;
+alias CEF_CPAIT_CHANGE_PASSWORD = cef_chrome_page_action_icon_type_t.CEF_CPAIT_CHANGE_PASSWORD;
+alias CEF_CPAIT_LENS_OVERLAY_HOMEWORK = cef_chrome_page_action_icon_type_t.CEF_CPAIT_LENS_OVERLAY_HOMEWORK;
+alias CEF_CPAIT_AI_MODE = cef_chrome_page_action_icon_type_t.CEF_CPAIT_AI_MODE;
+alias CEF_CPAIT_NUM_VALUES = cef_chrome_page_action_icon_type_t.CEF_CPAIT_NUM_VALUES;
 
 ///
 /// Chrome toolbar button types. Should be kept in sync with CEF's internal
@@ -7224,29 +7616,41 @@ alias CEF_CPAIT_MAX_VALUE = cef_chrome_page_action_icon_type_t.CEF_CPAIT_MAX_VAL
 ///
 enum cef_chrome_toolbar_button_type_t
 {
-    CEF_CTBT_CAST = 0,
-    CEF_CTBT_DOWNLOAD = 1,
-    CEF_CTBT_SEND_TAB_TO_SELF = 2,
-    CEF_CTBT_SIDE_PANEL = 3,
-    CEF_CTBT_MAX_VALUE = CEF_CTBT_SIDE_PANEL
+    CEF_CTBT_CAST_DEPRECATED = 0,
+
+    CEF_CTBT_DOWNLOAD_DEPRECATED = 1,
+    CEF_CTBT_SEND_TAB_TO_SELF_DEPRECATED = 2,
+
+    CEF_CTBT_SIDE_PANEL_DEPRECATED = 3,
+    CEF_CTBT_MEDIA = 4,
+    CEF_CTBT_TAB_SEARCH = 5,
+    CEF_CTBT_BATTERY_SAVER = 6,
+    CEF_CTBT_AVATAR = 7,
+
+    CEF_CTBT_NUM_VALUES = 8
 }
 
-alias CEF_CTBT_CAST = cef_chrome_toolbar_button_type_t.CEF_CTBT_CAST;
-alias CEF_CTBT_DOWNLOAD = cef_chrome_toolbar_button_type_t.CEF_CTBT_DOWNLOAD;
-alias CEF_CTBT_SEND_TAB_TO_SELF = cef_chrome_toolbar_button_type_t.CEF_CTBT_SEND_TAB_TO_SELF;
-alias CEF_CTBT_SIDE_PANEL = cef_chrome_toolbar_button_type_t.CEF_CTBT_SIDE_PANEL;
-alias CEF_CTBT_MAX_VALUE = cef_chrome_toolbar_button_type_t.CEF_CTBT_MAX_VALUE;
+alias CEF_CTBT_CAST_DEPRECATED = cef_chrome_toolbar_button_type_t.CEF_CTBT_CAST_DEPRECATED;
+alias CEF_CTBT_DOWNLOAD_DEPRECATED = cef_chrome_toolbar_button_type_t.CEF_CTBT_DOWNLOAD_DEPRECATED;
+alias CEF_CTBT_SEND_TAB_TO_SELF_DEPRECATED = cef_chrome_toolbar_button_type_t.CEF_CTBT_SEND_TAB_TO_SELF_DEPRECATED;
+alias CEF_CTBT_SIDE_PANEL_DEPRECATED = cef_chrome_toolbar_button_type_t.CEF_CTBT_SIDE_PANEL_DEPRECATED;
+alias CEF_CTBT_MEDIA = cef_chrome_toolbar_button_type_t.CEF_CTBT_MEDIA;
+alias CEF_CTBT_TAB_SEARCH = cef_chrome_toolbar_button_type_t.CEF_CTBT_TAB_SEARCH;
+alias CEF_CTBT_BATTERY_SAVER = cef_chrome_toolbar_button_type_t.CEF_CTBT_BATTERY_SAVER;
+alias CEF_CTBT_AVATAR = cef_chrome_toolbar_button_type_t.CEF_CTBT_AVATAR;
+alias CEF_CTBT_NUM_VALUES = cef_chrome_toolbar_button_type_t.CEF_CTBT_NUM_VALUES;
 
 ///
 /// Docking modes supported by CefWindow::AddOverlay.
 ///
 enum cef_docking_mode_t
 {
-    CEF_DOCKING_MODE_TOP_LEFT = 1,
-    CEF_DOCKING_MODE_TOP_RIGHT = 2,
-    CEF_DOCKING_MODE_BOTTOM_LEFT = 3,
-    CEF_DOCKING_MODE_BOTTOM_RIGHT = 4,
-    CEF_DOCKING_MODE_CUSTOM = 5
+    CEF_DOCKING_MODE_TOP_LEFT = 0,
+    CEF_DOCKING_MODE_TOP_RIGHT = 1,
+    CEF_DOCKING_MODE_BOTTOM_LEFT = 2,
+    CEF_DOCKING_MODE_BOTTOM_RIGHT = 3,
+    CEF_DOCKING_MODE_CUSTOM = 4,
+    CEF_DOCKING_MODE_NUM_VALUES = 5
 }
 
 alias CEF_DOCKING_MODE_TOP_LEFT = cef_docking_mode_t.CEF_DOCKING_MODE_TOP_LEFT;
@@ -7254,6 +7658,7 @@ alias CEF_DOCKING_MODE_TOP_RIGHT = cef_docking_mode_t.CEF_DOCKING_MODE_TOP_RIGHT
 alias CEF_DOCKING_MODE_BOTTOM_LEFT = cef_docking_mode_t.CEF_DOCKING_MODE_BOTTOM_LEFT;
 alias CEF_DOCKING_MODE_BOTTOM_RIGHT = cef_docking_mode_t.CEF_DOCKING_MODE_BOTTOM_RIGHT;
 alias CEF_DOCKING_MODE_CUSTOM = cef_docking_mode_t.CEF_DOCKING_MODE_CUSTOM;
+alias CEF_DOCKING_MODE_NUM_VALUES = cef_docking_mode_t.CEF_DOCKING_MODE_NUM_VALUES;
 
 ///
 /// Show states supported by CefWindowDelegate::GetInitialShowState.
@@ -7261,20 +7666,22 @@ alias CEF_DOCKING_MODE_CUSTOM = cef_docking_mode_t.CEF_DOCKING_MODE_CUSTOM;
 enum cef_show_state_t
 {
     // Show the window as normal.
-    CEF_SHOW_STATE_NORMAL = 1,
+    CEF_SHOW_STATE_NORMAL = 0,
 
     // Show the window as minimized.
-    CEF_SHOW_STATE_MINIMIZED = 2,
+    CEF_SHOW_STATE_MINIMIZED = 1,
 
     // Show the window as maximized.
-    CEF_SHOW_STATE_MAXIMIZED = 3,
+    CEF_SHOW_STATE_MAXIMIZED = 2,
 
     // Show the window as fullscreen.
-    CEF_SHOW_STATE_FULLSCREEN = 4,
+    CEF_SHOW_STATE_FULLSCREEN = 3,
 
     // Show the window as hidden (no dock thumbnail).
     // Only supported on MacOS.
-    CEF_SHOW_STATE_HIDDEN = 5
+    CEF_SHOW_STATE_HIDDEN = 4,
+
+    CEF_SHOW_STATE_NUM_VALUES = 5
 }
 
 alias CEF_SHOW_STATE_NORMAL = cef_show_state_t.CEF_SHOW_STATE_NORMAL;
@@ -7282,6 +7689,7 @@ alias CEF_SHOW_STATE_MINIMIZED = cef_show_state_t.CEF_SHOW_STATE_MINIMIZED;
 alias CEF_SHOW_STATE_MAXIMIZED = cef_show_state_t.CEF_SHOW_STATE_MAXIMIZED;
 alias CEF_SHOW_STATE_FULLSCREEN = cef_show_state_t.CEF_SHOW_STATE_FULLSCREEN;
 alias CEF_SHOW_STATE_HIDDEN = cef_show_state_t.CEF_SHOW_STATE_HIDDEN;
+alias CEF_SHOW_STATE_NUM_VALUES = cef_show_state_t.CEF_SHOW_STATE_NUM_VALUES;
 
 ///
 /// Values indicating what state of the touch handle is set.
@@ -7303,6 +7711,11 @@ alias CEF_THS_FLAG_ALPHA = cef_touch_handle_state_flags_t.CEF_THS_FLAG_ALPHA;
 
 struct cef_touch_handle_state_t
 {
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
     ///
     /// Touch handle id. Increments for each new touch handle.
     ///
@@ -7378,22 +7791,22 @@ alias CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE = cef_media_access_permission_t
 
 ///
 /// Permission types used with OnShowPermissionPrompt. Some types are
-/// platform-specific or only supported with the Chrome runtime. Should be kept
+/// platform-specific or only supported with Chrome style. Should be kept
 /// in sync with Chromium's permissions::RequestType type.
 ///
 enum cef_permission_request_types_t
 {
     CEF_PERMISSION_TYPE_NONE = 0,
-    CEF_PERMISSION_TYPE_ACCESSIBILITY_EVENTS = 1 << 0,
-    CEF_PERMISSION_TYPE_AR_SESSION = 1 << 1,
-    CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM = 1 << 2,
-    CEF_PERMISSION_TYPE_CAMERA_STREAM = 1 << 3,
-    CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL = 1 << 4,
-    CEF_PERMISSION_TYPE_CLIPBOARD = 1 << 5,
-    CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS = 1 << 6,
-    CEF_PERMISSION_TYPE_DISK_QUOTA = 1 << 7,
-    CEF_PERMISSION_TYPE_LOCAL_FONTS = 1 << 8,
-    CEF_PERMISSION_TYPE_GEOLOCATION = 1 << 9,
+    CEF_PERMISSION_TYPE_AR_SESSION = 1 << 0,
+    CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM = 1 << 1,
+    CEF_PERMISSION_TYPE_CAMERA_STREAM = 1 << 2,
+    CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL = 1 << 3,
+    CEF_PERMISSION_TYPE_CLIPBOARD = 1 << 4,
+    CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS = 1 << 5,
+    CEF_PERMISSION_TYPE_DISK_QUOTA = 1 << 6,
+    CEF_PERMISSION_TYPE_LOCAL_FONTS = 1 << 7,
+    CEF_PERMISSION_TYPE_GEOLOCATION = 1 << 8,
+    CEF_PERMISSION_TYPE_HAND_TRACKING = 1 << 9,
     CEF_PERMISSION_TYPE_IDENTITY_PROVIDER = 1 << 10,
     CEF_PERMISSION_TYPE_IDLE_DETECTION = 1 << 11,
     CEF_PERMISSION_TYPE_MIC_STREAM = 1 << 12,
@@ -7406,12 +7819,14 @@ enum cef_permission_request_types_t
     CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER = 1 << 19,
     CEF_PERMISSION_TYPE_STORAGE_ACCESS = 1 << 20,
     CEF_PERMISSION_TYPE_VR_SESSION = 1 << 21,
-    CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT = 1 << 22,
-    CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS = 1 << 23
+    CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION = 1 << 22,
+    CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT = 1 << 23,
+    CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS = 1 << 24,
+
+    CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS = 1 << 25
 }
 
 alias CEF_PERMISSION_TYPE_NONE = cef_permission_request_types_t.CEF_PERMISSION_TYPE_NONE;
-alias CEF_PERMISSION_TYPE_ACCESSIBILITY_EVENTS = cef_permission_request_types_t.CEF_PERMISSION_TYPE_ACCESSIBILITY_EVENTS;
 alias CEF_PERMISSION_TYPE_AR_SESSION = cef_permission_request_types_t.CEF_PERMISSION_TYPE_AR_SESSION;
 alias CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM = cef_permission_request_types_t.CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM;
 alias CEF_PERMISSION_TYPE_CAMERA_STREAM = cef_permission_request_types_t.CEF_PERMISSION_TYPE_CAMERA_STREAM;
@@ -7421,6 +7836,7 @@ alias CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS = cef_permission_request_type
 alias CEF_PERMISSION_TYPE_DISK_QUOTA = cef_permission_request_types_t.CEF_PERMISSION_TYPE_DISK_QUOTA;
 alias CEF_PERMISSION_TYPE_LOCAL_FONTS = cef_permission_request_types_t.CEF_PERMISSION_TYPE_LOCAL_FONTS;
 alias CEF_PERMISSION_TYPE_GEOLOCATION = cef_permission_request_types_t.CEF_PERMISSION_TYPE_GEOLOCATION;
+alias CEF_PERMISSION_TYPE_HAND_TRACKING = cef_permission_request_types_t.CEF_PERMISSION_TYPE_HAND_TRACKING;
 alias CEF_PERMISSION_TYPE_IDENTITY_PROVIDER = cef_permission_request_types_t.CEF_PERMISSION_TYPE_IDENTITY_PROVIDER;
 alias CEF_PERMISSION_TYPE_IDLE_DETECTION = cef_permission_request_types_t.CEF_PERMISSION_TYPE_IDLE_DETECTION;
 alias CEF_PERMISSION_TYPE_MIC_STREAM = cef_permission_request_types_t.CEF_PERMISSION_TYPE_MIC_STREAM;
@@ -7433,8 +7849,10 @@ alias CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER = cef_permission_request_ty
 alias CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER = cef_permission_request_types_t.CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER;
 alias CEF_PERMISSION_TYPE_STORAGE_ACCESS = cef_permission_request_types_t.CEF_PERMISSION_TYPE_STORAGE_ACCESS;
 alias CEF_PERMISSION_TYPE_VR_SESSION = cef_permission_request_types_t.CEF_PERMISSION_TYPE_VR_SESSION;
+alias CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION = cef_permission_request_types_t.CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION;
 alias CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT = cef_permission_request_types_t.CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT;
 alias CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS = cef_permission_request_types_t.CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS;
+alias CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS = cef_permission_request_types_t.CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS;
 
 ///
 /// Permission request results.
@@ -7461,13 +7879,16 @@ enum cef_permission_request_result_t
     /// OnShowPermissionPrompt returns false and there is no default permissions
     /// UI) then any related promises may remain unresolved.
     ///
-    CEF_PERMISSION_RESULT_IGNORE = 3
+    CEF_PERMISSION_RESULT_IGNORE = 3,
+
+    CEF_PERMISSION_RESULT_NUM_VALUES = 4
 }
 
 alias CEF_PERMISSION_RESULT_ACCEPT = cef_permission_request_result_t.CEF_PERMISSION_RESULT_ACCEPT;
 alias CEF_PERMISSION_RESULT_DENY = cef_permission_request_result_t.CEF_PERMISSION_RESULT_DENY;
 alias CEF_PERMISSION_RESULT_DISMISS = cef_permission_request_result_t.CEF_PERMISSION_RESULT_DISMISS;
 alias CEF_PERMISSION_RESULT_IGNORE = cef_permission_request_result_t.CEF_PERMISSION_RESULT_IGNORE;
+alias CEF_PERMISSION_RESULT_NUM_VALUES = cef_permission_request_result_t.CEF_PERMISSION_RESULT_NUM_VALUES;
 
 ///
 /// Certificate types supported by CefTestServer::CreateAndStart. The matching
@@ -7484,12 +7905,15 @@ enum cef_test_cert_type_t
     CEF_TEST_CERT_OK_DOMAIN = 1,
 
     /// Expired certificate. Loads the "expired_cert.pem" file.
-    CEF_TEST_CERT_EXPIRED = 2
+    CEF_TEST_CERT_EXPIRED = 2,
+
+    CEF_TEST_CERT_NUM_VALUES = 3
 }
 
 alias CEF_TEST_CERT_OK_IP = cef_test_cert_type_t.CEF_TEST_CERT_OK_IP;
 alias CEF_TEST_CERT_OK_DOMAIN = cef_test_cert_type_t.CEF_TEST_CERT_OK_DOMAIN;
 alias CEF_TEST_CERT_EXPIRED = cef_test_cert_type_t.CEF_TEST_CERT_EXPIRED;
+alias CEF_TEST_CERT_NUM_VALUES = cef_test_cert_type_t.CEF_TEST_CERT_NUM_VALUES;
 
 ///
 /// Preferences type passed to
@@ -7502,11 +7926,14 @@ enum cef_preferences_type_t
 
     /// Request context preferences registered each time a new CefRequestContext
     /// is created.
-    CEF_PREFERENCES_TYPE_REQUEST_CONTEXT = 1
+    CEF_PREFERENCES_TYPE_REQUEST_CONTEXT = 1,
+
+    CEF_PREFERENCES_TYPE_NUM_VALUES = 2
 }
 
 alias CEF_PREFERENCES_TYPE_GLOBAL = cef_preferences_type_t.CEF_PREFERENCES_TYPE_GLOBAL;
 alias CEF_PREFERENCES_TYPE_REQUEST_CONTEXT = cef_preferences_type_t.CEF_PREFERENCES_TYPE_REQUEST_CONTEXT;
+alias CEF_PREFERENCES_TYPE_NUM_VALUES = cef_preferences_type_t.CEF_PREFERENCES_TYPE_NUM_VALUES;
 
 ///
 /// Download interrupt reasons. Should be kept in sync with
@@ -7695,7 +8122,8 @@ enum cef_color_variant_t
     CEF_COLOR_VARIANT_TONAL_SPOT = 3,
     CEF_COLOR_VARIANT_NEUTRAL = 4,
     CEF_COLOR_VARIANT_VIBRANT = 5,
-    CEF_COLOR_VARIANT_EXPRESSIVE = 6
+    CEF_COLOR_VARIANT_EXPRESSIVE = 6,
+    CEF_COLOR_VARIANT_NUM_VALUES = 7
 }
 
 alias CEF_COLOR_VARIANT_SYSTEM = cef_color_variant_t.CEF_COLOR_VARIANT_SYSTEM;
@@ -7705,9 +8133,100 @@ alias CEF_COLOR_VARIANT_TONAL_SPOT = cef_color_variant_t.CEF_COLOR_VARIANT_TONAL
 alias CEF_COLOR_VARIANT_NEUTRAL = cef_color_variant_t.CEF_COLOR_VARIANT_NEUTRAL;
 alias CEF_COLOR_VARIANT_VIBRANT = cef_color_variant_t.CEF_COLOR_VARIANT_VIBRANT;
 alias CEF_COLOR_VARIANT_EXPRESSIVE = cef_color_variant_t.CEF_COLOR_VARIANT_EXPRESSIVE;
+alias CEF_COLOR_VARIANT_NUM_VALUES = cef_color_variant_t.CEF_COLOR_VARIANT_NUM_VALUES;
+
+///
+/// Specifies the task type variants supported by CefTaskManager.
+/// Should be kept in sync with Chromium's task_manager::Task::Type type.
+///
+enum cef_task_type_t
+{
+    CEF_TASK_TYPE_UNKNOWN = 0,
+    /// The main browser process.
+    CEF_TASK_TYPE_BROWSER = 1,
+    /// A graphics process.
+    CEF_TASK_TYPE_GPU = 2,
+    /// A Linux zygote process.
+    CEF_TASK_TYPE_ZYGOTE = 3,
+    /// A browser utility process.
+    CEF_TASK_TYPE_UTILITY = 4,
+    /// A normal WebContents renderer process.
+    CEF_TASK_TYPE_RENDERER = 5,
+    /// An extension or app process.
+    CEF_TASK_TYPE_EXTENSION = 6,
+    /// A browser plugin guest process.
+    CEF_TASK_TYPE_GUEST = 7,
+
+    CEF_TASK_TYPE_PLUGIN_DEPRECATED = 8,
+
+    /// A plugin process.
+
+    /// A sandbox helper process
+    CEF_TASK_TYPE_SANDBOX_HELPER = 9,
+    /// A dedicated worker running on the renderer process.
+    CEF_TASK_TYPE_DEDICATED_WORKER = 10,
+    /// A shared worker running on the renderer process.
+    CEF_TASK_TYPE_SHARED_WORKER = 11,
+    /// A service worker running on the renderer process.
+    CEF_TASK_TYPE_SERVICE_WORKER = 12,
+
+    CEF_TASK_TYPE_NUM_VALUES = 13
+}
+
+alias CEF_TASK_TYPE_UNKNOWN = cef_task_type_t.CEF_TASK_TYPE_UNKNOWN;
+alias CEF_TASK_TYPE_BROWSER = cef_task_type_t.CEF_TASK_TYPE_BROWSER;
+alias CEF_TASK_TYPE_GPU = cef_task_type_t.CEF_TASK_TYPE_GPU;
+alias CEF_TASK_TYPE_ZYGOTE = cef_task_type_t.CEF_TASK_TYPE_ZYGOTE;
+alias CEF_TASK_TYPE_UTILITY = cef_task_type_t.CEF_TASK_TYPE_UTILITY;
+alias CEF_TASK_TYPE_RENDERER = cef_task_type_t.CEF_TASK_TYPE_RENDERER;
+alias CEF_TASK_TYPE_EXTENSION = cef_task_type_t.CEF_TASK_TYPE_EXTENSION;
+alias CEF_TASK_TYPE_GUEST = cef_task_type_t.CEF_TASK_TYPE_GUEST;
+alias CEF_TASK_TYPE_PLUGIN_DEPRECATED = cef_task_type_t.CEF_TASK_TYPE_PLUGIN_DEPRECATED;
+alias CEF_TASK_TYPE_SANDBOX_HELPER = cef_task_type_t.CEF_TASK_TYPE_SANDBOX_HELPER;
+alias CEF_TASK_TYPE_DEDICATED_WORKER = cef_task_type_t.CEF_TASK_TYPE_DEDICATED_WORKER;
+alias CEF_TASK_TYPE_SHARED_WORKER = cef_task_type_t.CEF_TASK_TYPE_SHARED_WORKER;
+alias CEF_TASK_TYPE_SERVICE_WORKER = cef_task_type_t.CEF_TASK_TYPE_SERVICE_WORKER;
+alias CEF_TASK_TYPE_NUM_VALUES = cef_task_type_t.CEF_TASK_TYPE_NUM_VALUES;
+
+///
+/// Structure representing task information provided by CefTaskManager.
+///
+struct cef_task_info_t
+{
+    ///
+    /// Size of this structure.
+    ///
+    size_t size;
+
+    /// The task ID.
+    long id;
+    /// The task type.
+    cef_task_type_t type;
+    /// Set to true (1) if the task is killable.
+    int is_killable;
+    /// The task title.
+    cef_string_t title;
+    /// The CPU usage of the process on which the task is running. The value is
+    /// in the range zero to number_of_processors * 100%.
+    double cpu_usage;
+    /// The number of processors available on the system.
+    int number_of_processors;
+    /// The memory footprint of the task in bytes. A value of -1 means no valid
+    /// value is currently available.
+    long memory;
+    /// The GPU memory usage of the task in bytes. A value of -1 means no valid
+    /// value is currently available.
+    long gpu_memory;
+    /// Set to true (1) if this task process' GPU resource count is inflated
+    /// because it is counting other processes' resources (e.g, the GPU process
+    /// has this value set to true because it is the aggregate of all processes).
+    int is_gpu_memory_inflated;
+}
+
+
 
 // CEF_INCLUDE_INTERNAL_CEF_TYPES_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -7742,7 +8261,7 @@ alias CEF_COLOR_VARIANT_EXPRESSIVE = cef_color_variant_t.CEF_COLOR_VARIANT_EXPRE
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=6ea5d772fb4961ae4a658b4b730aa608fa93309f$
+// $hash=5fdf00ffc44f242afeba750876f072b712e7a6b5$
 //
 
 extern (C):
@@ -7751,6 +8270,8 @@ extern (C):
 /// Implement this structure to receive accessibility notification when
 /// accessibility events have been registered. The functions of this structure
 /// will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_accessibility_handler_t
 {
@@ -7768,8 +8289,6 @@ struct cef_accessibility_handler_t
     /// browser process.
     ///
 
-    // CEF_INCLUDE_CAPI_CEF_ACCESSIBILITY_HANDLER_CAPI_H_
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_accessibility_handler_t* self,
@@ -7780,7 +8299,9 @@ struct cef_accessibility_handler_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+// CEF_INCLUDE_CAPI_CEF_ACCESSIBILITY_HANDLER_CAPI_H_
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -7815,7 +8336,7 @@ struct cef_accessibility_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dfa0d4d2da319b2fd5e92324fd14301b500ceb5c$
+// $hash=b5657e265452f5e0b7b19edbe25bb1d9e88c4b31$
 //
 
 extern (C):
@@ -7823,6 +8344,8 @@ extern (C):
 ///
 /// Implement this structure to provide handler implementations. Methods will be
 /// called by the process and/or thread indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_app_t
 {
@@ -7835,10 +8358,9 @@ struct cef_app_t
     /// before processing by CEF and Chromium. The |process_type| value will be
     /// NULL for the browser process. Do not keep a reference to the
     /// cef_command_line_t object passed to this function. The
-    /// cef_settings_t.command_line_args_disabled value can be used to start with
-    /// an NULL command-line object. Any values specified in CefSettings that
 
-    cef_base_ref_counted_t base;
+    cef_base_ref_counted_t base; /// cef_settings_t.command_line_args_disabled value can be used to start with
+    /// an NULL command-line object. Any values specified in CefSettings that
     /// equate to command-line arguments will be set before this function is
     /// called. Be cautious when using this function to modify command-line
     /// arguments for non-browser processes as this may result in undefined
@@ -7860,11 +8382,9 @@ struct cef_app_t
         cef_scheme_registrar_t* registrar) nothrow on_register_custom_schemes;
 
     ///
-    /// Return the handler for resource bundle events. If
-    /// cef_settings_t.pack_loading_disabled is true (1) a handler must be
-    /// returned. If no handler is returned resources will be loaded from pack
-    /// files. This function is called by the browser and render processes on
-    /// multiple threads.
+    /// Return the handler for resource bundle events. If no handler is returned
+    /// resources will be loaded from pack files. This function is called by the
+    /// browser and render processes on multiple threads.
     ///
     extern(System) cef_resource_bundle_handler_t* function (
         cef_app_t* self) nothrow get_resource_bundle_handler;
@@ -7910,7 +8430,7 @@ int cef_execute_process (
 /// fails or if early exit is desired (for example, due to process singleton
 /// relaunch behavior). If this function returns false (0) then the application
 /// should exit immediately without calling any other CEF functions except,
-/// optionally, CefGetErrorCode. The |windows_sandbox_info| parameter is only
+/// optionally, CefGetExitCode. The |windows_sandbox_info| parameter is only
 /// used on Windows and may be NULL (see cef_sandbox_win.h for details).
 ///
 int cef_initialize (
@@ -7971,8 +8491,40 @@ void cef_run_message_loop ();
 ///
 void cef_quit_message_loop ();
 
+///
+/// Set to true (1) before calling OS APIs on the CEF UI thread that will enter
+/// a native message loop (see usage restrictions below). Set to false (0) after
+/// exiting the native message loop. On Windows, use the CefSetOSModalLoop
+/// function instead in cases like native top menus where resize of the browser
+/// content is not required, or in cases like printer APIs where reentrancy
+/// safety cannot be guaranteed.
+///
+/// Nested processing of Chromium tasks is disabled by default because common
+/// controls and/or printer functions may use nested native message loops that
+/// lead to unplanned reentrancy. This function re-enables nested processing in
+/// the scope of an upcoming native message loop. It must only be used in cases
+/// where the stack is reentrancy safe and processing nestable tasks is
+/// explicitly safe. Do not use in cases (like the printer example) where an OS
+/// API may experience unplanned reentrancy as a result of a new task executing
+/// immediately.
+///
+/// For instance,
+/// - The UI thread is running a message loop.
+/// - It receives a task #1 and executes it.
+/// - The task #1 implicitly starts a nested message loop. For example, via
+///   Windows APIs such as MessageBox or GetSaveFileName, or default handling of
+///   a user-initiated drag/resize operation (e.g. DefWindowProc handling of
+///   WM_SYSCOMMAND for SC_MOVE/SC_SIZE).
+/// - The UI thread receives a task #2 before or while in this second message
+///   loop.
+/// - With NestableTasksAllowed set to true (1), the task #2 will run right
+///   away. Otherwise, it will be executed right after task #1 completes at
+///   "thread message loop level".
+///
+void cef_set_nestable_tasks_allowed (int allowed);
+
 // CEF_INCLUDE_CAPI_CEF_APP_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -8007,13 +8559,15 @@ void cef_quit_message_loop ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d98482eba93dcd8b6a6f69b2732162733c73203d$
+// $hash=d5ffacfa715e53e29eda66ba1adbc2fe36a0f136$
 //
 
 extern (C):
 
 ///
 /// Implement this structure to handle audio events.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_audio_handler_t
 {
@@ -8030,14 +8584,13 @@ struct cef_audio_handler_t
 
     ///
     /// Called on a browser audio capture thread when the browser starts streaming
-    /// audio. OnAudioStreamStopped will always be called after
-    /// OnAudioStreamStarted; both functions may be called multiple times for the
 
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_audio_handler_t* self,
         cef_browser_t* browser,
-        cef_audio_parameters_t* params) nothrow get_audio_parameters;
+        cef_audio_parameters_t* params) nothrow get_audio_parameters; /// audio. OnAudioStreamStopped will always be called after
+    /// OnAudioStreamStarted; both functions may be called multiple times for the
     /// same browser. |params| contains the audio parameters like sample rate and
     /// channel layout. |channels| is the number of channels.
     ///
@@ -8088,7 +8641,7 @@ struct cef_audio_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_AUDIO_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -8123,7 +8676,7 @@ struct cef_audio_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=b63947918eca8c31790cae16b2e8a0be7e9464dd$
+// $hash=c75890ff2b7a45a39fc51492ddb16d6f6107b7ef$
 //
 
 extern (C):
@@ -8131,6 +8684,8 @@ extern (C):
 ///
 /// Callback structure used for asynchronous continuation of authentication
 /// requests.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_auth_callback_t
 {
@@ -8191,36 +8746,35 @@ import core.stdc.config;
 extern (C):
 
 ///
-// All ref-counted framework structures must include this structure first.
+/// All ref-counted framework structures must include this structure first.
 ///
 struct cef_base_ref_counted_t
 {
     ///
-    // Size of the data structure.
+    /// Size of the data structure.
     ///
 
     ///
-    // Called to increment the reference count for the object. Should be called
-    // for every new copy of a pointer to a given object.
+    /// Called to increment the reference count for the object. Should be called
+    /// for every new copy of a pointer to a given object.
     ///
 
     ///
-    // Called to decrement the reference count for the object. If the reference
-    alias size_t = c_ulong;
+    /// Called to decrement the reference count for the object. If the reference
     size_t size;
     extern(System) void function (cef_base_ref_counted_t* self) nothrow add_ref;
-    // count falls to 0 the object should self-delete. Returns true (1) if the
-    // resulting reference count is 0.
+    /// count falls to 0 the object should self-delete. Returns true (1) if the
+    /// resulting reference count is 0.
     ///
     extern(System) int function (cef_base_ref_counted_t* self) nothrow release;
 
     ///
-    // Returns true (1) if the current reference count is 1.
+    /// Returns true (1) if the current reference count is 1.
     ///
     extern(System) int function (cef_base_ref_counted_t* self) nothrow has_one_ref;
 
     ///
-    // Returns true (1) if the current reference count is at least 1.
+    /// Returns true (1) if the current reference count is at least 1.
     ///
     extern(System) int function (cef_base_ref_counted_t* self) nothrow has_at_least_one_ref;
 }
@@ -8228,31 +8782,25 @@ struct cef_base_ref_counted_t
 
 
 ///
-// All scoped framework structures must include this structure first.
+/// All scoped framework structures must include this structure first.
 ///
 struct cef_base_scoped_t
 {
     ///
-    // Size of the data structure.
+    /// Size of the data structure.
     ///
     size_t size;
 
     ///
-    // Called to delete this object. May be NULL if the object is not owned.
+    /// Called to delete this object. May be NULL if the object is not owned.
     ///
     extern(System) void function (cef_base_scoped_t* self) nothrow del;
 }
 
 
 
-// Check that the structure |s|, which is defined with a size_t member at the
-// top, is large enough to contain the specified member |f|.
-
-
-
-
 // CEF_INCLUDE_CAPI_CEF_BASE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -8287,10 +8835,8 @@ struct cef_base_scoped_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=6ee74f31d37a1b5ab3c9c5ccbe2dce9841329b38$
+// $hash=dab511b5ae8accb4f252f7a21a41b626c6417330$
 //
-
-import core.stdc.config;
 
 extern (C):
 
@@ -8302,17 +8848,17 @@ extern (C):
 /// indicated in the comments. When used in the render process the functions of
 /// this structure may only be called on the main thread.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_browser_t
 {
     ///
     /// Base structure.
     ///
 
-    ///
+    cef_base_ref_counted_t base; ///
     /// True if this object is currently valid. This will return false (0) after
     /// cef_life_span_handler_t::OnBeforeClose is called.
-
-    cef_base_ref_counted_t base;
     ///
     extern(System) int function (cef_browser_t* self) nothrow is_valid;
 
@@ -8440,6 +8986,8 @@ struct cef_browser_t
 /// Callback structure for cef_browser_host_t::RunFileDialog. The functions of
 /// this structure will be called on the browser process UI thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_run_file_dialog_callback_t
 {
     ///
@@ -8462,6 +9010,8 @@ struct cef_run_file_dialog_callback_t
 ///
 /// Callback structure for cef_browser_host_t::GetNavigationEntries. The
 /// functions of this structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_navigation_entry_visitor_t
 {
@@ -8491,6 +9041,8 @@ struct cef_navigation_entry_visitor_t
 /// Callback structure for cef_browser_host_t::PrintToPDF. The functions of this
 /// structure will be called on the browser process UI thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_pdf_print_callback_t
 {
     ///
@@ -8514,6 +9066,8 @@ struct cef_pdf_print_callback_t
 ///
 /// Callback structure for cef_browser_host_t::DownloadImage. The functions of
 /// this structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_download_image_callback_t
 {
@@ -8543,6 +9097,8 @@ struct cef_download_image_callback_t
 /// may be called on any thread in that process unless otherwise indicated in
 /// the comments.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_browser_host_t
 {
     ///
@@ -8556,27 +9112,60 @@ struct cef_browser_host_t
     extern(System) cef_browser_t* function (cef_browser_host_t* self) nothrow get_browser;
 
     ///
-    /// Request that the browser close. The JavaScript 'onbeforeunload' event will
-    /// be fired. If |force_close| is false (0) the event handler, if any, will be
-    /// allowed to prompt the user and the user can optionally cancel the close.
-    /// If |force_close| is true (1) the prompt will not be displayed and the
-    /// close will proceed. Results in a call to
-    /// cef_life_span_handler_t::do_close() if the event handler allows the close
-    /// or if |force_close| is true (1). See cef_life_span_handler_t::do_close()
-    /// documentation for additional usage information.
+    /// Request that the browser close. Closing a browser is a multi-stage process
+    /// that may complete either synchronously or asynchronously, and involves
+    /// callbacks such as cef_life_span_handler_t::DoClose (Alloy style only),
+    /// cef_life_span_handler_t::OnBeforeClose, and a top-level window close
+    /// handler such as cef_window_delegate_t::CanClose (or platform-specific
+    /// equivalent). In some cases a close request may be delayed or canceled by
+    /// the user. Using try_close_browser() instead of close_browser() is
+    /// recommended for most use cases. See cef_life_span_handler_t::do_close()
+    /// documentation for detailed usage and examples.
+    ///
+    /// If |force_close| is false (0) then JavaScript unload handlers, if any, may
+    /// be fired and the close may be delayed or canceled by the user. If
+    /// |force_close| is true (1) then the user will not be prompted and the close
+    /// will proceed immediately (possibly asynchronously). If browser close is
+    /// delayed and not canceled the default behavior is to call the top-level
+    /// window close handler once the browser is ready to be closed. This default
+    /// behavior can be changed for Alloy style browsers by implementing
+    /// cef_life_span_handler_t::do_close(). is_ready_to_be_closed() can be used
+    /// to detect mandatory browser close events when customizing close behavior
+    /// on the browser process UI thread.
     ///
     extern(System) void function (cef_browser_host_t* self, int force_close) nothrow close_browser;
 
     ///
-    /// Helper for closing a browser. Call this function from the top-level window
-    /// close handler (if any). Internally this calls CloseBrowser(false (0)) if
-    /// the close has not yet been initiated. This function returns false (0)
-    /// while the close is pending and true (1) after the close has completed. See
-    /// close_browser() and cef_life_span_handler_t::do_close() documentation for
-    /// additional usage information. This function must be called on the browser
-    /// process UI thread.
+    /// Helper for closing a browser. This is similar in behavior to
+    /// CLoseBrowser(false (0)) but returns a boolean to reflect the immediate
+    /// close status. Call this function from a top-level window close handler
+    /// such as cef_window_delegate_t::CanClose (or platform-specific equivalent)
+    /// to request that the browser close, and return the result to indicate if
+    /// the window close should proceed. Returns false (0) if the close will be
+    /// delayed (JavaScript unload handlers triggered but still pending) or true
+    /// (1) if the close will proceed immediately (possibly asynchronously). See
+    /// close_browser() documentation for additional usage information. This
+    /// function must be called on the browser process UI thread.
     ///
     extern(System) int function (cef_browser_host_t* self) nothrow try_close_browser;
+
+    ///
+    /// Returns true (1) if the browser is ready to be closed, meaning that the
+    /// close has already been initiated and that JavaScript unload handlers have
+    /// already executed or should be ignored. This can be used from a top-level
+    /// window close handler such as cef_window_delegate_t::CanClose (or platform-
+    /// specific equivalent) to distringuish between potentially cancelable
+    /// browser close events (like the user clicking the top-level window close
+    /// button before browser close has started) and mandatory browser close
+    /// events (like JavaScript `window.close()` or after browser close has
+    /// started in response to [Try]close_browser()). Not completing the browser
+    /// close for mandatory close events (when this function returns true (1))
+    /// will leave the browser in a partially closed state that interferes with
+    /// proper functioning. See close_browser() documentation for additional usage
+    /// information. This function must be called on the browser process UI
+    /// thread.
+    ///
+    extern(System) int function (cef_browser_host_t* self) nothrow is_ready_to_be_closed;
 
     ///
     /// Set whether the browser is focused.
@@ -8589,7 +9178,7 @@ struct cef_browser_host_t
     /// browser process UI thread and it will return the handle for the top-level
     /// native window.
     ///
-    extern(System) c_ulong function (cef_browser_host_t* self) nothrow get_window_handle;
+    extern(System) cef_window_handle_t function (cef_browser_host_t* self) nothrow get_window_handle;
 
     ///
     /// Retrieve the window handle (if any) of the browser that opened this
@@ -8597,7 +9186,14 @@ struct cef_browser_host_t
     /// wrapped in a cef_browser_view_t. This function can be used in combination
     /// with custom handling of modal windows.
     ///
-    extern(System) c_ulong function (cef_browser_host_t* self) nothrow get_opener_window_handle;
+    extern(System) cef_window_handle_t function (
+        cef_browser_host_t* self) nothrow get_opener_window_handle;
+
+    ///
+    /// Retrieve the unique identifier of the browser that opened this browser.
+    /// Will return 0 for non-popup browsers.
+    ///
+    extern(System) int function (cef_browser_host_t* self) nothrow get_opener_identifier;
 
     ///
     /// Returns true (1) if this browser is wrapped in a cef_browser_view_t.
@@ -8632,8 +9228,7 @@ struct cef_browser_host_t
 
     ///
     /// Get the default zoom level. This value will be 0.0 by default but can be
-    /// configured with the Chrome runtime. This function can only be called on
-    /// the UI thread.
+    /// configured. This function can only be called on the UI thread.
     ///
     extern(System) double function (cef_browser_host_t* self) nothrow get_default_zoom_level;
 
@@ -8880,12 +9475,26 @@ struct cef_browser_host_t
     extern(System) void function (cef_browser_host_t* self, int hidden) nothrow was_hidden;
 
     ///
-    /// Send a notification to the browser that the screen info has changed. The
-    /// browser will then call cef_render_handler_t::GetScreenInfo to update the
-    /// screen information with the new values. This simulates moving the webview
-    /// window from one display to another, or changing the properties of the
-    /// current display. This function is only used when window rendering is
-    /// disabled.
+    /// Notify the browser that screen information has changed. Updated
+    /// information will be sent to the renderer process to configure screen size
+    /// and position values used by CSS and JavaScript (window.deviceScaleFactor,
+    /// window.screenX/Y, window.outerWidth/Height, etc.). For background see
+    /// https://bitbucket.org/chromiumembedded/cef/wiki/GeneralUsage.md#markdown-
+    /// header-coordinate-systems
+    ///
+    /// This function is used with (a) windowless rendering and (b) windowed
+    /// rendering with external (client-provided) root window.
+    ///
+    /// With windowless rendering the browser will call
+    /// cef_render_handler_t::GetScreenInfo,
+    /// cef_render_handler_t::GetRootScreenRect and
+    /// cef_render_handler_t::GetViewRect. This simulates moving or resizing the
+    /// root window in the current display, moving the root window from one
+    /// display to another, or changing the properties of the current display.
+    ///
+    /// With windowed rendering the browser will call
+    /// cef_display_handler_t::GetRootWindowScreenRect and use the associated
+    /// display properties.
     ///
     extern(System) void function (cef_browser_host_t* self) nothrow notify_screen_info_changed;
 
@@ -8967,8 +9576,8 @@ struct cef_browser_host_t
     /// Returns the maximum rate in frames per second (fps) that
     /// cef_render_handler_t::OnPaint will be called for a windowless browser. The
     /// actual fps may be lower if the browser cannot generate frames at the
-    /// requested rate. The minimum value is 1 and the maximum value is 60
-    /// (default 30). This function can only be called on the UI thread.
+    /// requested rate. The minimum value is 1 and the default value is 30. This
+    /// function can only be called on the UI thread.
     ///
     extern(System) int function (cef_browser_host_t* self) nothrow get_windowless_frame_rate;
 
@@ -8976,8 +9585,8 @@ struct cef_browser_host_t
     /// Set the maximum rate in frames per second (fps) that
     /// cef_render_handler_t:: OnPaint will be called for a windowless browser.
     /// The actual fps may be lower if the browser cannot generate frames at the
-    /// requested rate. The minimum value is 1 and the maximum value is 60
-    /// (default 30). Can also be set at browser creation via
+    /// requested rate. The minimum value is 1 and the default value is 30. Can
+    /// also be set at browser creation via
     /// cef_browser_tSettings.windowless_frame_rate.
     ///
     extern(System) void function (
@@ -9166,23 +9775,6 @@ struct cef_browser_host_t
         const(cef_size_t)* max_size) nothrow set_auto_resize_enabled;
 
     ///
-    /// Returns the extension hosted in this browser or NULL if no extension is
-    /// hosted. See cef_request_context_t::LoadExtension for details.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) cef_extension_t* function (cef_browser_host_t* self) nothrow get_extension;
-
-    ///
-    /// Returns true (1) if this browser is hosting an extension background
-    /// script. Background hosts do not have a window and are not displayable. See
-    /// cef_request_context_t::LoadExtension for details.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) int function (cef_browser_host_t* self) nothrow is_background_host;
-
-    ///
     /// Set whether the browser's audio is muted.
     ///
     extern(System) void function (cef_browser_host_t* self, int mute) nothrow set_audio_muted;
@@ -9204,12 +9796,12 @@ struct cef_browser_host_t
 
     ///
     /// Requests the renderer to exit browser fullscreen. In most cases exiting
-    /// window fullscreen should also exit browser fullscreen. With the Alloy
-    /// runtime this function should be called in response to a user action such
-    /// as clicking the green traffic light button on MacOS
+    /// window fullscreen should also exit browser fullscreen. With Alloy style
+    /// this function should be called in response to a user action such as
+    /// clicking the green traffic light button on MacOS
     /// (cef_window_delegate_t::OnWindowFullscreenTransition callback) or pressing
-    /// the "ESC" key (cef_keyboard_handler_t::OnPreKeyEvent callback). With the
-    /// Chrome runtime these standard exit actions are handled internally but
+    /// the "ESC" key (cef_keyboard_handler_t::OnPreKeyEvent callback). With
+    /// Chrome style these standard exit actions are handled internally but
     /// new/additional user actions can use this function. Set |will_cause_resize|
     /// to true (1) if exiting browser fullscreen will cause a view resize.
     ///
@@ -9218,18 +9810,22 @@ struct cef_browser_host_t
         int will_cause_resize) nothrow exit_fullscreen;
 
     ///
-    /// Returns true (1) if a Chrome command is supported and enabled. Values for
-    /// |command_id| can be found in the cef_command_ids.h file. This function can
-    /// only be called on the UI thread. Only used with the Chrome runtime.
+    /// Returns true (1) if a Chrome command is supported and enabled. Use the
+    /// cef_id_for_command_id_name() function for version-safe mapping of command
+    /// IDC names from cef_command_ids.h to version-specific numerical
+    /// |command_id| values. This function can only be called on the UI thread.
+    /// Only used with Chrome style.
     ///
     extern(System) int function (
         cef_browser_host_t* self,
         int command_id) nothrow can_execute_chrome_command;
 
     ///
-    /// Execute a Chrome command. Values for |command_id| can be found in the
-    /// cef_command_ids.h file. |disposition| provides information about the
-    /// intended command target. Only used with the Chrome runtime.
+    /// Execute a Chrome command. Use the cef_id_for_command_id_name() function
+    /// for version-safe mapping of command IDC names from cef_command_ids.h to
+    /// version-specific numerical |command_id| values. |disposition| provides
+    /// information about the intended command target. Only used with Chrome
+    /// style.
     ///
     extern(System) void function (
         cef_browser_host_t* self,
@@ -9253,44 +9849,6 @@ struct cef_browser_host_t
     extern(System) cef_runtime_style_t function (cef_browser_host_t* self) nothrow get_runtime_style;
 }
 
-struct cef_accelerated_paint_info_t;
-
-///
-/// Describes how to interpret the components of a pixel.
-///
-enum cef_color_type_t
-{
-    ///
-    /// RGBA with 8 bits per pixel (32bits total).
-    ///
-    CEF_COLOR_TYPE_RGBA_8888 = 0,
-
-    ///
-    /// BGRA with 8 bits per pixel (32bits total).
-    ///
-    CEF_COLOR_TYPE_BGRA_8888 = 1
-}
-
-enum cef_runtime_style_t
-{
-    ///
-    /// Use the default runtime style. The default style will match the
-    /// CefSettings.chrome_runtime value in most cases. See above documentation
-    /// for exceptions.
-    ///
-    CEF_RUNTIME_STYLE_DEFAULT = 0,
-
-    ///
-    /// Use the Chrome runtime style. Only supported with the Chrome runtime.
-    ///
-    CEF_RUNTIME_STYLE_CHROME = 1,
-
-    ///
-    /// Use the Alloy runtime style. Supported with both the Alloy and Chrome
-    /// runtime.
-    ///
-    CEF_RUNTIME_STYLE_ALLOY = 2
-}
 
 
 ///
@@ -9327,8 +9885,13 @@ cef_browser_t* cef_browser_host_create_browser_sync (
     cef_dictionary_value_t* extra_info,
     cef_request_context_t* request_context);
 
+///
+/// Returns the browser (if any) with the specified identifier.
+///
+cef_browser_t* cef_browser_host_get_browser_by_identifier (int browser_id);
+
 // CEF_INCLUDE_CAPI_CEF_BROWSER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -9363,7 +9926,7 @@ cef_browser_t* cef_browser_host_create_browser_sync (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d958d5bed7f909f6313facef3440fb8ba07a5c01$
+// $hash=75439e8ba353162c029448b1f7ed536e3d20598a$
 //
 
 extern (C):
@@ -9372,6 +9935,8 @@ extern (C):
 /// Structure used to implement browser process callbacks. The functions of this
 /// structure will be called on the browser process main thread unless otherwise
 /// indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_browser_process_handler_t
 {
@@ -9385,11 +9950,10 @@ struct cef_browser_process_handler_t
     ///
     /// If |type| is CEF_PREFERENCES_TYPE_GLOBAL the registered preferences can be
     /// accessed via cef_preference_manager_t::GetGlobalPreferences after
-    /// OnContextInitialized is called. Global preferences are registered a single
 
-    cef_base_ref_counted_t base;
-    /// time at application startup. See related cef_settings_t.cache_path and
-    /// cef_settings_t.persist_user_preferences configuration.
+    cef_base_ref_counted_t base; /// OnContextInitialized is called. Global preferences are registered a single
+    /// time at application startup. See related cef_settings_t.cache_path
+    /// configuration.
     ///
     /// If |type| is CEF_PREFERENCES_TYPE_REQUEST_CONTEXT the preferences can be
     /// accessed via the cef_request_context_t after
@@ -9397,8 +9961,7 @@ struct cef_browser_process_handler_t
     /// Request context preferences are registered each time a new
     /// cef_request_context_t is created. It is intended but not required that all
     /// request contexts have the same registered preferences. See related
-    /// cef_request_context_settings_t.cache_path and
-    /// cef_request_context_settings_t.persist_user_preferences configuration.
+    /// cef_request_context_settings_t.cache_path configuration.
     ///
     /// Do not keep a reference to the |registrar| object. This function is called
     /// on the browser process UI thread.
@@ -9471,8 +10034,8 @@ struct cef_browser_process_handler_t
     /// (cef_browser_t object). If null is returned the cef_browser_t will be
     /// unmanaged (no callbacks will be executed for that cef_browser_t) and
     /// application shutdown will be blocked until the browser window is closed
-    /// manually. This function is currently only used with the Chrome runtime
-    /// when creating new browser windows via Chrome UI.
+    /// manually. This function is currently only used with Chrome style when
+    /// creating new browser windows via Chrome UI.
     ///
     extern(System) cef_client_t* function (
         cef_browser_process_handler_t* self) nothrow get_default_client;
@@ -9481,8 +10044,8 @@ struct cef_browser_process_handler_t
     /// Return the default handler for use with a new user or incognito profile
     /// (cef_request_context_t object). If null is returned the
     /// cef_request_context_t will be unmanaged (no callbacks will be executed for
-    /// that cef_request_context_t). This function is currently only used with the
-    /// Chrome runtime when creating new browser windows via Chrome UI.
+    /// that cef_request_context_t). This function is currently only used with
+    /// Chrome style when creating new browser windows via Chrome UI.
     ///
     extern(System) cef_request_context_handler_t* function (
         cef_browser_process_handler_t* self) nothrow get_default_request_context_handler;
@@ -9491,7 +10054,7 @@ struct cef_browser_process_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_BROWSER_PROCESS_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -9526,13 +10089,15 @@ struct cef_browser_process_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=46bc048bec64590735298a95633167d66e445844$
+// $hash=ba91cbebd3f8dda1131713c51cd4621069939589$
 //
 
 extern (C):
 
 ///
 /// Generic callback structure used for asynchronous continuation.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_callback_t
 {
@@ -9551,6 +10116,8 @@ struct cef_callback_t
     ///
     /// Generic callback structure used for asynchronous completion.
     ///
+    /// NOTE: This struct is allocated client-side.
+    ///
 
     ///
     /// Base structure.
@@ -9559,8 +10126,6 @@ struct cef_callback_t
     ///
     /// Method that will be called once the task is complete.
     ///
-
-    // CEF_INCLUDE_CAPI_CEF_CALLBACK_CAPI_H_
 
     cef_base_ref_counted_t base;
     extern(System) void function (cef_callback_t* self) nothrow cont;
@@ -9576,7 +10141,9 @@ struct cef_completion_callback_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+// CEF_INCLUDE_CAPI_CEF_CALLBACK_CAPI_H_
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -9611,7 +10178,7 @@ struct cef_completion_callback_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=09bd4140605645c9dfbd81e7e22d029d0bb50129$
+// $hash=89798b8a3a9a4ae14a57e81dfaad1e05a2c23639$
 //
 
 extern (C):
@@ -9619,13 +10186,17 @@ extern (C):
 ///
 /// Implement this structure to provide handler implementations.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_client_t
 {
     ///
     /// Base structure.
     ///
 
-    cef_base_ref_counted_t base; ///
+    cef_base_ref_counted_t base;
+
+    ///
     /// Return the handler for audio rendering events.
     ///
     extern(System) cef_audio_handler_t* function (cef_client_t* self) nothrow get_audio_handler;
@@ -9745,7 +10316,7 @@ struct cef_client_t
 
 
 // CEF_INCLUDE_CAPI_CEF_CLIENT_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -9780,7 +10351,7 @@ struct cef_client_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dd183a473b1e8c5ee8bdcf99949fc5274c4cc892$
+// $hash=979f6d810588e94c86b94cd204f27175bd5b85aa$
 //
 
 extern (C):
@@ -9788,6 +10359,8 @@ extern (C):
 ///
 /// Implement this structure to handle events related to commands. The functions
 /// of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_command_handler_t
 {
@@ -9797,25 +10370,29 @@ struct cef_command_handler_t
 
     ///
     /// Called to execute a Chrome command triggered via menu selection or
-    /// keyboard shortcut. Values for |command_id| can be found in the
-    /// cef_command_ids.h file. |disposition| provides information about the
-    /// intended command target. Return true (1) if the command was handled or
-    /// false (0) for the default implementation. For context menu commands this
-    /// will be called after cef_context_menu_handler_t::OnContextMenuCommand.
-    /// Only used with the Chrome runtime.
-    ///
+    /// keyboard shortcut. Use the cef_id_for_command_id_name() function for
+    /// version-safe mapping of command IDC names from cef_command_ids.h to
+    /// version-specific numerical |command_id| values. |disposition| provides
+    /// information about the intended command target. Return true (1) if the
+    /// command was handled or false (0) for the default implementation. For
+    /// context menu commands this will be called after
 
     cef_base_ref_counted_t base;
+    /// cef_context_menu_handler_t::OnContextMenuCommand. Only used with Chrome
+    /// style.
+    ///
     extern(System) int function (
         cef_command_handler_t* self,
         cef_browser_t* browser,
         int command_id,
         cef_window_open_disposition_t disposition) nothrow on_chrome_command;
+
     ///
-    /// Called to check if a Chrome app menu item should be visible. Values for
-    /// |command_id| can be found in the cef_command_ids.h file. Only called for
-    /// menu items that would be visible by default. Only used with the Chrome
-    /// runtime.
+    /// Called to check if a Chrome app menu item should be visible. Use the
+    /// cef_id_for_command_id_name() function for version-safe mapping of command
+    /// IDC names from cef_command_ids.h to version-specific numerical
+    /// |command_id| values. Only called for menu items that would be visible by
+    /// default. Only used with Chrome style.
     ///
     extern(System) int function (
         cef_command_handler_t* self,
@@ -9823,10 +10400,11 @@ struct cef_command_handler_t
         int command_id) nothrow is_chrome_app_menu_item_visible;
 
     ///
-    /// Called to check if a Chrome app menu item should be enabled. Values for
-    /// |command_id| can be found in the cef_command_ids.h file. Only called for
-    /// menu items that would be enabled by default. Only used with the Chrome
-    /// runtime.
+    /// Called to check if a Chrome app menu item should be enabled. Use the
+    /// cef_id_for_command_id_name() function for version-safe mapping of command
+    /// IDC names from cef_command_ids.h to version-specific numerical
+    /// |command_id| values. Only called for menu items that would be enabled by
+    /// default. Only used with Chrome style.
     ///
     extern(System) int function (
         cef_command_handler_t* self,
@@ -9836,7 +10414,7 @@ struct cef_command_handler_t
     ///
     /// Called during browser creation to check if a Chrome page action icon
     /// should be visible. Only called for icons that would be visible by default.
-    /// Only used with the Chrome runtime.
+    /// Only used with Chrome style.
     ///
     extern(System) int function (
         cef_command_handler_t* self,
@@ -9845,7 +10423,7 @@ struct cef_command_handler_t
     ///
     /// Called during browser creation to check if a Chrome toolbar button should
     /// be visible. Only called for buttons that would be visible by default. Only
-    /// used with the Chrome runtime.
+    /// used with Chrome style.
     ///
     extern(System) int function (
         cef_command_handler_t* self,
@@ -9855,7 +10433,7 @@ struct cef_command_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_COMMAND_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -9890,7 +10468,7 @@ struct cef_command_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=fce786b3f054d6581438e2906b77e573c797372a$
+// $hash=f98a12929fbf9bb6be2c784de22a56f34863255d$
 //
 
 extern (C):
@@ -9906,17 +10484,18 @@ extern (C):
 /// such if necessary. Switch values will retain the original case and UTF8
 /// encoding. This structure can be used before cef_initialize() is called.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_command_line_t
 {
     ///
     /// Base structure.
     ///
 
+    cef_base_ref_counted_t base;
     ///
     /// Returns true (1) if this object is valid. Do not call any other functions
     /// if this function returns false (0).
-
-    cef_base_ref_counted_t base;
     ///
     extern(System) int function (cef_command_line_t* self) nothrow is_valid;
 
@@ -10053,6 +10632,14 @@ struct cef_command_line_t
     extern(System) void function (
         cef_command_line_t* self,
         const(cef_string_t)* wrapper) nothrow prepend_wrapper;
+
+    ///
+    /// Remove a switch from the command line. If no such switch is present, this
+    /// has no effect.
+    ///
+    extern(System) void function (
+        cef_command_line_t* self,
+        const(cef_string_t)* name) nothrow remove_switch;
 }
 
 
@@ -10069,7 +10656,7 @@ cef_command_line_t* cef_command_line_create ();
 cef_command_line_t* cef_command_line_get_global ();
 
 // CEF_INCLUDE_CAPI_CEF_COMMAND_LINE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -10104,13 +10691,15 @@ cef_command_line_t* cef_command_line_get_global ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=3ae7dbb24ec7a95a2f4d4e390c9b6622221c2f42$
+// $hash=524f53a1411035ac6050853e6c52f17f9bd4eaa9$
 //
 
 extern (C):
 
 ///
 /// Callback structure used for continuation of custom context menu display.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_run_context_menu_callback_t
 {
@@ -10127,9 +10716,6 @@ struct cef_run_context_menu_callback_t
     /// Cancel context menu display.
     ///
 
-    ///
-    /// Callback structure used for continuation of custom quick menu display.
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_run_context_menu_callback_t* self,
@@ -10139,6 +10725,11 @@ struct cef_run_context_menu_callback_t
 }
 
 
+
+///
+/// Callback structure used for continuation of custom quick menu display.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_run_quick_menu_callback_t
 {
@@ -10167,6 +10758,8 @@ struct cef_run_quick_menu_callback_t
 ///
 /// Implement this structure to handle context menu events. The functions of
 /// this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_context_menu_handler_t
 {
@@ -10277,6 +10870,8 @@ struct cef_context_menu_handler_t
 ///
 /// Provides information about the context menu state. The functions of this
 /// structure can only be accessed on browser process the UI thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_context_menu_params_t
 {
@@ -10432,7 +11027,7 @@ struct cef_context_menu_params_t
 
 
 // CEF_INCLUDE_CAPI_CEF_CONTEXT_MENU_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -10467,7 +11062,7 @@ struct cef_context_menu_params_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=76ba2e59636aa71c8c6286093198a1e64d012c62$
+// $hash=438975254d7d0a4b97d7ad05e745e544728d41d6$
 //
 
 extern (C):
@@ -10475,6 +11070,8 @@ extern (C):
 ///
 /// Structure used for managing cookies. The functions of this structure may be
 /// called on any thread unless otherwise indicated.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_cookie_manager_t
 {
@@ -10490,13 +11087,13 @@ struct cef_cookie_manager_t
 
     ///
     /// Visit a subset of cookies on the UI thread. The results are filtered by
-    /// the given url scheme, host, domain and path. If |includeHttpOnly| is true
-    /// (1) HTTP-only cookies will also be included in the results. The returned
 
     cef_base_ref_counted_t base;
     extern(System) int function (
         cef_cookie_manager_t* self,
         cef_cookie_visitor_t* visitor) nothrow visit_all_cookies;
+    /// the given url scheme, host, domain and path. If |includeHttpOnly| is true
+    /// (1) HTTP-only cookies will also be included in the results. The returned
     /// cookies are ordered by longest path, then by earliest creation date.
     /// Returns false (0) if cookies cannot be accessed.
     ///
@@ -10555,8 +11152,8 @@ struct cef_cookie_manager_t
 /// cef_settings_t.cache_path if specified or in memory otherwise. If |callback|
 /// is non-NULL it will be executed asnychronously on the UI thread after the
 /// manager's storage has been initialized. Using this function is equivalent to
-/// calling cef_request_context_t::cef_request_context_get_global_context()-
-/// >GetDefaultCookieManager().
+/// calling cef_request_context_t::cef_request_context_get_global_context()->Get
+/// DefaultCookieManager().
 ///
 cef_cookie_manager_t* cef_cookie_manager_get_global_manager (
     cef_completion_callback_t* callback);
@@ -10564,6 +11161,8 @@ cef_cookie_manager_t* cef_cookie_manager_get_global_manager (
 ///
 /// Structure to implement for visiting cookie values. The functions of this
 /// structure will always be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_cookie_visitor_t
 {
@@ -10593,6 +11192,8 @@ struct cef_cookie_visitor_t
 /// Structure to implement to be notified of asynchronous completion via
 /// cef_cookie_manager_t::set_cookie().
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_set_cookie_callback_t
 {
     ///
@@ -10613,6 +11214,8 @@ struct cef_set_cookie_callback_t
 /// Structure to implement to be notified of asynchronous completion via
 /// cef_cookie_manager_t::delete_cookies().
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_delete_cookies_callback_t
 {
     ///
@@ -10632,7 +11235,7 @@ struct cef_delete_cookies_callback_t
 
 
 // CEF_INCLUDE_CAPI_CEF_COOKIE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -10667,7 +11270,7 @@ struct cef_delete_cookies_callback_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=46a6432f66cce88d8597c3d070681b09a712dc54$
+// $hash=79ce82867dc40d8d2ebc54e17b8bc181b81df870$
 //
 
 extern (C):
@@ -10775,7 +11378,7 @@ void cef_set_crash_key_value (
     const(cef_string_t)* value);
 
 // CEF_INCLUDE_CAPI_CEF_CRASH_UTIL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -10810,7 +11413,7 @@ void cef_set_crash_key_value (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dd94c50619e92bf5bed4fe61479813ee559f779d$
+// $hash=62859097510036135679070817e19b339ec1248b$
 //
 
 extern (C):
@@ -10820,6 +11423,8 @@ extern (C):
 ///
 /// Callback structure for cef_browser_host_t::AddDevToolsMessageObserver. The
 /// functions of this structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_dev_tools_message_observer_t
 {
@@ -10834,11 +11439,11 @@ struct cef_dev_tools_message_observer_t
     /// |message| is only valid for the scope of this callback and should be
     /// copied if necessary. Return true (1) if the message was handled or false
     /// (0) if the message should be further processed and passed to the
+
+    cef_base_ref_counted_t base;
     /// OnDevToolsMethodResult or OnDevToolsEvent functions as appropriate.
     ///
     /// Method result dictionaries include an "id" (int) value that identifies the
-
-    cef_base_ref_counted_t base;
     /// orginating function call sent from
     /// cef_browser_host_t::SendDevToolsMessage, and optionally either a "result"
     /// (dictionary) or "error" (dictionary) value. The "error" dictionary will
@@ -10915,7 +11520,7 @@ struct cef_dev_tools_message_observer_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DEVTOOLS_MESSAGE_OBSERVER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -10950,13 +11555,15 @@ struct cef_dev_tools_message_observer_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=bf7208a86ee17f63fd7163cef8c3a13373a1f1c8$
+// $hash=091879ed08a62dbcb50c30db695fc51fb6496b64$
 //
 
 extern (C):
 
 ///
 /// Callback structure for asynchronous continuation of file dialog requests.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_file_dialog_callback_t
 {
@@ -10976,8 +11583,6 @@ struct cef_file_dialog_callback_t
 
     ///
     /// Implement this structure to handle dialog events. The functions of this
-    /// structure will be called on the browser process UI thread.
-    ///
 
     cef_base_ref_counted_t base;
     extern(System) void function (
@@ -10987,7 +11592,10 @@ struct cef_file_dialog_callback_t
 }
 
 
-
+/// structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_dialog_handler_t
 {
     ///
@@ -11031,7 +11639,7 @@ struct cef_dialog_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DIALOG_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11066,16 +11674,16 @@ struct cef_dialog_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=5a99c5e88ea0e123087234b2795fa625fed183f2$
+// $hash=27540cd0fcf6e7aa7543b832e4c68bae12c732b7$
 //
-
-import core.stdc.config;
 
 extern (C):
 
 ///
 /// Implement this structure to handle events related to browser display state.
 /// The functions of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_display_handler_t
 {
@@ -11089,7 +11697,6 @@ struct cef_display_handler_t
 
     ///
     /// Called when the page title changes.
-    ///
 
     cef_base_ref_counted_t base;
     extern(System) void function (
@@ -11097,10 +11704,12 @@ struct cef_display_handler_t
         cef_browser_t* browser,
         cef_frame_t* frame,
         const(cef_string_t)* url) nothrow on_address_change;
+    ///
     extern(System) void function (
         cef_display_handler_t* self,
         cef_browser_t* browser,
         const(cef_string_t)* title) nothrow on_title_change;
+
     ///
     /// Called when the page icon changes.
     ///
@@ -11113,13 +11722,12 @@ struct cef_display_handler_t
     /// Called when web content in the page has toggled fullscreen mode. If
     /// |fullscreen| is true (1) the content will automatically be sized to fill
     /// the browser content area. If |fullscreen| is false (0) the content will
-    /// automatically return to its original size and position. With the Alloy
-    /// runtime the client is responsible for triggering the fullscreen transition
-    /// (for example, by calling cef_window_t::SetFullscreen when using Views).
-    /// With the Chrome runtime the fullscreen transition will be triggered
-    /// automatically. The cef_window_delegate_t::OnWindowFullscreenTransition
-    /// function will be called during the fullscreen transition for notification
-    /// purposes.
+    /// automatically return to its original size and position. With Alloy style
+    /// the client is responsible for triggering the fullscreen transition (for
+    /// example, by calling cef_window_t::SetFullscreen when using Views). With
+    /// Chrome style the fullscreen transition will be triggered automatically.
+    /// The cef_window_delegate_t::OnWindowFullscreenTransition function will be
+    /// called during the fullscreen transition for notification purposes.
     ///
     extern(System) void function (
         cef_display_handler_t* self,
@@ -11163,7 +11771,7 @@ struct cef_display_handler_t
     ///
     /// Called when auto-resize is enabled via
     /// cef_browser_host_t::SetAutoResizeEnabled and the contents have auto-
-    /// resized. |new_size| will be the desired size in view coordinates. Return
+    /// resized. |new_size| will be the desired size in DIP coordinates. Return
     /// true (1) if the resize was handled or false (0) for default handling.
     ///
     extern(System) int function (
@@ -11189,7 +11797,7 @@ struct cef_display_handler_t
     extern(System) int function (
         cef_display_handler_t* self,
         cef_browser_t* browser,
-        c_ulong cursor,
+        cef_cursor_handle_t cursor,
         cef_cursor_type_t type,
         const(cef_cursor_info_t)* custom_cursor_info) nothrow on_cursor_change;
 
@@ -11202,12 +11810,49 @@ struct cef_display_handler_t
         cef_browser_t* browser,
         int has_video_access,
         int has_audio_access) nothrow on_media_access_change;
+
+    ///
+    /// Called when JavaScript is requesting new bounds via window.moveTo/By() or
+    /// window.resizeTo/By(). |new_bounds| are in DIP screen coordinates.
+    ///
+    /// With Views-hosted browsers |new_bounds| are the desired bounds for the
+    /// containing cef_window_t and may be passed directly to
+    /// cef_window_t::SetBounds. With external (client-provided) parent on macOS
+    /// and Windows |new_bounds| are the desired frame bounds for the containing
+    /// root window. With other non-Views browsers |new_bounds| are the desired
+    /// bounds for the browser content only unless the client implements either
+    /// cef_display_handler_t::GetRootWindowScreenRect for windowed browsers or
+    /// cef_render_handler_t::GetWindowScreenRect for windowless browsers. Clients
+    /// may expand browser content bounds to window bounds using OS-specific or
+    /// cef_display_t functions.
+    ///
+    /// Return true (1) if this function was handled or false (0) for default
+    /// handling. Default move/resize behavior is only provided with Views-hosted
+    /// Chrome style browsers.
+    ///
+    extern(System) int function (
+        cef_display_handler_t* self,
+        cef_browser_t* browser,
+        const(cef_rect_t)* new_bounds) nothrow on_contents_bounds_change;
+
+    ///
+    /// Called to retrieve the external (client-provided) root window rectangle in
+    /// screen DIP coordinates. Only called for windowed browsers on Windows and
+    /// Linux. Return true (1) if the rectangle was provided. Return false (0) to
+    /// use the root window bounds on Windows or the browser content bounds on
+    /// Linux. For additional usage details see
+    /// cef_browser_host_t::NotifyScreenInfoChanged.
+    ///
+    extern(System) int function (
+        cef_display_handler_t* self,
+        cef_browser_t* browser,
+        cef_rect_t* rect) nothrow get_root_window_screen_rect;
 }
 
 
 
 // CEF_INCLUDE_CAPI_CEF_DISPLAY_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11242,7 +11887,7 @@ struct cef_display_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=a4d2f79163205ed4367916546240a6aedc2165f9$
+// $hash=ca21c122172743af8b747eb6dbef6eed5280b97f$
 //
 
 extern (C):
@@ -11250,6 +11895,8 @@ extern (C):
 ///
 /// Structure to implement for visiting the DOM. The functions of this structure
 /// will be called on the render process main thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_domvisitor_t
 {
@@ -11265,10 +11912,6 @@ struct cef_domvisitor_t
     /// scope of this function.
     ///
 
-    ///
-    /// Structure used to represent a DOM document. The functions of this structure
-    /// should only be called on the render process main thread thread.
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_domvisitor_t* self,
@@ -11276,6 +11919,12 @@ struct cef_domvisitor_t
 }
 
 
+
+///
+/// Structure used to represent a DOM document. The functions of this structure
+/// should only be called on the render process main thread thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_domdocument_t
 {
@@ -11372,6 +12021,8 @@ struct cef_domdocument_t
 ///
 /// Structure used to represent a DOM node. The functions of this structure
 /// should only be called on the render process main thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_domnode_t
 {
@@ -11534,7 +12185,7 @@ struct cef_domnode_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DOM_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11569,13 +12220,15 @@ struct cef_domnode_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=7ecfb07a95315ff81937e9f68d419122fc88f1b7$
+// $hash=409a438b598bdae8a0728cb6d1a281d550c44841$
 //
 
 extern (C):
 
 ///
 /// Callback structure used to asynchronously continue a download.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_before_download_callback_t
 {
@@ -11590,10 +12243,6 @@ struct cef_before_download_callback_t
     /// (1) if you do wish to show the default "Save As" dialog.
     ///
 
-    ///
-    /// Callback structure used to asynchronously cancel a download.
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_before_download_callback_t* self,
@@ -11601,8 +12250,11 @@ struct cef_before_download_callback_t
         int show_dialog) nothrow cont;
 }
 
-
-
+ ///
+/// Callback structure used to asynchronously cancel a download.
+///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_download_item_callback_t
 {
     ///
@@ -11631,6 +12283,8 @@ struct cef_download_item_callback_t
 ///
 /// Structure used to handle file downloads. The functions of this structure
 /// will called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_download_handler_t
 {
@@ -11684,7 +12338,7 @@ struct cef_download_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DOWNLOAD_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11719,13 +12373,15 @@ struct cef_download_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=9af8ade3addfd112db41792c4e80682a8143e8c4$
+// $hash=7a70a551184bfa12ef6dddeea66fd585943c3c70$
 //
 
 extern (C):
 
 ///
 /// Structure used to represent a download item.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_download_item_t
 {
@@ -11750,15 +12406,15 @@ struct cef_download_item_t
     /// Returns true (1) if the download has been canceled.
     ///
 
-    ///
-    /// Returns true (1) if the download has been interrupted.
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) int function (cef_download_item_t* self) nothrow is_valid;
     extern(System) int function (cef_download_item_t* self) nothrow is_in_progress;
     extern(System) int function (cef_download_item_t* self) nothrow is_complete;
     extern(System) int function (cef_download_item_t* self) nothrow is_canceled;
+
+    ///
+    /// Returns true (1) if the download has been interrupted.
+    ///
     extern(System) int function (cef_download_item_t* self) nothrow is_interrupted;
 
     ///
@@ -11846,7 +12502,7 @@ struct cef_download_item_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DOWNLOAD_ITEM_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -11881,7 +12537,7 @@ struct cef_download_item_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=a096775255ddc4d7616095e48e7370bd87bf4bb5$
+// $hash=54a8ac1ecd79da5fe7a02bc176c9b9d9a480f0d1$
 //
 
 extern (C):
@@ -11889,6 +12545,8 @@ extern (C):
 ///
 /// Structure used to represent drag data. The functions of this structure may
 /// be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_drag_data_t
 {
@@ -11912,15 +12570,15 @@ struct cef_drag_data_t
     /// Returns true (1) if the drag data is a text or html fragment.
     ///
 
-    ///
-    /// Returns true (1) if the drag data is a file.
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) cef_drag_data_t* function (cef_drag_data_t* self) nothrow clone;
     extern(System) int function (cef_drag_data_t* self) nothrow is_read_only;
     extern(System) int function (cef_drag_data_t* self) nothrow is_link;
     extern(System) int function (cef_drag_data_t* self) nothrow is_fragment;
+
+    ///
+    /// Returns true (1) if the drag data is a file.
+    ///
     extern(System) int function (cef_drag_data_t* self) nothrow is_file;
 
     ///
@@ -12080,7 +12738,7 @@ struct cef_drag_data_t
 cef_drag_data_t* cef_drag_data_create ();
 
 // CEF_INCLUDE_CAPI_CEF_DRAG_DATA_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -12115,7 +12773,7 @@ cef_drag_data_t* cef_drag_data_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=0723a2a59d46e465ac94f198351dc871f0b35b96$
+// $hash=8f69a9cffadf663bbe69230e8210dcda768038e5$
 //
 
 extern (C):
@@ -12123,6 +12781,8 @@ extern (C):
 ///
 /// Implement this structure to handle events related to dragging. The functions
 /// of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_drag_handler_t
 {
@@ -12143,6 +12803,7 @@ struct cef_drag_handler_t
         cef_browser_t* browser,
         cef_drag_data_t* dragData,
         cef_drag_operations_mask_t mask) nothrow on_drag_enter;
+
     ///
     /// Called whenever draggable regions for the browser window change. These can
     /// be specified using the '-webkit-app-region: drag/no-drag' CSS-property. If
@@ -12161,7 +12822,7 @@ struct cef_drag_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_DRAG_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -12196,333 +12857,7 @@ struct cef_drag_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=634054ad25154c30fb4ec630fe7fb79b0cf1f9b3$
-//
-
-extern (C):
-
-
-
-
-///
-/// Object representing an extension. Methods may be called on any thread unless
-/// otherwise indicated.
-///
-/// WARNING: This API is deprecated and will be removed in ~M127.
-///
-struct cef_extension_t
-{
-    ///
-    /// Base structure.
-    ///
-
-    ///
-    /// Returns the unique extension identifier. This is calculated based on the
-    /// extension public key, if available, or on the extension path. See
-    /// https://developer.chrome.com/extensions/manifest/key for details.
-    ///
-    // The resulting string must be freed by calling cef_string_userfree_free().
-
-    ///
-    /// Returns the absolute path to the extension directory on disk. This value
-    /// will be prefixed with PK_DIR_RESOURCES if a relative path was passed to
-
-    cef_base_ref_counted_t base;
-    extern(System) cef_string_userfree_t function (cef_extension_t* self) nothrow get_identifier; /// cef_request_context_t::LoadExtension.
-    ///
-    // The resulting string must be freed by calling cef_string_userfree_free().
-    extern(System) cef_string_userfree_t function (cef_extension_t* self) nothrow get_path;
-
-    ///
-    /// Returns the extension manifest contents as a cef_dictionary_value_t
-    /// object. See https://developer.chrome.com/extensions/manifest for details.
-    ///
-    extern(System) cef_dictionary_value_t* function (cef_extension_t* self) nothrow get_manifest;
-
-    ///
-    /// Returns true (1) if this object is the same extension as |that| object.
-    /// Extensions are considered the same if identifier, path and loader context
-    /// match.
-    ///
-    extern(System) int function (cef_extension_t* self, cef_extension_t* that) nothrow is_same;
-
-    ///
-    /// Returns the handler for this extension. Will return NULL for internal
-    /// extensions or if no handler was passed to
-    /// cef_request_context_t::LoadExtension.
-    ///
-    extern(System) cef_extension_handler_t* function (cef_extension_t* self) nothrow get_handler;
-
-    ///
-    /// Returns the request context that loaded this extension. Will return NULL
-    /// for internal extensions or if the extension has been unloaded. See the
-    /// cef_request_context_t::LoadExtension documentation for more information
-    /// about loader contexts. Must be called on the browser process UI thread.
-    ///
-    extern(System) cef_request_context_t* function (
-        cef_extension_t* self) nothrow get_loader_context;
-
-    ///
-    /// Returns true (1) if this extension is currently loaded. Must be called on
-    /// the browser process UI thread.
-    ///
-    extern(System) int function (cef_extension_t* self) nothrow is_loaded;
-
-    ///
-    /// Unload this extension if it is not an internal extension and is currently
-    /// loaded. Will result in a call to
-    /// cef_extension_handler_t::OnExtensionUnloaded on success.
-    ///
-    extern(System) void function (cef_extension_t* self) nothrow unload;
-}
-
-
-
-// CEF_INCLUDE_CAPI_CEF_EXTENSION_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//    * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//    * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//    * Neither the name of Google Inc. nor the name Chromium Embedded
-// Framework nor the names of its contributors may be used to endorse
-// or promote products derived from this software without specific prior
-// written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// ---------------------------------------------------------------------------
-//
-// This file was generated by the CEF translator tool and should not edited
-// by hand. See the translator.README.txt file in the tools directory for
-// more information.
-//
-// $hash=ebac34c9b85de780ce7524211c5dd61a80d4576c$
-//
-
-extern (C):
-
-
-
-///
-/// Callback structure used for asynchronous continuation of
-/// cef_extension_handler_t::GetExtensionResource.
-///
-struct cef_get_extension_resource_callback_t
-{
-    ///
-    /// Base structure.
-    ///
-
-    ///
-    /// Continue the request. Read the resource contents from |stream|.
-    ///
-
-    ///
-    /// Cancel the request.
-    ///
-
-    ///
-    /// Implement this structure to handle events related to browser extensions. The
-    /// functions of this structure will be called on the UI thread. See
-
-    cef_base_ref_counted_t base;
-    extern(System) void function (
-        cef_get_extension_resource_callback_t* self,
-        cef_stream_reader_t* stream) nothrow cont;
-    extern(System) void function (cef_get_extension_resource_callback_t* self) nothrow cancel;
-}
-
-
-/// cef_request_context_t::LoadExtension for information about extension
-/// loading.
-///
-/// WARNING: This API is deprecated and will be removed in ~M127.
-///
-struct cef_extension_handler_t
-{
-    ///
-    /// Base structure.
-    ///
-    cef_base_ref_counted_t base;
-
-    ///
-    /// Called if the cef_request_context_t::LoadExtension request fails. |result|
-    /// will be the error code.
-    ///
-    extern(System) void function (
-        cef_extension_handler_t* self,
-        cef_errorcode_t result) nothrow on_extension_load_failed;
-
-    ///
-    /// Called if the cef_request_context_t::LoadExtension request succeeds.
-    /// |extension| is the loaded extension.
-    ///
-    extern(System) void function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension) nothrow on_extension_loaded;
-
-    ///
-    /// Called after the cef_extension_t::Unload request has completed.
-    ///
-    extern(System) void function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension) nothrow on_extension_unloaded;
-
-    ///
-    /// Called when an extension needs a browser to host a background script
-    /// specified via the "background" manifest key. The browser will have no
-    /// visible window and cannot be displayed. |extension| is the extension that
-    /// is loading the background script. |url| is an internally generated
-    /// reference to an HTML page that will be used to load the background script
-    /// via a "<script>" src attribute. To allow creation of the browser
-    /// optionally modify |client| and |settings| and return false (0). To cancel
-    /// creation of the browser (and consequently cancel load of the background
-    /// script) return true (1). Successful creation will be indicated by a call
-    /// to cef_life_span_handler_t::OnAfterCreated, and
-    /// cef_browser_host_t::IsBackgroundHost will return true (1) for the
-    /// resulting browser. See https://developer.chrome.com/extensions/event_pages
-    /// for more information about extension background script usage.
-    ///
-    extern(System) int function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension,
-        const(cef_string_t)* url,
-        cef_client_t** client,
-        cef_browser_settings_t* settings) nothrow on_before_background_browser;
-
-    ///
-    /// Called when an extension API (e.g. chrome.tabs.create) requests creation
-    /// of a new browser. |extension| and |browser| are the source of the API
-    /// call. |active_browser| may optionally be specified via the windowId
-    /// property or returned via the get_active_browser() callback and provides
-    /// the default |client| and |settings| values for the new browser. |index| is
-    /// the position value optionally specified via the index property. |url| is
-    /// the URL that will be loaded in the browser. |active| is true (1) if the
-    /// new browser should be active when opened.  To allow creation of the
-    /// browser optionally modify |windowInfo|, |client| and |settings| and return
-    /// false (0). To cancel creation of the browser return true (1). Successful
-    /// creation will be indicated by a call to
-    /// cef_life_span_handler_t::OnAfterCreated. Any modifications to |windowInfo|
-    /// will be ignored if |active_browser| is wrapped in a cef_browser_view_t.
-    ///
-    extern(System) int function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension,
-        cef_browser_t* browser,
-        cef_browser_t* active_browser,
-        int index,
-        const(cef_string_t)* url,
-        int active,
-        cef_window_info_t* windowInfo,
-        cef_client_t** client,
-        cef_browser_settings_t* settings) nothrow on_before_browser;
-
-    ///
-    /// Called when no tabId is specified to an extension API call that accepts a
-    /// tabId parameter (e.g. chrome.tabs.*). |extension| and |browser| are the
-    /// source of the API call. Return the browser that will be acted on by the
-    /// API call or return NULL to act on |browser|. The returned browser must
-    /// share the same cef_request_context_t as |browser|. Incognito browsers
-    /// should not be considered unless the source extension has incognito access
-    /// enabled, in which case |include_incognito| will be true (1).
-    ///
-    extern(System) cef_browser_t* function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension,
-        cef_browser_t* browser,
-        int include_incognito) nothrow get_active_browser;
-
-    ///
-    /// Called when the tabId associated with |target_browser| is specified to an
-    /// extension API call that accepts a tabId parameter (e.g. chrome.tabs.*).
-    /// |extension| and |browser| are the source of the API call. Return true (1)
-    /// to allow access of false (0) to deny access. Access to incognito browsers
-    /// should not be allowed unless the source extension has incognito access
-    /// enabled, in which case |include_incognito| will be true (1).
-    ///
-    extern(System) int function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension,
-        cef_browser_t* browser,
-        int include_incognito,
-        cef_browser_t* target_browser) nothrow can_access_browser;
-
-    ///
-    /// Called to retrieve an extension resource that would normally be loaded
-    /// from disk (e.g. if a file parameter is specified to
-    /// chrome.tabs.executeScript). |extension| and |browser| are the source of
-    /// the resource request. |file| is the requested relative file path. To
-    /// handle the resource request return true (1) and execute |callback| either
-    /// synchronously or asynchronously. For the default behavior which reads the
-    /// resource from the extension directory on disk return false (0).
-    /// Localization substitutions will not be applied to resources handled via
-    /// this function.
-    ///
-    extern(System) int function (
-        cef_extension_handler_t* self,
-        cef_extension_t* extension,
-        cef_browser_t* browser,
-        const(cef_string_t)* file,
-        cef_get_extension_resource_callback_t* callback) nothrow get_extension_resource;
-}
-
-
-
-// CEF_INCLUDE_CAPI_CEF_EXTENSION_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//    * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//    * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//    * Neither the name of Google Inc. nor the name Chromium Embedded
-// Framework nor the names of its contributors may be used to endorse
-// or promote products derived from this software without specific prior
-// written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// ---------------------------------------------------------------------------
-//
-// This file was generated by the CEF translator tool and should not edited
-// by hand. See the translator.README.txt file in the tools directory for
-// more information.
-//
-// $hash=e10581d1f6aeb104646ae106aaa5fb36016643dd$
+// $hash=05bfcb46c5f93e280a389f4fb7108483f5324db5$
 //
 
 extern (C):
@@ -12609,7 +12944,7 @@ int cef_zip_directory (
 void cef_load_crlsets_file (const(cef_string_t)* path);
 
 // CEF_INCLUDE_CAPI_CEF_FILE_UTIL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -12644,7 +12979,7 @@ void cef_load_crlsets_file (const(cef_string_t)* path);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=da0a9242b309fbd70d19949fb1c5b4ec4475ef94$
+// $hash=dedc73aa9a27ee614d17cf1f15670675c31351ac$
 //
 
 extern (C):
@@ -12652,6 +12987,8 @@ extern (C):
 ///
 /// Implement this structure to handle events related to find results. The
 /// functions of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_find_handler_t
 {
@@ -12683,7 +13020,7 @@ struct cef_find_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_FIND_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -12718,7 +13055,7 @@ struct cef_find_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=6eefc2c650908461fb7536dd3314c77a3f89dceb$
+// $hash=985e0376dc9951e1801f24d09d232705e9bf6373$
 //
 
 extern (C):
@@ -12726,6 +13063,8 @@ extern (C):
 ///
 /// Implement this structure to handle events related to focus. The functions of
 /// this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_focus_handler_t
 {
@@ -12768,7 +13107,7 @@ struct cef_focus_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_FOCUS_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -12803,7 +13142,7 @@ struct cef_focus_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=8f347a95168778ec0e686cdef93be3bc517e2f68$
+// $hash=b0b10042cc19c3120f0ee101ed86ab3e5bd9de9d$
 //
 
 extern (C):
@@ -12819,6 +13158,8 @@ extern (C):
 /// unless otherwise indicated in the comments. When used in the render process
 /// the functions of this structure may only be called on the main thread.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_frame_t
 {
     ///
@@ -12827,13 +13168,13 @@ struct cef_frame_t
 
     ///
     /// True if this object is currently attached to a valid frame.
+
+    cef_base_ref_counted_t base;
     ///
+    extern(System) int function (cef_frame_t* self) nothrow is_valid;
 
     ///
     /// Execute undo in this frame.
-
-    cef_base_ref_counted_t base;
-    extern(System) int function (cef_frame_t* self) nothrow is_valid;
     ///
     extern(System) void function (cef_frame_t* self) nothrow undo;
 
@@ -12856,6 +13197,11 @@ struct cef_frame_t
     /// Execute paste in this frame.
     ///
     extern(System) void function (cef_frame_t* self) nothrow paste;
+
+    ///
+    /// Execute paste and match style in this frame.
+    ///
+    extern(System) void function (cef_frame_t* self) nothrow paste_and_match_style;
 
     ///
     /// Execute delete in this frame.
@@ -12965,7 +13311,7 @@ struct cef_frame_t
     /// Get the V8 context associated with the frame. This function can only be
     /// called from the render process.
     ///
-    extern(System) cef_v8context_t* function (cef_frame_t* self) nothrow get_v8context;
+    extern(System) cef_v8_context_t* function (cef_frame_t* self) nothrow get_v8_context;
 
     ///
     /// Visit the DOM document. This function can only be called from the render
@@ -13010,7 +13356,7 @@ struct cef_frame_t
 
 
 // CEF_INCLUDE_CAPI_CEF_FRAME_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13045,7 +13391,7 @@ struct cef_frame_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=fc6fbee765ce2b649f5293c8c4b076d36014e4aa$
+// $hash=965da5d7c93b61b4ce758db80f1c49ceeb2cd9e9$
 //
 
 extern (C):
@@ -13078,6 +13424,8 @@ extern (C):
 ///   objects are detached at the same time then notifications will be sent for
 ///   any sub-frame objects before the main frame object. Commands can no longer
 ///   be routed and will be discarded.
+/// - CefFremeHadler::OnFrameDestroyed => An existing main frame or sub-frame
+///   object has been destroyed.
 /// - cef_frame_handler_t::OnMainFrameChanged => A new main frame object has
 ///   been assigned to the browser. This will only occur with cross-origin
 ///   navigation or re-navigation after renderer process termination (due to
@@ -13087,41 +13435,31 @@ extern (C):
 /// - cef_frame_handler_t::OnFrameDetached => Any sub-frame objects have lost
 ///   their connection to the renderer process. Commands can no longer be routed
 ///   and will be discarded.
+/// - CefFreameHandler::OnFrameDestroyed => Any sub-frame objects have been
+///   destroyed.
 /// - cef_life_span_handler_t::OnBeforeClose => The browser has been destroyed.
 /// - cef_frame_handler_t::OnFrameDetached => The main frame object have lost
 ///   its connection to the renderer process. Notifications will be sent for any
 ///   sub-frame objects before the main frame object. Commands can no longer be
 ///   routed and will be discarded.
+/// - CefFreameHandler::OnFrameDestroyed => The main frame object has been
+///   destroyed.
 /// - cef_frame_handler_t::OnMainFrameChanged => The final main frame object has
 ///   been removed from the browser.
 ///
-/// Cross-origin navigation and/or loading receives special handling.
+/// Special handling applies for cross-origin loading on creation/navigation of
+/// sub-frames, and cross-origin loading on creation of new popup browsers. A
+/// temporary frame will first be created in the parent frame's renderer
+/// process. This temporary frame will never attach and will be discarded after
+/// the real cross-origin frame is created in the new/target renderer process.
+/// The client will receive creation callbacks for the temporary frame, followed
+/// by cross-origin navigation callbacks (2) for the transition from the
+/// temporary frame to the real frame. The temporary frame will not receive or
+/// execute commands during this transitional period (any sent commands will be
+/// discarded).
 ///
 /// When the main frame navigates to a different origin the OnMainFrameChanged
 /// callback (2) will be executed with the old and new main frame objects.
-///
-/// When a new sub-frame is loaded in, or an existing sub-frame is navigated to,
-/// a different origin from the parent frame, a temporary sub-frame object will
-/// first be created in the parent's renderer process. That temporary sub-frame
-/// will then be discarded after the real cross-origin sub-frame is created in
-/// the new/target renderer process. The client will receive cross-origin
-/// navigation callbacks (2) for the transition from the temporary sub-frame to
-/// the real sub-frame. The temporary sub-frame will not receive or execute
-/// commands during this transitional period (any sent commands will be
-/// discarded).
-///
-/// When a new popup browser is created in a different origin from the parent
-/// browser, a temporary main frame object for the popup will first be created
-/// in the parent's renderer process. That temporary main frame will then be
-/// discarded after the real cross-origin main frame is created in the
-/// new/target renderer process. The client will receive creation and initial
-/// navigation callbacks (1) for the temporary main frame, followed by cross-
-/// origin navigation callbacks (2) for the transition from the temporary main
-/// frame to the real main frame. The temporary main frame may receive and
-/// execute commands during this transitional period (any sent commands may be
-/// executed, but the behavior is potentially undesirable since they execute in
-/// the parent browser's renderer process and not the new/target renderer
-/// process).
 ///
 /// Callbacks will not be executed for placeholders that may be created during
 /// pre-commit navigation for sub-frames that do not yet exist in the renderer
@@ -13129,6 +13467,8 @@ extern (C):
 ///
 /// The functions of this structure will be called on the UI thread unless
 /// otherwise indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_frame_handler_t
 {
@@ -13142,7 +13482,9 @@ struct cef_frame_handler_t
     /// Called when a new frame is created. This will be the first notification
     /// that references |frame|. Any commands that require transport to the
     /// associated renderer process (LoadRequest, SendProcessMessage, GetSource,
-    /// etc.) will be queued until OnFrameAttached is called for |frame|.
+    /// etc.) will be queued. The queued commands will be sent before
+    /// OnFrameAttached or discarded before OnFrameDestroyed if the frame never
+    /// attaches.
     ///
     extern(System) void function (
         cef_frame_handler_t* self,
@@ -13150,10 +13492,25 @@ struct cef_frame_handler_t
         cef_frame_t* frame) nothrow on_frame_created;
 
     ///
+    /// Called when an existing frame is destroyed. This will be the last
+    /// notification that references |frame| and cef_frame_t::is_valid() will
+    /// return false (0) for |frame|. If called during browser destruction and
+    /// after cef_life_span_handler_t::on_before_close() then
+    /// cef_browser_t::is_valid() will return false (0) for |browser|. Any queued
+    /// commands that have not been sent will be discarded before this callback.
+    ///
+    extern(System) void function (
+        cef_frame_handler_t* self,
+        cef_browser_t* browser,
+        cef_frame_t* frame) nothrow on_frame_destroyed;
+
+    ///
     /// Called when a frame can begin routing commands to/from the associated
     /// renderer process. |reattached| will be true (1) if the frame was re-
-    /// attached after exiting the BackForwardCache. Any commands that were queued
-    /// have now been dispatched.
+    /// attached after exiting the BackForwardCache or after encountering a
+    /// recoverable connection error. Any queued commands will now have been
+    /// dispatched. This function will not be called for temporary frames created
+    /// during cross-origin navigation.
     ///
     extern(System) void function (
         cef_frame_handler_t* self,
@@ -13162,12 +13519,19 @@ struct cef_frame_handler_t
         int reattached) nothrow on_frame_attached;
 
     ///
-    /// Called when a frame loses its connection to the renderer process and will
-    /// be destroyed. Any pending or future commands will be discarded and
-    /// cef_frame_t::is_valid() will now return false (0) for |frame|. If called
-    /// after cef_life_span_handler_t::on_before_close() during browser
-    /// destruction then cef_browser_t::is_valid() will return false (0) for
-    /// |browser|.
+    /// Called when a frame loses its connection to the renderer process. This may
+    /// occur when a frame is destroyed, enters the BackForwardCache, or
+    /// encounters a rare connection error. In the case of frame destruction this
+    /// call will be followed by a (potentially async) call to OnFrameDestroyed.
+    /// If frame destruction is occuring synchronously then
+    /// cef_frame_t::is_valid() will return false (0) for |frame|. If called
+    /// during browser destruction and after
+    /// cef_life_span_handler_t::on_before_close() then cef_browser_t::is_valid()
+    /// will return false (0) for |browser|. If, in the non-destruction case, the
+    /// same frame later exits the BackForwardCache or recovers from a connection
+    /// error then there will be a follow-up call to OnFrameAttached. This
+    /// function will not be called for temporary frames created during cross-
+    /// origin navigation.
     ///
     extern(System) void function (
         cef_frame_handler_t* self,
@@ -13180,14 +13544,14 @@ struct cef_frame_handler_t
     /// navigation after renderer process termination (due to crashes, etc).
     /// |old_frame| will be NULL and |new_frame| will be non-NULL when a main
     /// frame is assigned to |browser| for the first time. |old_frame| will be
-    /// non-NULL and |new_frame| will be NULL and  when a main frame is removed
-    /// from |browser| for the last time. Both |old_frame| and |new_frame| will be
-    /// non-NULL for cross-origin navigations or re-navigation after renderer
-    /// process termination. This function will be called after on_frame_created()
-    /// for |new_frame| and/or after on_frame_detached() for |old_frame|. If
-    /// called after cef_life_span_handler_t::on_before_close() during browser
-    /// destruction then cef_browser_t::is_valid() will return false (0) for
-    /// |browser|.
+    /// non-NULL and |new_frame| will be NULL when a main frame is removed from
+    /// |browser| for the last time. Both |old_frame| and |new_frame| will be non-
+    /// NULL for cross-origin navigations or re-navigation after renderer process
+    /// termination. This function will be called after on_frame_created() for
+    /// |new_frame| and/or after on_frame_destroyed() for |old_frame|. If called
+    /// during browser destruction and after
+    /// cef_life_span_handler_t::on_before_close() then cef_browser_t::is_valid()
+    /// will return false (0) for |browser|.
     ///
     extern(System) void function (
         cef_frame_handler_t* self,
@@ -13199,7 +13563,7 @@ struct cef_frame_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_FRAME_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13234,7 +13598,7 @@ struct cef_frame_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=990e80ab5ae04298e6b70cbc0a67115825563251$
+// $hash=fc600dc0b69aa3deef96205d41cb96883cc6bcac$
 //
 
 extern (C):
@@ -13245,7 +13609,7 @@ extern (C):
 int cef_is_rtl ();
 
 // CEF_INCLUDE_CAPI_CEF_I18N_UTIL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13280,7 +13644,7 @@ int cef_is_rtl ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=7512ccf755017d5b1866b753890b498e8163006d$
+// $hash=06efd881efedad55a31769af58c3fd2b52d68b70$
 //
 
 extern (C):
@@ -13292,6 +13656,8 @@ extern (C):
 /// then the image at scale factor 2.0 should be 200x200 pixels -- both images
 /// will display with a DIP size of 100x100 units. The functions of this
 /// structure can be called on any browser process thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_image_t
 {
@@ -13305,12 +13671,12 @@ struct cef_image_t
 
     ///
     /// Returns true (1) if this Image and |that| Image share the same underlying
-    /// storage. Will also return true (1) if both images are NULL.
-    ///
 
     cef_base_ref_counted_t base;
-    extern(System) int function (cef_image_t* self) nothrow is_empty;
+    extern(System) int function (cef_image_t* self) nothrow is_empty; /// storage. Will also return true (1) if both images are NULL.
+    ///
     extern(System) int function (cef_image_t* self, cef_image_t* that) nothrow is_same;
+
     ///
     /// Add a bitmap image representation for |scale_factor|. Only 32-bit
     /// RGBA/BGRA formats are supported. |pixel_width| and |pixel_height| are the
@@ -13444,7 +13810,7 @@ struct cef_image_t
 cef_image_t* cef_image_create ();
 
 // CEF_INCLUDE_CAPI_CEF_IMAGE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13479,7 +13845,7 @@ cef_image_t* cef_image_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=c6810367ba3a17824247dcb17f87040cd021c295$
+// $hash=99272ca9b4c3fdc748a57d8b259503c723dd09ce$
 //
 
 extern (C):
@@ -13487,6 +13853,8 @@ extern (C):
 ///
 /// Callback structure used for asynchronous continuation of JavaScript dialog
 /// requests.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_jsdialog_callback_t
 {
@@ -13503,14 +13871,6 @@ struct cef_jsdialog_callback_t
     ///
     /// Implement this structure to handle events related to JavaScript dialogs. The
     /// functions of this structure will be called on the UI thread.
-    ///
-
-    ///
-    /// Base structure.
-    ///
-
-    ///
-    /// Called to run a JavaScript dialog. If |origin_url| is non-NULL it can be
 
     cef_base_ref_counted_t base;
     extern(System) void function (
@@ -13520,10 +13880,18 @@ struct cef_jsdialog_callback_t
 }
 
 
-
+///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_jsdialog_handler_t
 {
+    ///
+    /// Base structure.
+    ///
     cef_base_ref_counted_t base;
+
+    ///
+    /// Called to run a JavaScript dialog. If |origin_url| is non-NULL it can be
     /// passed to the CefFormatUrlForSecurityDisplay function to retrieve a secure
     /// and user-friendly display string. The |default_prompt_text| value will be
     /// specified for prompt dialogs only. Set |suppress_message| to true (1) and
@@ -13584,7 +13952,7 @@ struct cef_jsdialog_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_JSDIALOG_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13619,7 +13987,7 @@ struct cef_jsdialog_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=0bfe161c51cc6378b2e8e2e2b2c017b750b46864$
+// $hash=d3eaf55b4b5742d2a83bed3517f64900b9423eec$
 //
 
 extern (C):
@@ -13627,6 +13995,8 @@ extern (C):
 ///
 /// Implement this structure to handle events related to keyboard input. The
 /// functions of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_keyboard_handler_t
 {
@@ -13648,8 +14018,9 @@ struct cef_keyboard_handler_t
         cef_keyboard_handler_t* self,
         cef_browser_t* browser,
         const(cef_key_event_t)* event,
-        XEvent* os_event,
+        cef_event_handle_t os_event,
         int* is_keyboard_shortcut) nothrow on_pre_key_event;
+
     ///
     /// Called after the renderer and JavaScript in the page has had a chance to
     /// handle the event. |event| contains information about the keyboard event.
@@ -13660,13 +14031,13 @@ struct cef_keyboard_handler_t
         cef_keyboard_handler_t* self,
         cef_browser_t* browser,
         const(cef_key_event_t)* event,
-        XEvent* os_event) nothrow on_key_event;
+        cef_event_handle_t os_event) nothrow on_key_event;
 }
 
 
 
 // CEF_INCLUDE_CAPI_CEF_KEYBOARD_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13701,7 +14072,7 @@ struct cef_keyboard_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=54edf9e9c2a12acdc4cab55079a4a5cb8e2a1e43$
+// $hash=239f4760e09071556a555cdce7d945e7e2169e4e$
 //
 
 extern (C):
@@ -13713,6 +14084,8 @@ extern (C):
 /// functions of this structure will be called on the UI thread unless otherwise
 /// indicated.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_life_span_handler_t
 {
     ///
@@ -13721,35 +14094,42 @@ struct cef_life_span_handler_t
 
     ///
     /// Called on the UI thread before a new popup browser is created. The
-    /// |browser| and |frame| values represent the source of the popup request.
-    /// The |target_url| and |target_frame_name| values indicate where the popup
-    /// browser should navigate and may be NULL if not specified with the request.
-    /// The |target_disposition| value indicates where the user intended to open
-    /// the popup (e.g. current tab, new tab, etc). The |user_gesture| value will
-    /// be true (1) if the popup was opened via explicit user gesture (e.g.
+    /// |browser| and |frame| values represent the source of the popup request
+    /// (opener browser and frame). The |popup_id| value uniquely identifies the
+    /// popup in the context of the opener browser. The |target_url| and
+    /// |target_frame_name| values indicate where the popup browser should
+    /// navigate and may be NULL if not specified with the request. The
 
     cef_base_ref_counted_t base;
-    /// clicking a link) or false (0) if the popup opened automatically (e.g. via
-    /// the DomContentLoaded event). The |popupFeatures| structure contains
-    /// additional information about the requested popup window. To allow creation
-    /// of the popup browser optionally modify |windowInfo|, |client|, |settings|
-    /// and |no_javascript_access| and return false (0). To cancel creation of the
+    /// |target_disposition| value indicates where the user intended to open the
+    /// popup (e.g. current tab, new tab, etc). The |user_gesture| value will be
+    /// true (1) if the popup was opened via explicit user gesture (e.g. clicking
+    /// a link) or false (0) if the popup opened automatically (e.g. via the
+    /// DomContentLoaded event). The |popupFeatures| structure contains additional
+    /// information about the requested popup window. To allow creation of the
+    /// popup browser optionally modify |windowInfo|, |client|, |settings| and
+    /// |no_javascript_access| and return false (0). To cancel creation of the
     /// popup browser return true (1). The |client| and |settings| values will
     /// default to the source browser's values. If the |no_javascript_access|
     /// value is set to false (0) the new browser will not be scriptable and may
     /// not be hosted in the same renderer process as the source browser. Any
     /// modifications to |windowInfo| will be ignored if the parent browser is
-    /// wrapped in a cef_browser_view_t. Popup browser creation will be canceled
-    /// if the parent browser is destroyed before the popup browser creation
-    /// completes (indicated by a call to OnAfterCreated for the popup browser).
-    /// The |extra_info| parameter provides an opportunity to specify extra
-    /// information specific to the created popup browser that will be passed to
+    /// wrapped in a cef_browser_view_t. The |extra_info| parameter provides an
+    /// opportunity to specify extra information specific to the created popup
+    /// browser that will be passed to
     /// cef_render_process_handler_t::on_browser_created() in the render process.
+    ///
+    /// If popup browser creation succeeds then OnAfterCreated will be called for
+    /// the new popup browser. If popup browser creation fails, and if the opener
+    /// browser has not yet been destroyed, then OnBeforePopupAborted will be
+    /// called for the opener browser. See OnBeforePopupAborted documentation for
+    /// additional details.
     ///
     extern(System) int function (
         cef_life_span_handler_t* self,
         cef_browser_t* browser,
         cef_frame_t* frame,
+        int popup_id,
         const(cef_string_t)* target_url,
         const(cef_string_t)* target_frame_name,
         cef_window_open_disposition_t target_disposition,
@@ -13760,6 +14140,26 @@ struct cef_life_span_handler_t
         cef_browser_settings_t* settings,
         cef_dictionary_value_t** extra_info,
         int* no_javascript_access) nothrow on_before_popup;
+
+    ///
+    /// Called on the UI thread if a new popup browser is aborted. This only
+    /// occurs if the popup is allowed in OnBeforePopup and creation fails before
+    /// OnAfterCreated is called for the new popup browser. The |browser| value is
+    /// the source of the popup request (opener browser). The |popup_id| value
+    /// uniquely identifies the popup in the context of the opener browser, and is
+    /// the same value that was passed to OnBeforePopup.
+    ///
+    /// Any client state associated with pending popups should be cleared in
+    /// OnBeforePopupAborted, OnAfterCreated of the popup browser, or
+    /// OnBeforeClose of the opener browser. OnBeforeClose of the opener browser
+    /// may be called before this function in cases where the opener is closing
+    /// during popup creation, in which case cef_browser_host_t::IsValid will
+    /// return false (0) in this function.
+    ///
+    extern(System) void function (
+        cef_life_span_handler_t* self,
+        cef_browser_t* browser,
+        int popup_id) nothrow on_before_popup_aborted;
 
     ///
     /// Called on the UI thread before a new DevTools popup browser is created.
@@ -13778,7 +14178,7 @@ struct cef_life_span_handler_t
     /// Views-hosted source browsers will create Views-hosted DevTools popups
     /// unless |use_default_window| is set to to true (1). DevTools popups can be
     /// blocked by returning true (1) from cef_command_handler_t::OnChromeCommand
-    /// for IDC_DEV_TOOLS. Only used with the Chrome runtime.
+    /// for IDC_DEV_TOOLS. Only used with Chrome style.
     ///
     extern(System) void function (
         cef_life_span_handler_t* self,
@@ -13800,35 +14200,44 @@ struct cef_life_span_handler_t
         cef_browser_t* browser) nothrow on_after_created;
 
     ///
-    /// Called when a browser has received a request to close. This may result
-    /// directly from a call to cef_browser_host_t::*close_browser() or indirectly
-    /// if the browser is parented to a top-level window created by CEF and the
-    /// user attempts to close that window (by clicking the 'X', for example). The
-    /// do_close() function will be called after the JavaScript 'onunload' event
-    /// has been fired.
+    /// Called when an Alloy style browser is ready to be closed, meaning that the
+    /// close has already been initiated and that JavaScript unload handlers have
+    /// already executed or should be ignored. This may result directly from a
+    /// call to cef_browser_host_t::[Try]close_browser() or indirectly if the
+    /// browser's top-level parent window was created by CEF and the user attempts
+    /// to close that window (by clicking the 'X', for example). do_close() will
+    /// not be called if the browser's host window/view has already been destroyed
+    /// (via parent window/view hierarchy tear-down, for example), as it is no
+    /// longer possible to customize the close behavior at that point.
     ///
-    /// An application should handle top-level owner window close notifications by
-    /// calling cef_browser_host_t::try_close_browser() or
+    /// An application should handle top-level parent window close notifications
+    /// by calling cef_browser_host_t::try_close_browser() or
     /// cef_browser_host_t::CloseBrowser(false (0)) instead of allowing the window
     /// to close immediately (see the examples below). This gives CEF an
-    /// opportunity to process the 'onbeforeunload' event and optionally cancel
+    /// opportunity to process JavaScript unload handlers and optionally cancel
     /// the close before do_close() is called.
     ///
-    /// When windowed rendering is enabled CEF will internally create a window or
-    /// view to host the browser. In that case returning false (0) from do_close()
-    /// will send the standard close notification to the browser's top-level owner
-    /// window (e.g. WM_CLOSE on Windows, performClose: on OS X, "delete_event" on
-    /// Linux or cef_window_delegate_t::can_close() callback from Views). If the
-    /// browser's host window/view has already been destroyed (via view hierarchy
-    /// tear-down, for example) then do_close() will not be called for that
-    /// browser since is no longer possible to cancel the close.
+    /// When windowed rendering is enabled CEF will create an internal child
+    /// window/view to host the browser. In that case returning false (0) from
+    /// do_close() will send the standard close notification to the browser's top-
+    /// level parent window (e.g. WM_CLOSE on Windows, performClose: on OS X,
+    /// "delete_event" on Linux or cef_window_delegate_t::can_close() callback
+    /// from Views).
     ///
-    /// When windowed rendering is disabled returning false (0) from do_close()
-    /// will cause the browser object to be destroyed immediately.
+    /// When windowed rendering is disabled there is no internal window/view and
+    /// returning false (0) from do_close() will cause the browser object to be
+    /// destroyed immediately.
     ///
-    /// If the browser's top-level owner window requires a non-standard close
+    /// If the browser's top-level parent window requires a non-standard close
     /// notification then send that notification from do_close() and return true
-    /// (1).
+    /// (1). You are still required to complete the browser close as soon as
+    /// possible (either by calling [Try]close_browser() or by proceeding with
+    /// window/view hierarchy tear-down), otherwise the browser will be left in a
+    /// partially closed state that interferes with proper functioning. Top-level
+    /// windows created on the browser process UI thread can alternately call
+    /// cef_browser_host_t::is_ready_to_be_closed() in the close handler to check
+    /// close status instead of relying on custom do_close() handling. See
+    /// documentation on that function for additional details.
     ///
     /// The cef_life_span_handler_t::on_before_close() function will be called
     /// after do_close() (if do_close() is called) and immediately before the
@@ -13844,22 +14253,26 @@ struct cef_life_span_handler_t
     /// which sends a close notification
     ///     to the application's top-level window.
     /// 2.  Application's top-level window receives the close notification and
-    ///     calls TryCloseBrowser() (which internally calls CloseBrowser(false)).
+    ///     calls TryCloseBrowser() (similar to calling CloseBrowser(false)).
     ///     TryCloseBrowser() returns false so the client cancels the window
     ///     close.
     /// 3.  JavaScript 'onbeforeunload' handler executes and shows the close
     ///     confirmation dialog (which can be overridden via
     ///     CefJSDialogHandler::OnBeforeUnloadDialog()).
     /// 4.  User approves the close. 5.  JavaScript 'onunload' handler executes.
-    /// 6.  CEF sends a close notification to the application's top-level window
-    ///     (because DoClose() returned false by default).
-    /// 7.  Application's top-level window receives the close notification and
+    /// 6.  Application's do_close() handler is called and returns false (0) by
+    ///     default.
+    /// 7.  CEF sends a close notification to the application's top-level window
+    ///     (because DoClose() returned false).
+    /// 8.  Application's top-level window receives the close notification and
     ///     calls TryCloseBrowser(). TryCloseBrowser() returns true so the client
     ///     allows the window close.
-    /// 8.  Application's top-level window is destroyed. 9.  Application's
-    /// on_before_close() handler is called and the browser object
+    /// 9.  Application's top-level window is destroyed, triggering destruction
+    ///     of the child browser window.
+    /// 10. Application's on_before_close() handler is called and the browser
+    /// object
     ///     is destroyed.
-    /// 10. Application exits by calling cef_quit_message_loop() if no other
+    /// 11. Application exits by calling cef_quit_message_loop() if no other
     /// browsers
     ///     exist.
     ///
@@ -13877,13 +14290,17 @@ struct cef_life_span_handler_t
     ///     CefJSDialogHandler::OnBeforeUnloadDialog()).
     /// 4.  User approves the close. 5.  JavaScript 'onunload' handler executes.
     /// 6.  Application's do_close() handler is called. Application will:
-    ///     A. Set a flag to indicate that the next close attempt will be allowed.
+    ///     A. Set a flag to indicate that the next top-level window close attempt
+    ///        will be allowed.
     ///     B. Return false.
-    /// 7.  CEF sends an close notification to the application's top-level window.
+    /// 7.  CEF sends a close notification to the application's top-level window
+    ///     (because DoClose() returned false).
     /// 8.  Application's top-level window receives the close notification and
-    ///     allows the window to close based on the flag from #6B.
-    /// 9.  Application's top-level window is destroyed. 10. Application's
-    /// on_before_close() handler is called and the browser object
+    ///     allows the window to close based on the flag from #6A.
+    /// 9.  Application's top-level window is destroyed, triggering destruction
+    ///     of the child browser window.
+    /// 10. Application's on_before_close() handler is called and the browser
+    /// object
     ///     is destroyed.
     /// 11. Application exits by calling cef_quit_message_loop() if no other
     /// browsers
@@ -13898,10 +14315,11 @@ struct cef_life_span_handler_t
     /// browser object and do not attempt to execute any functions on the browser
     /// object (other than IsValid, GetIdentifier or IsSame) after this callback
     /// returns. cef_frame_handler_t callbacks related to final main frame
-    /// destruction will arrive after this callback and cef_browser_t::IsValid
-    /// will return false (0) at that time. Any in-progress network requests
-    /// associated with |browser| will be aborted when the browser is destroyed,
-    /// and cef_resource_request_handler_t callbacks related to those requests may
+    /// destruction, and OnBeforePopupAborted callbacks for any pending popups,
+    /// will arrive after this callback and cef_browser_t::IsValid will return
+    /// false (0) at that time. Any in-progress network requests associated with
+    /// |browser| will be aborted when the browser is destroyed, and
+    /// cef_resource_request_handler_t callbacks related to those requests may
     /// still arrive on the IO thread after this callback. See cef_frame_handler_t
     /// and do_close() documentation for additional usage information.
     ///
@@ -13913,7 +14331,7 @@ struct cef_life_span_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_LIFE_SPAN_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -13948,7 +14366,7 @@ struct cef_life_span_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=eb842e65cd2e7c4a8a6baa2813b57ac0d3977261$
+// $hash=f4ea0f8d1157566cf53d2f35ba118afde12d0dcc$
 //
 
 extern (C):
@@ -13957,6 +14375,8 @@ extern (C):
 /// Implement this structure to handle events related to browser load status.
 /// The functions of this structure will be called on the browser process UI
 /// thread or render process main thread (TID_RENDERER).
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_load_handler_t
 {
@@ -13970,15 +14390,16 @@ struct cef_load_handler_t
     /// action, and once when loading is terminated due to completion,
     /// cancellation of failure. It will be called before any calls to OnLoadStart
     /// and after all calls to OnLoadError and/or OnLoadEnd.
-    ///
 
     cef_base_ref_counted_t base;
+    ///
     extern(System) void function (
         cef_load_handler_t* self,
         cef_browser_t* browser,
         int isLoading,
         int canGoBack,
         int canGoForward) nothrow on_loading_state_change;
+
     ///
     /// Called after a navigation has been committed and before the browser begins
     /// loading contents in the frame. The |frame| value will never be NULL --
@@ -14032,7 +14453,7 @@ struct cef_load_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_LOAD_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -14067,7 +14488,7 @@ struct cef_load_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=8eec1100e8470cbe3ebc54d5962416d2fa4d57fb$
+// $hash=42fa8dfb3dec7ef405b5d1ea27dfff54b2ec0ca8$
 //
 
 extern (C):
@@ -14076,6 +14497,8 @@ extern (C):
 /// Supports discovery of and communication with media devices on the local
 /// network via the Cast and DIAL protocols. The functions of this structure may
 /// be called on any browser process thread unless otherwise indicated.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_media_router_t
 {
@@ -14086,12 +14509,14 @@ struct cef_media_router_t
     ///
     /// Add an observer for MediaRouter events. The observer will remain
     /// registered until the returned Registration object is destroyed.
-    ///
 
     cef_base_ref_counted_t base;
+    ///
     extern(System) cef_registration_t* function (
         cef_media_router_t* self,
-        cef_media_observer_t* observer) nothrow add_observer; ///
+        cef_media_observer_t* observer) nothrow add_observer;
+
+    ///
     /// Returns a MediaSource object for the specified media source URN. Supported
     /// URN schemes include "cast:" and "dial:", and will be already known by the
     /// client application (e.g. "cast:<appId>?clientId=<clientId>").
@@ -14133,8 +14558,8 @@ struct cef_media_router_t
 /// Returns the MediaRouter object associated with the global request context.
 /// If |callback| is non-NULL it will be executed asnychronously on the UI
 /// thread after the manager's storage has been initialized. Equivalent to
-/// calling cef_request_context_t::cef_request_context_get_global_context()-
-/// >get_media_router().
+/// calling cef_request_context_t::cef_request_context_get_global_context()->get
+/// _media_router().
 ///
 cef_media_router_t* cef_media_router_get_global (
     cef_completion_callback_t* callback);
@@ -14143,6 +14568,8 @@ cef_media_router_t* cef_media_router_get_global (
 /// Implemented by the client to observe MediaRouter events and registered via
 /// cef_media_router_t::AddObserver. The functions of this structure will be
 /// called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_media_observer_t
 {
@@ -14197,6 +14624,8 @@ struct cef_media_observer_t
 /// routing operation. The functions of this structure may be called on any
 /// browser process thread unless otherwise indicated.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_media_route_t
 {
     ///
@@ -14241,6 +14670,8 @@ struct cef_media_route_t
 /// Callback structure for cef_media_router_t::CreateRoute. The functions of
 /// this structure will be called on the browser process UI thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_media_route_create_callback_t
 {
     ///
@@ -14267,6 +14698,8 @@ struct cef_media_route_create_callback_t
 /// Represents a sink to which media can be routed. Instances of this object are
 /// retrieved via cef_media_observer_t::OnSinks. The functions of this structure
 /// may be called on any browser process thread unless otherwise indicated.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_media_sink_t
 {
@@ -14324,6 +14757,8 @@ struct cef_media_sink_t
 /// Callback structure for cef_media_sink_t::GetDeviceInfo. The functions of
 /// this structure will be called on the browser process UI thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_media_sink_device_info_callback_t
 {
     ///
@@ -14347,6 +14782,8 @@ struct cef_media_sink_device_info_callback_t
 /// are retrieved via cef_media_router_t::GetSource. The functions of this
 /// structure may be called on any browser process thread unless otherwise
 /// indicated.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_media_source_t
 {
@@ -14375,7 +14812,7 @@ struct cef_media_source_t
 
 
 // CEF_INCLUDE_CAPI_CEF_MEDIA_ROUTER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -14410,7 +14847,7 @@ struct cef_media_source_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=5dae0b1a1271e79a5fd9b2c6e71e7a719a450161$
+// $hash=3faec922bbb345e8bc5429dabe8ebdc2275253dd$
 //
 
 extern (C):
@@ -14420,6 +14857,8 @@ extern (C):
 /// command ids that have default implementations. All user-defined command ids
 /// should be between MENU_ID_USER_FIRST and MENU_ID_USER_LAST. The functions of
 /// this structure can only be accessed on the browser process the UI thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_menu_model_t
 {
@@ -14437,15 +14876,15 @@ struct cef_menu_model_t
 
     ///
     /// Returns the number of items in this menu.
-    ///
-
-    ///
-    /// Add a separator to the menu. Returns true (1) on success.
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_menu_model_t* self) nothrow is_sub_menu;
     extern(System) int function (cef_menu_model_t* self) nothrow clear;
+    ///
     extern(System) size_t function (cef_menu_model_t* self) nothrow get_count;
+
+    ///
+    /// Add a separator to the menu. Returns true (1) on success.
     ///
     extern(System) int function (cef_menu_model_t* self) nothrow add_separator;
 
@@ -14901,7 +15340,7 @@ struct cef_menu_model_t
 cef_menu_model_t* cef_menu_model_create (cef_menu_model_delegate_t* delegate_);
 
 // CEF_INCLUDE_CAPI_CEF_MENU_MODEL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -14936,7 +15375,7 @@ cef_menu_model_t* cef_menu_model_create (cef_menu_model_delegate_t* delegate_);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=01bdeaf96ea01591689b52b0955504644d6614b8$
+// $hash=356622117a74adbc02a4b778985a3dcf402992f6$
 //
 
 extern (C):
@@ -14947,6 +15386,8 @@ extern (C):
 /// Implement this structure to handle menu model events. The functions of this
 /// structure will be called on the browser process UI thread unless otherwise
 /// indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_menu_model_delegate_t
 {
@@ -14961,8 +15402,6 @@ struct cef_menu_model_delegate_t
 
     ///
     /// Called when the user moves the mouse outside the menu and over the owning
-    /// window.
-    ///
 
     cef_base_ref_counted_t base;
     extern(System) void function (
@@ -14970,6 +15409,8 @@ struct cef_menu_model_delegate_t
         cef_menu_model_t* menu_model,
         int command_id,
         cef_event_flags_t event_flags) nothrow execute_command;
+    /// window.
+    ///
     extern(System) void function (
         cef_menu_model_delegate_t* self,
         cef_menu_model_t* menu_model,
@@ -15020,7 +15461,7 @@ struct cef_menu_model_delegate_t
 
 
 // CEF_INCLUDE_CAPI_CEF_MENU_MODEL_DELEGATE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15055,13 +15496,15 @@ struct cef_menu_model_delegate_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dbdac05f2ebd8e8a357eacfe5095676a5bd5b1ac$
+// $hash=ee689e4f8ec74d73a3b89f039fc0df900fa2611e$
 //
 
 extern (C):
 
 ///
 /// Structure used to represent an entry in navigation history.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_navigation_entry_t
 {
@@ -15080,14 +15523,14 @@ struct cef_navigation_entry_t
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
 
+    cef_base_ref_counted_t base;
+    extern(System) int function (cef_navigation_entry_t* self) nothrow is_valid;
+    extern(System) cef_string_userfree_t function (cef_navigation_entry_t* self) nothrow get_url;
+
     ///
     /// Returns a display-friendly version of the URL.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-
-    cef_base_ref_counted_t base;
-    extern(System) int function (cef_navigation_entry_t* self) nothrow is_valid;
-    extern(System) cef_string_userfree_t function (cef_navigation_entry_t* self) nothrow get_url;
     extern(System) cef_string_userfree_t function (
         cef_navigation_entry_t* self) nothrow get_display_url;
 
@@ -15141,7 +15584,7 @@ struct cef_navigation_entry_t
 
 
 // CEF_INCLUDE_CAPI_CEF_NAVIGATION_ENTRY_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15176,7 +15619,7 @@ struct cef_navigation_entry_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=f146fd9172033e77e90994841df9fa55ff71aa4b$
+// $hash=c79c0b685306bfc5de847142f9c0abb36e88c891$
 //
 
 extern (C):
@@ -15241,7 +15684,7 @@ int cef_remove_cross_origin_whitelist_entry (
 int cef_clear_cross_origin_whitelist ();
 
 // CEF_INCLUDE_CAPI_CEF_ORIGIN_WHITELIST_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15276,7 +15719,7 @@ int cef_clear_cross_origin_whitelist ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=8accded29b97df1549e86e58d8976fe0f800359a$
+// $hash=76d89f9af92afd53c32f711d9f48528f52b071e9$
 //
 
 extern (C):
@@ -15338,14 +15781,14 @@ void cef_get_extensions_for_mime_type (
 /// Encodes |data| as a base64 string.
 ///
 // The resulting string must be freed by calling cef_string_userfree_free().
-cef_string_userfree_t cef_base64encode (const(void)* data, size_t data_size);
+cef_string_userfree_t cef_base64_encode (const(void)* data, size_t data_size);
 
 ///
 /// Decodes the base64 encoded string |data|. The returned value will be NULL if
 /// the decoding fails.
 ///
 
-cef_binary_value_t* cef_base64decode (const(cef_string_t)* data);
+cef_binary_value_t* cef_base64_decode (const(cef_string_t)* data);
 
 ///
 /// Escapes characters in |text| which are unsuitable for use as a query
@@ -15412,7 +15855,7 @@ cef_string_userfree_t cef_write_json (
     cef_json_writer_options_t options);
 
 // CEF_INCLUDE_CAPI_CEF_PARSER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15447,7 +15890,7 @@ cef_string_userfree_t cef_write_json (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=ee0c50b4e1f51fb2286da24bb9244ae74f3b0c6f$
+// $hash=996b61439db40a3a21b3395999451ab754911fbe$
 //
 
 extern (C):
@@ -15459,7 +15902,7 @@ extern (C):
 int cef_get_path (cef_path_key_t key, cef_string_t* path);
 
 // CEF_INCLUDE_CAPI_CEF_PATH_UTIL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15494,7 +15937,7 @@ int cef_get_path (cef_path_key_t key, cef_string_t* path);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=c9b3913701581cd6a1077fa3a39d197f338a2507$
+// $hash=c68d422a83fa1de8bd4e53e8b95223303cff206e$
 //
 
 extern (C):
@@ -15502,6 +15945,8 @@ extern (C):
 ///
 /// Callback structure used for asynchronous continuation of media access
 /// permission requests.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_media_access_callback_t
 {
@@ -15520,17 +15965,21 @@ struct cef_media_access_callback_t
 
     ///
     /// Cancel the media access request.
-    ///
 
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_media_access_callback_t* self,
         uint allowed_permissions) nothrow cont;
+    ///
     extern(System) void function (cef_media_access_callback_t* self) nothrow cancel;
 }
 
- ///
+
+
+///
 /// Callback structure used for asynchronous continuation of permission prompts.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_permission_prompt_callback_t
 {
@@ -15554,6 +16003,8 @@ struct cef_permission_prompt_callback_t
 /// The functions of this structure will be called on the browser process UI
 /// thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_permission_handler_t
 {
     ///
@@ -15568,11 +16019,11 @@ struct cef_permission_handler_t
     /// cef_media_access_permission_types_t that represent the requested
     /// permissions. Return true (1) and call cef_media_access_callback_t
     /// functions either in this function or at a later time to continue or cancel
-    /// the request. Return false (0) to proceed with default handling. With the
-    /// Chrome runtime, default handling will display the permission request UI.
-    /// With the Alloy runtime, default handling will deny the request. This
-    /// function will not be called if the "--enable-media-stream" command-line
-    /// switch is used to grant all permissions.
+    /// the request. Return false (0) to proceed with default handling. With
+    /// Chrome style, default handling will display the permission request UI.
+    /// With Alloy style, default handling will deny the request. This function
+    /// will not be called if the "--enable-media-stream" command-line switch is
+    /// used to grant all permissions.
     ///
     extern(System) int function (
         cef_permission_handler_t* self,
@@ -15589,9 +16040,9 @@ struct cef_permission_handler_t
     /// cef_permission_request_types_t that represent the requested permissions.
     /// Return true (1) and call cef_permission_prompt_callback_t::Continue either
     /// in this function or at a later time to continue or cancel the request.
-    /// Return false (0) to proceed with default handling. With the Chrome
-    /// runtime, default handling will display the permission prompt UI. With the
-    /// Alloy runtime, default handling is CEF_PERMISSION_RESULT_IGNORE.
+    /// Return false (0) to proceed with default handling. With Chrome style,
+    /// default handling will display the permission prompt UI. With Alloy style,
+    /// default handling is CEF_PERMISSION_RESULT_IGNORE.
     ///
     extern(System) int function (
         cef_permission_handler_t* self,
@@ -15620,7 +16071,7 @@ struct cef_permission_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_PERMISSION_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15655,13 +16106,15 @@ struct cef_permission_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=1c0e469a283538945834404bcd5934b9bb9a0756$
+// $hash=fb4ae87f82c143a82ddc5e4855624f9555c0d617$
 //
 
 extern (C):
 
 ///
 /// Structure that manages custom preference registrations.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_preference_registrar_t
 {
@@ -15678,12 +16131,9 @@ struct cef_preference_registrar_t
     /// changed after registration. Returns true (1) on success. Returns false (0)
     /// if |name| is already registered or if |default_value| has an invalid type.
     /// This function must be called from within the scope of the
+
     /// cef_browser_process_handler_t::OnRegisterCustomPreferences callback.
     ///
-
-    ///
-    /// Manage access to preferences. Many built-in preferences are registered by
-    /// Chromium. Custom preferences can be registered in
 
     cef_base_scoped_t base;
     extern(System) int function (
@@ -15693,14 +16143,46 @@ struct cef_preference_registrar_t
 }
 
 
+///
+/// Implemented by the client to observe preference changes and registered via
+/// cef_preference_manager_t::AddPreferenceObserver. The functions of this
+/// structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_preference_observer_t
+{
+    ///
+    /// Base structure.
+    ///
+
+    cef_base_ref_counted_t base;
+
+    ///
+    /// Called when a preference has changed. The new value can be retrieved using
+    /// cef_preference_manager_t::GetPreference.
+    ///
+    extern(System) void function (
+        cef_preference_observer_t* self,
+        const(cef_string_t)* name) nothrow on_preference_changed;
+}
+
+
+
+// CEF_API_ADDED(13401)
+
+///
+/// Manage access to preferences. Many built-in preferences are registered by
+/// Chromium. Custom preferences can be registered in
 /// cef_browser_process_handler_t::OnRegisterCustomPreferences.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_preference_manager_t
 {
     ///
     /// Base structure.
     ///
-
     cef_base_ref_counted_t base;
 
     ///
@@ -15757,9 +16239,47 @@ struct cef_preference_manager_t
         const(cef_string_t)* name,
         cef_value_t* value,
         cef_string_t* error) nothrow set_preference;
+
+    ///
+    /// Add an observer for preference changes. |name| is the name of the
+    /// preference to observe. If |name| is NULL then all preferences will be
+    /// observed. Observing all preferences has performance consequences and is
+    /// not recommended outside of testing scenarios. The observer will remain
+    /// registered until the returned Registration object is destroyed. This
+    /// function must be called on the browser process UI thread.
+    ///
+    extern(System) cef_registration_t* function (
+        cef_preference_manager_t* self,
+        const(cef_string_t)* name,
+        cef_preference_observer_t* observer) nothrow add_preference_observer;
 }
 
 
+
+///
+/// Returns the current Chrome Variations configuration (combination of field
+/// trials and chrome://flags) as equivalent command-line switches
+/// (`--[enable|disable]-features=XXXX`, etc). These switches can be used to
+/// apply the same configuration when launching a CEF-based application. See
+/// https://developer.chrome.com/docs/web-platform/chrome-variations for
+/// background and details. Note that field trial tests are disabled by default
+/// in Official CEF builds (via the `disable_fieldtrial_testing_config=true (1)`
+/// GN flag). This function must be called on the browser process UI thread.
+///
+void cef_preference_manager_get_chrome_variations_as_switches (
+    cef_string_list_t switches);
+
+///
+/// Returns the current Chrome Variations configuration (combination of field
+/// trials and chrome://flags) as human-readable strings. This is the human-
+/// readable equivalent of the "Active Variations" section of chrome://version.
+/// See https://developer.chrome.com/docs/web-platform/chrome-variations for
+/// background and details. Note that field trial tests are disabled by default
+/// in Official CEF builds (via the `disable_fieldtrial_testing_config=true (1)`
+/// GN flag). This function must be called on the browser process UI thread.
+///
+void cef_preference_manager_get_chrome_variations_as_strings (
+    cef_string_list_t strings);
 
 ///
 /// Returns the global preference manager object.
@@ -15767,7 +16287,7 @@ struct cef_preference_manager_t
 cef_preference_manager_t* cef_preference_manager_get_global ();
 
 // CEF_INCLUDE_CAPI_CEF_PREFERENCE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15802,13 +16322,15 @@ cef_preference_manager_t* cef_preference_manager_get_global ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=96d5b6c0dc8f2575e686fb79684c63787cdfe876$
+// $hash=6ee45d7ffdb5670f98e8a042ed0c4db5cabc6d12$
 //
 
 extern (C):
 
 ///
 /// Callback structure for asynchronous continuation of print dialog requests.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_print_dialog_callback_t
 {
@@ -15827,13 +16349,7 @@ struct cef_print_dialog_callback_t
     ///
     /// Callback structure for asynchronous continuation of print job requests.
     ///
-
-    ///
-    /// Base structure.
-    ///
-
-    ///
-    /// Indicate completion of the print job.
+    /// NOTE: This struct is allocated DLL-side.
     ///
 
     cef_base_ref_counted_t base;
@@ -15847,7 +16363,14 @@ struct cef_print_dialog_callback_t
 
 struct cef_print_job_callback_t
 {
+    ///
+    /// Base structure.
+    ///
     cef_base_ref_counted_t base;
+
+    ///
+    /// Indicate completion of the print job.
+    ///
     extern(System) void function (cef_print_job_callback_t* self) nothrow cont;
 }
 
@@ -15857,6 +16380,8 @@ struct cef_print_job_callback_t
 /// Implement this structure to handle printing on Linux. Each browser will have
 /// only one print job in progress at a time. The functions of this structure
 /// will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_print_handler_t
 {
@@ -15930,7 +16455,7 @@ struct cef_print_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_PRINT_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -15965,13 +16490,15 @@ struct cef_print_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=63977fcbe4567db202914f69539f49b254352053$
+// $hash=69993ccc7b3ffcb04b8a892d6607a005b6e8dcc9$
 //
 
 extern (C):
 
 ///
 /// Structure representing print settings.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_print_settings_t
 {
@@ -15995,16 +16522,16 @@ struct cef_print_settings_t
 
     ///
     /// Returns true (1) if the orientation is landscape.
-    ///
-
-    ///
-    /// Set the printer printable area in device units. Some platforms already
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_print_settings_t* self) nothrow is_valid;
     extern(System) int function (cef_print_settings_t* self) nothrow is_read_only;
     extern(System) void function (cef_print_settings_t* self, int landscape) nothrow set_orientation;
+    ///
     extern(System) int function (cef_print_settings_t* self) nothrow is_landscape;
+
+    ///
+    /// Set the printer printable area in device units. Some platforms already
     /// provide flipped area. Set |landscape_needs_flip| to false (0) on those
     /// platforms to avoid double flipping.
     ///
@@ -16124,7 +16651,7 @@ struct cef_print_settings_t
 cef_print_settings_t* cef_print_settings_create ();
 
 // CEF_INCLUDE_CAPI_CEF_PRINT_SETTINGS_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16159,13 +16686,15 @@ cef_print_settings_t* cef_print_settings_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=89c569df7e5e4a6035d4527218ce4dc1d68e20f0$
+// $hash=3b2decb52f84b67988dc2ae791efc7223b0f35ed$
 //
 
 extern (C):
 
 ///
 /// Structure representing a message. Can be used on any process and thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_process_message_t
 {
@@ -16185,12 +16714,12 @@ struct cef_process_message_t
 
     ///
     /// Returns a writable copy of this object. Returns nullptr when message
-    /// contains a shared memory region.
-    ///
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_process_message_t* self) nothrow is_valid;
     extern(System) int function (cef_process_message_t* self) nothrow is_read_only;
+    /// contains a shared memory region.
+    ///
     extern(System) cef_process_message_t* function (cef_process_message_t* self) nothrow copy;
 
     ///
@@ -16222,7 +16751,7 @@ struct cef_process_message_t
 cef_process_message_t* cef_process_message_create (const(cef_string_t)* name);
 
 // CEF_INCLUDE_CAPI_CEF_PROCESS_MESSAGE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16257,7 +16786,7 @@ cef_process_message_t* cef_process_message_create (const(cef_string_t)* name);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=a61a639c7e53ecd9481eae363bac557055f0442e$
+// $hash=3f9182df1fe85fe89287c4260c60ce224fef6d27$
 //
 
 extern (C):
@@ -16275,7 +16804,7 @@ extern (C):
 int cef_launch_process (cef_command_line_t* command_line);
 
 // CEF_INCLUDE_CAPI_CEF_PROCESS_UTIL_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16310,13 +16839,15 @@ int cef_launch_process (cef_command_line_t* command_line);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=c53a67bbf1497a51766bf03040714b5edb2117d5$
+// $hash=04c145d2d938e84ac015c3f8265f942d187943f7$
 //
 
 extern (C):
 
 ///
 /// Generic callback structure used for managing the lifespan of a registration.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_registration_t
 {
@@ -16330,7 +16861,7 @@ struct cef_registration_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16365,7 +16896,7 @@ struct cef_registration_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=5151b6ea3c06e46a75f2cd7679044a2891063d29$
+// $hash=b5a7e3a696d67577cfeeb3739086fc3a2c8287d1$
 //
 
 extern (C):
@@ -16373,6 +16904,8 @@ extern (C):
 ///
 /// Implement this structure to handle events when window rendering is disabled.
 /// The functions of this structure will be called on the UI thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_render_handler_t
 {
@@ -16388,11 +16921,11 @@ struct cef_render_handler_t
     ///
     /// Called to retrieve the root window rectangle in screen DIP coordinates.
     /// Return true (1) if the rectangle was provided. If this function returns
-    /// false (0) the rectangle from GetViewRect will be used.
 
     cef_base_ref_counted_t base;
     extern(System) cef_accessibility_handler_t* function (
         cef_render_handler_t* self) nothrow get_accessibility_handler;
+    /// false (0) the rectangle from GetViewRect will be used.
     ///
     extern(System) int function (
         cef_render_handler_t* self,
@@ -16599,7 +17132,7 @@ struct cef_render_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RENDER_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16634,7 +17167,7 @@ struct cef_render_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=6e2fccb5a8e49918d723f6c5223062cf98b0f9de$
+// $hash=5f9161db67adb86dc477f51aa775956c5ebbdf36$
 //
 
 extern (C):
@@ -16643,6 +17176,8 @@ extern (C):
 /// Structure used to implement render process callbacks. The functions of this
 /// structure will be called on the render process main thread (TID_RENDERER)
 /// unless otherwise indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_render_process_handler_t
 {
@@ -16654,12 +17189,12 @@ struct cef_render_process_handler_t
     /// Called after WebKit has been initialized.
     ///
 
+    cef_base_ref_counted_t base;
+    extern(System) void function (cef_render_process_handler_t* self) nothrow on_web_kit_initialized;
+
     ///
     /// Called after a browser has been created. When browsing cross-origin a new
     /// browser will be created before the old browser with the same identifier is
-
-    cef_base_ref_counted_t base;
-    extern(System) void function (cef_render_process_handler_t* self) nothrow on_web_kit_initialized;
     /// destroyed. |extra_info| is an optional read-only value originating from
     /// cef_browser_host_t::cef_browser_host_create_browser(),
     /// cef_browser_host_t::cef_browser_host_create_browser_sync(),
@@ -16687,16 +17222,16 @@ struct cef_render_process_handler_t
     ///
     /// Called immediately after the V8 context for a frame has been created. To
     /// retrieve the JavaScript 'window' object use the
-    /// cef_v8context_t::get_global() function. V8 handles can only be accessed
+    /// cef_v8_context_t::get_global() function. V8 handles can only be accessed
     /// from the thread on which they are created. A task runner for posting tasks
     /// on the associated thread can be retrieved via the
-    /// cef_v8context_t::get_task_runner() function.
+    /// cef_v8_context_t::get_task_runner() function.
     ///
     extern(System) void function (
         cef_render_process_handler_t* self,
         cef_browser_t* browser,
         cef_frame_t* frame,
-        cef_v8context_t* context) nothrow on_context_created;
+        cef_v8_context_t* context) nothrow on_context_created;
 
     ///
     /// Called immediately before the V8 context for a frame is released. No
@@ -16706,7 +17241,7 @@ struct cef_render_process_handler_t
         cef_render_process_handler_t* self,
         cef_browser_t* browser,
         cef_frame_t* frame,
-        cef_v8context_t* context) nothrow on_context_released;
+        cef_v8_context_t* context) nothrow on_context_released;
 
     ///
     /// Called for global uncaught exceptions in a frame. Execution of this
@@ -16717,9 +17252,9 @@ struct cef_render_process_handler_t
         cef_render_process_handler_t* self,
         cef_browser_t* browser,
         cef_frame_t* frame,
-        cef_v8context_t* context,
-        cef_v8exception_t* exception,
-        cef_v8stack_trace_t* stackTrace) nothrow on_uncaught_exception;
+        cef_v8_context_t* context,
+        cef_v8_exception_t* exception,
+        cef_v8_stack_trace_t* stackTrace) nothrow on_uncaught_exception;
 
     ///
     /// Called when a new node in the the browser gets focus. The |node| value may
@@ -16751,7 +17286,7 @@ struct cef_render_process_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RENDER_PROCESS_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -16786,7 +17321,7 @@ struct cef_render_process_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=14ce483864835eca476d08d39ed4236fbd1a874c$
+// $hash=956f208ecbbbdee8e0db8a066de1c4e154d12e4a$
 //
 
 extern (C):
@@ -16794,6 +17329,8 @@ extern (C):
 ///
 /// Structure used to represent a web request. The functions of this structure
 /// may be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_request_t
 {
@@ -16816,14 +17353,14 @@ struct cef_request_t
 
     ///
     /// Get the request function type. The value will default to POST if post data
-    /// is provided and GET otherwise.
-    ///
-    // The resulting string must be freed by calling cef_string_userfree_free().
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_request_t* self) nothrow is_read_only;
     extern(System) cef_string_userfree_t function (cef_request_t* self) nothrow get_url;
     extern(System) void function (cef_request_t* self, const(cef_string_t)* url) nothrow set_url;
+    /// is provided and GET otherwise.
+    ///
+    // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (cef_request_t* self) nothrow get_method;
 
     ///
@@ -16974,6 +17511,8 @@ cef_request_t* cef_request_create ();
 /// Structure used to represent post data for a web request. The functions of
 /// this structure may be called on any thread.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_post_data_t
 {
     ///
@@ -17039,6 +17578,8 @@ cef_post_data_t* cef_post_data_create ();
 ///
 /// Structure used to represent a single element in the request post data. The
 /// functions of this structure may be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_post_data_element_t
 {
@@ -17108,7 +17649,7 @@ struct cef_post_data_element_t
 cef_post_data_element_t* cef_post_data_element_create ();
 
 // CEF_INCLUDE_CAPI_CEF_REQUEST_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -17143,7 +17684,7 @@ cef_post_data_element_t* cef_post_data_element_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=2c496139ca9a59303b1493ee93d2c3ae96a956c0$
+// $hash=f2001cd5df8882c3f3a796dbf224b094c0d681f0$
 //
 
 extern (C):
@@ -17153,6 +17694,8 @@ extern (C):
 
 ///
 /// Callback structure for cef_request_context_t::ResolveHost.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_resolve_callback_t
 {
@@ -17173,7 +17716,39 @@ struct cef_resolve_callback_t
         cef_string_list_t resolved_ips) nothrow on_resolve_completed;
 }
 
- ///
+
+
+///
+/// Implemented by the client to observe content and website setting changes and
+/// registered via cef_request_context_t::AddSettingObserver. The functions of
+/// this structure will be called on the browser process UI thread.
+///
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_setting_observer_t
+{
+    ///
+    /// Base structure.
+    ///
+    cef_base_ref_counted_t base;
+
+    ///
+    /// Called when a content or website setting has changed. The new value can be
+    /// retrieved using cef_request_context_t::GetContentSetting or
+    /// cef_request_context_t::GetWebsiteSetting.
+    ///
+    extern(System) void function (
+        cef_setting_observer_t* self,
+        const(cef_string_t)* requesting_url,
+        const(cef_string_t)* top_level_url,
+        cef_content_setting_types_t content_type) nothrow on_setting_changed;
+}
+
+
+
+// CEF_API_ADDED(13401)
+
+///
 /// A request context provides request handling for a set of related browser or
 /// URL request objects. A request context can be specified when creating a new
 /// browser via the cef_browser_host_t static factory functions or when creating
@@ -17188,6 +17763,8 @@ struct cef_resolve_callback_t
 /// in single-process mode will share the same request context. This will be the
 /// first request context passed into a cef_browser_host_t static factory
 /// function and all other request context objects will be ignored.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_request_context_t
 {
@@ -17230,6 +17807,14 @@ struct cef_request_context_t
     ///
     /// Register a scheme handler factory for the specified |scheme_name| and
     /// optional |domain_name|. An NULL |domain_name| value for a standard scheme
+    /// will cause the factory to match all domain names. The |domain_name| value
+    /// will be ignored for non-standard schemes. If |scheme_name| is a built-in
+    /// scheme and no handler is returned by |factory| then the built-in scheme
+    /// handler factory will be called. If |scheme_name| is a custom scheme then
+    /// you must also implement the cef_app_t::on_register_custom_schemes()
+    /// function in all processes. This function may be called multiple times to
+    /// change or remove the factory that matches the specified |scheme_name| and
+    /// optional |domain_name|. Returns false (0) if an error occurs. This
 
     cef_preference_manager_t base;
     extern(System) int function (
@@ -17246,14 +17831,6 @@ struct cef_request_context_t
     extern(System) cef_cookie_manager_t* function (
         cef_request_context_t* self,
         cef_completion_callback_t* callback) nothrow get_cookie_manager;
-    /// will cause the factory to match all domain names. The |domain_name| value
-    /// will be ignored for non-standard schemes. If |scheme_name| is a built-in
-    /// scheme and no handler is returned by |factory| then the built-in scheme
-    /// handler factory will be called. If |scheme_name| is a custom scheme then
-    /// you must also implement the cef_app_t::on_register_custom_schemes()
-    /// function in all processes. This function may be called multiple times to
-    /// change or remove the factory that matches the specified |scheme_name| and
-    /// optional |domain_name|. Returns false (0) if an error occurs. This
     /// function may be called on any thread in the browser process.
     ///
     extern(System) int function (
@@ -17307,109 +17884,6 @@ struct cef_request_context_t
         cef_request_context_t* self,
         const(cef_string_t)* origin,
         cef_resolve_callback_t* callback) nothrow resolve_host;
-
-    ///
-    /// Load an extension.
-    ///
-    /// If extension resources will be read from disk using the default load
-    /// implementation then |root_directory| should be the absolute path to the
-    /// extension resources directory and |manifest| should be NULL. If extension
-    /// resources will be provided by the client (e.g. via cef_request_handler_t
-    /// and/or cef_extension_handler_t) then |root_directory| should be a path
-    /// component unique to the extension (if not absolute this will be internally
-    /// prefixed with the PK_DIR_RESOURCES path) and |manifest| should contain the
-    /// contents that would otherwise be read from the "manifest.json" file on
-    /// disk.
-    ///
-    /// The loaded extension will be accessible in all contexts sharing the same
-    /// storage (HasExtension returns true (1)). However, only the context on
-    /// which this function was called is considered the loader (DidLoadExtension
-    /// returns true (1)) and only the loader will receive
-    /// cef_request_context_handler_t callbacks for the extension.
-    ///
-    /// cef_extension_handler_t::OnExtensionLoaded will be called on load success
-    /// or cef_extension_handler_t::OnExtensionLoadFailed will be called on load
-    /// failure.
-    ///
-    /// If the extension specifies a background script via the "background"
-    /// manifest key then cef_extension_handler_t::OnBeforeBackgroundBrowser will
-    /// be called to create the background browser. See that function for
-    /// additional information about background scripts.
-    ///
-    /// For visible extension views the client application should evaluate the
-    /// manifest to determine the correct extension URL to load and then pass that
-    /// URL to the cef_browser_host_t::CreateBrowser* function after the extension
-    /// has loaded. For example, the client can look for the "browser_action"
-    /// manifest key as documented at
-    /// https://developer.chrome.com/extensions/browserAction. Extension URLs take
-    /// the form "chrome-extension://<extension_id>/<path>".
-    ///
-    /// Browsers that host extensions differ from normal browsers as follows:
-    ///  - Can access chrome.* JavaScript APIs if allowed by the manifest. Visit
-    ///    chrome://extensions-support for the list of extension APIs currently
-    ///    supported by CEF.
-    ///  - Main frame navigation to non-extension content is blocked.
-    ///  - Pinch-zooming is disabled.
-    ///  - CefBrowserHost::GetExtension returns the hosted extension.
-    ///  - CefBrowserHost::IsBackgroundHost returns true for background hosts.
-    ///
-    /// See https://developer.chrome.com/extensions for extension implementation
-    /// and usage documentation.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) void function (
-        cef_request_context_t* self,
-        const(cef_string_t)* root_directory,
-        cef_dictionary_value_t* manifest,
-        cef_extension_handler_t* handler) nothrow load_extension;
-
-    ///
-    /// Returns true (1) if this context was used to load the extension identified
-    /// by |extension_id|. Other contexts sharing the same storage will also have
-    /// access to the extension (see HasExtension). This function must be called
-    /// on the browser process UI thread.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) int function (
-        cef_request_context_t* self,
-        const(cef_string_t)* extension_id) nothrow did_load_extension;
-
-    ///
-    /// Returns true (1) if this context has access to the extension identified by
-    /// |extension_id|. This may not be the context that was used to load the
-    /// extension (see DidLoadExtension). This function must be called on the
-    /// browser process UI thread.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) int function (
-        cef_request_context_t* self,
-        const(cef_string_t)* extension_id) nothrow has_extension;
-
-    ///
-    /// Retrieve the list of all extensions that this context has access to (see
-    /// HasExtension). |extension_ids| will be populated with the list of
-    /// extension ID values. Returns true (1) on success. This function must be
-    /// called on the browser process UI thread.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) int function (
-        cef_request_context_t* self,
-        cef_string_list_t extension_ids) nothrow get_extensions;
-
-    ///
-    /// Returns the extension matching |extension_id| or NULL if no matching
-    /// extension is accessible in this context (see HasExtension). This function
-    /// must be called on the browser process UI thread.
-    ///
-    /// WARNING: This function is deprecated and will be removed in ~M127.
-    ///
-    extern(System) cef_extension_t* function (
-        cef_request_context_t* self,
-        const(cef_string_t)* extension_id) nothrow get_extension;
 
     ///
     /// Returns the MediaRouter object associated with this context.  If
@@ -17518,6 +17992,15 @@ struct cef_request_context_t
     ///
     extern(System) cef_color_variant_t function (
         cef_request_context_t* self) nothrow get_chrome_color_scheme_variant;
+
+    ///
+    /// Add an observer for content and website setting changes. The observer will
+    /// remain registered until the returned Registration object is destroyed.
+    /// This function must be called on the browser process UI thread.
+    ///
+    extern(System) cef_registration_t* function (
+        cef_request_context_t* self,
+        cef_setting_observer_t* observer) nothrow add_setting_observer;
 }
 
 
@@ -17539,12 +18022,13 @@ cef_request_context_t* cef_request_context_create_context (
 /// Creates a new context object that shares storage with |other| and uses an
 /// optional |handler|.
 ///
-cef_request_context_t* cef_create_context_shared (
+/+
+cef_request_context_t* cef_request_contextcef_create_context_shared (
     cef_request_context_t* other,
     cef_request_context_handler_t* handler);
-
++/
 // CEF_INCLUDE_CAPI_CEF_REQUEST_CONTEXT_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -17579,7 +18063,7 @@ cef_request_context_t* cef_create_context_shared (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d90d816565429ad304f43490b0619af5ffa70274$
+// $hash=fef0d3340e7c791bed431719a7864f707a830ddc$
 //
 
 extern (C):
@@ -17588,6 +18072,8 @@ extern (C):
 /// Implement this structure to provide handler implementations. The handler
 /// instance will not be released until all objects related to the context have
 /// been destroyed.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_request_context_handler_t
 {
@@ -17600,13 +18086,13 @@ struct cef_request_context_handler_t
     /// context has been initialized.
     ///
 
-    ///
-    /// Called on the browser process IO thread before a resource request is
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_request_context_handler_t* self,
         cef_request_context_t* request_context) nothrow on_request_context_initialized;
+
+    ///
+    /// Called on the browser process IO thread before a resource request is
     /// initiated. The |browser| and |frame| values represent the source of the
     /// request, and may be NULL for requests originating from service workers or
     /// cef_urlrequest_t. |request| represents the request contents and cannot be
@@ -17638,7 +18124,7 @@ struct cef_request_context_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_REQUEST_CONTEXT_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -17673,13 +18159,15 @@ struct cef_request_context_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=2e8b5c5107f61e3d4c333dc02c76a9f30cd0cf83$
+// $hash=64d01e47680a1451cddf1135d383cd9ce8abc3ed$
 //
 
 extern (C):
 
 ///
 /// Callback structure used to select a client certificate for authentication.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_select_client_certificate_callback_t
 {
@@ -17690,18 +18178,21 @@ struct cef_select_client_certificate_callback_t
     ///
     /// Chooses the specified certificate for client certificate authentication.
     /// NULL value means that no client certificate should be used.
-    ///
 
     cef_base_ref_counted_t base;
+    ///
     extern(System) void function (
         cef_select_client_certificate_callback_t* self,
-        cef_x509certificate_t* cert) nothrow select;
+        cef_x509_certificate_t* cert) nothrow select;
 }
+
 
 
 ///
 /// Implement this structure to handle events related to browser requests. The
 /// functions of this structure will be called on the thread indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_request_handler_t
 {
@@ -17822,16 +18313,19 @@ struct cef_request_handler_t
 
     ///
     /// Called on the UI thread when a client certificate is being requested for
-    /// authentication. Return false (0) to use the default behavior and
-    /// automatically select the first certificate available. Return true (1) and
-    /// call cef_select_client_certificate_callback_t::Select either in this
-    /// function or at a later time to select a certificate. Do not call Select or
-    /// call it with NULL to continue without using any certificate. |isProxy|
-    /// indicates whether the host is an HTTPS proxy or the origin server. |host|
-    /// and |port| contains the hostname and port of the SSL server.
-    /// |certificates| is the list of certificates to choose from; this list has
-    /// already been pruned by Chromium so that it only contains certificates from
-    /// issuers that the server trusts.
+    /// authentication. Return false (0) to use the default behavior.  If the
+    /// |certificates| list is not NULL the default behavior will be to display a
+    /// dialog for certificate selection. If the |certificates| list is NULL then
+    /// the default behavior will be not to show a dialog and it will continue
+    /// without using any certificate. Return true (1) and call
+    /// cef_select_client_certificate_callback_t::Select either in this function
+    /// or at a later time to select a certificate. Do not call Select or call it
+    /// with NULL to continue without using any certificate. |isProxy| indicates
+    /// whether the host is an HTTPS proxy or the origin server. |host| and |port|
+    /// contains the hostname and port of the SSL server. |certificates| is the
+    /// list of certificates to choose from; this list has already been pruned by
+    /// Chromium so that it only contains certificates from issuers that the
+    /// server trusts.
     ///
     extern(System) int function (
         cef_request_handler_t* self,
@@ -17840,7 +18334,7 @@ struct cef_request_handler_t
         const(cef_string_t)* host,
         int port,
         size_t certificatesCount,
-        cef_x509certificate_t** certificates,
+        cef_x509_certificate_t** certificates,
         cef_select_client_certificate_callback_t* callback) nothrow on_select_client_certificate;
 
     ///
@@ -17855,21 +18349,20 @@ struct cef_request_handler_t
     ///
     /// Called on the browser process UI thread when the render process is
     /// unresponsive as indicated by a lack of input event processing for at least
-    /// 15 seconds. Return false (0) for the default behavior which is an
-    /// indefinite wait with the Alloy runtime or display of the "Page
-    /// unresponsive" dialog with the Chrome runtime. Return true (1) and don't
-    /// execute the callback for an indefinite wait without display of the Chrome
-    /// runtime dialog. Return true (1) and call
-    /// cef_unresponsive_process_callback_t::Wait either in this function or at a
-    /// later time to reset the wait timer, potentially triggering another call to
-    /// this function if the process remains unresponsive. Return true (1) and
-    /// call cef_unresponsive_process_callback_t:: Terminate either in this
-    /// function or at a later time to terminate the unresponsive process,
-    /// resulting in a call to OnRenderProcessTerminated.
-    /// OnRenderProcessResponsive will be called if the process becomes responsive
-    /// after this function is called. This functionality depends on the hang
-    /// monitor which can be disabled by passing the `--disable-hang-monitor`
-    /// command-line flag.
+    /// 15 seconds. Return false (0) for the default behavior which is to continue
+    /// waiting with Alloy style or display of the "Page unresponsive" dialog with
+    /// Chrome style. Return true (1) and don't execute the callback to continue
+    /// waiting without display of the Chrome style dialog. Return true (1) and
+    /// call cef_unresponsive_process_callback_t::Wait either in this function or
+    /// at a later time to reset the wait timer. In cases where you continue
+    /// waiting there may be another call to this function if the process remains
+    /// unresponsive. Return true (1) and call
+    /// cef_unresponsive_process_callback_t::Terminate either in this function or
+    /// at a later time to terminate the unresponsive process, resulting in a call
+    /// to OnRenderProcessTerminated. OnRenderProcessResponsive will be called if
+    /// the process becomes responsive after this function is called. This
+    /// functionality depends on the hang monitor which can be disabled by passing
+    /// the `--disable-hang-monitor` command-line flag.
     ///
     extern(System) int function (
         cef_request_handler_t* self,
@@ -17912,7 +18405,7 @@ struct cef_request_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_REQUEST_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -17947,7 +18440,7 @@ struct cef_request_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d97d3ca6c8d610627538c58f3b4ba3869f3d9ac7$
+// $hash=f47f2838ce9498bf79366713ae03573c3d0e50d5$
 //
 
 extern (C):
@@ -17959,6 +18452,8 @@ extern (C):
 /// additional options related to resource bundle loading. The functions of this
 /// structure may be called on any thread unless otherwise indicated.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_resource_bundle_t
 {
     ///
@@ -17967,19 +18462,23 @@ struct cef_resource_bundle_t
 
     ///
     /// Returns the localized string for the specified |string_id| or an NULL
-    /// string if the value is not found. Include cef_pack_strings.h for a listing
-    /// of valid string ID values.
-    ///
-    // The resulting string must be freed by calling cef_string_userfree_free().
+    /// string if the value is not found. Use the cef_id_for_pack_string_name()
+    /// function for version-safe mapping of string IDS names from
+    /// cef_pack_strings.h to version-specific numerical |string_id| values.
 
     cef_base_ref_counted_t base;
+    ///
+    // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
         cef_resource_bundle_t* self,
         int string_id) nothrow get_localized_string;
+
     ///
     /// Returns a cef_binary_value_t containing the decompressed contents of the
-    /// specified scale independent |resource_id| or NULL if not found. Include
-    /// cef_pack_resources.h for a listing of valid resource ID values.
+    /// specified scale independent |resource_id| or NULL if not found. Use the
+    /// cef_id_for_pack_resource_name() function for version-safe mapping of
+    /// resource IDR names from cef_pack_resources.h to version-specific numerical
+    /// |resource_id| values.
     ///
     extern(System) cef_binary_value_t* function (
         cef_resource_bundle_t* self,
@@ -17989,8 +18488,10 @@ struct cef_resource_bundle_t
     /// Returns a cef_binary_value_t containing the decompressed contents of the
     /// specified |resource_id| nearest the scale factor |scale_factor| or NULL if
     /// not found. Use a |scale_factor| value of SCALE_FACTOR_NONE for scale
-    /// independent resources or call GetDataResource instead.Include
-    /// cef_pack_resources.h for a listing of valid resource ID values.
+    /// independent resources or call GetDataResource instead. Use the
+    /// cef_id_for_pack_resource_name() function for version-safe mapping of
+    /// resource IDR names from cef_pack_resources.h to version-specific numerical
+    /// |resource_id| values.
     ///
     extern(System) cef_binary_value_t* function (
         cef_resource_bundle_t* self,
@@ -18006,7 +18507,7 @@ struct cef_resource_bundle_t
 cef_resource_bundle_t* cef_resource_bundle_get_global ();
 
 // CEF_INCLUDE_CAPI_CEF_RESOURCE_BUNDLE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18041,7 +18542,7 @@ cef_resource_bundle_t* cef_resource_bundle_get_global ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=b25f3131d67980e493da4d7e484676d000334995$
+// $hash=7943ef07f085554227d0f3c42eaa0af46865d06e$
 //
 
 extern (C):
@@ -18050,6 +18551,8 @@ extern (C):
 /// Structure used to implement a custom resource bundle structure. See
 /// CefSettings for additional options related to resource bundle loading. The
 /// functions of this structure may be called on multiple threads.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_resource_bundle_handler_t
 {
@@ -18060,23 +18563,26 @@ struct cef_resource_bundle_handler_t
     ///
     /// Called to retrieve a localized translation for the specified |string_id|.
     /// To provide the translation set |string| to the translation string and
-    /// return true (1). To use the default translation return false (0). Include
-    /// cef_pack_strings.h for a listing of valid string ID values.
-    ///
-
-    ///
-    /// Called to retrieve data for the specified scale independent |resource_id|.
+    /// return true (1). To use the default translation return false (0). Use the
+    /// cef_id_for_pack_string_name() function for version-safe mapping of string
+    /// IDS names from cef_pack_strings.h to version-specific numerical
+    /// |string_id| values.
 
     cef_base_ref_counted_t base;
+    ///
     extern(System) int function (
         cef_resource_bundle_handler_t* self,
         int string_id,
         cef_string_t* string) nothrow get_localized_string;
+
+    ///
+    /// Called to retrieve data for the specified scale independent |resource_id|.
     /// To provide the resource data set |data| and |data_size| to the data
     /// pointer and size respectively and return true (1). To use the default
     /// resource data return false (0). The resource data will not be copied and
-    /// must remain resident in memory. Include cef_pack_resources.h for a listing
-    /// of valid resource ID values.
+    /// must remain resident in memory. Use the cef_id_for_pack_resource_name()
+    /// function for version-safe mapping of resource IDR names from
+    /// cef_pack_resources.h to version-specific numerical |resource_id| values.
     ///
     extern(System) int function (
         cef_resource_bundle_handler_t* self,
@@ -18089,8 +18595,10 @@ struct cef_resource_bundle_handler_t
     /// factor |scale_factor|. To provide the resource data set |data| and
     /// |data_size| to the data pointer and size respectively and return true (1).
     /// To use the default resource data return false (0). The resource data will
-    /// not be copied and must remain resident in memory. Include
-    /// cef_pack_resources.h for a listing of valid resource ID values.
+    /// not be copied and must remain resident in memory. Use the
+    /// cef_id_for_pack_resource_name() function for version-safe mapping of
+    /// resource IDR names from cef_pack_resources.h to version-specific numerical
+    /// |resource_id| values.
     ///
     extern(System) int function (
         cef_resource_bundle_handler_t* self,
@@ -18103,7 +18611,7 @@ struct cef_resource_bundle_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RESOURCE_BUNDLE_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18138,13 +18646,15 @@ struct cef_resource_bundle_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=ad8218a8ac9e313884110e72bb2af32ec916907f$
+// $hash=dcc85bc129a43eca533e2f6cce32d04926f1efae$
 //
 
 extern (C):
 
 ///
 /// Callback for asynchronous continuation of cef_resource_handler_t::skip().
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_resource_skip_callback_t
 {
@@ -18159,9 +18669,6 @@ struct cef_resource_skip_callback_t
     /// 0 the request will fail with ERR_REQUEST_RANGE_NOT_SATISFIABLE.
     ///
 
-    ///
-    /// Callback for asynchronous continuation of cef_resource_handler_t::read().
-
     cef_base_ref_counted_t base;
     extern(System) void function (
         cef_resource_skip_callback_t* self,
@@ -18169,6 +18676,11 @@ struct cef_resource_skip_callback_t
 }
 
 
+
+///
+/// Callback for asynchronous continuation of cef_resource_handler_t::read().
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_resource_read_callback_t
 {
@@ -18193,6 +18705,8 @@ struct cef_resource_read_callback_t
 /// Structure used to implement a custom request handler structure. The
 /// functions of this structure will be called on the IO thread unless otherwise
 /// indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_resource_handler_t
 {
@@ -18312,7 +18826,7 @@ struct cef_resource_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RESOURCE_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18347,7 +18861,7 @@ struct cef_resource_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=c4416644786e3c1999cdcd7e6bf78af94ff7f0da$
+// $hash=9bcfb08e73653706d1c2f0ea9cab3fe41c4f5806$
 //
 
 extern (C):
@@ -18356,6 +18870,8 @@ extern (C):
 /// Implement this structure to handle events related to browser requests. The
 /// functions of this structure will be called on the IO thread unless otherwise
 /// indicated.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_resource_request_handler_t
 {
@@ -18366,9 +18882,9 @@ struct cef_resource_request_handler_t
     ///
     /// Called on the IO thread before a resource request is loaded. The |browser|
     /// and |frame| values represent the source of the request, and may be NULL
-    /// for requests originating from service workers or cef_urlrequest_t. To
 
     cef_base_ref_counted_t base;
+    /// for requests originating from service workers or cef_urlrequest_t. To
     /// optionally filter cookies for the request return a
     /// cef_cookie_access_filter_t object. The |request| object cannot not be
     /// modified in this callback.
@@ -18514,6 +19030,8 @@ struct cef_resource_request_handler_t
 /// resource requests. The functions of this structure will be called on the IO
 /// thread unless otherwise indicated.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_cookie_access_filter_t
 {
     ///
@@ -18555,7 +19073,7 @@ struct cef_cookie_access_filter_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RESOURCE_REQUEST_HANDLER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18590,7 +19108,7 @@ struct cef_cookie_access_filter_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=de559e5cd4b539ce129beab8f7627576c4249cd5$
+// $hash=48b607ec385e08b767b6ac1ab132121204f075fc$
 //
 
 extern (C):
@@ -18598,6 +19116,8 @@ extern (C):
 ///
 /// Structure used to represent a web response. The functions of this structure
 /// may be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_response_t
 {
@@ -18619,17 +19139,17 @@ struct cef_response_t
     ///
 
     ///
-    /// Get the response status code.
-    ///
-
-    ///
-    /// Set the response status code.
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_response_t* self) nothrow is_read_only;
     extern(System) cef_errorcode_t function (cef_response_t* self) nothrow get_error;
     extern(System) void function (cef_response_t* self, cef_errorcode_t error) nothrow set_error;
+    /// Get the response status code.
+    ///
     extern(System) int function (cef_response_t* self) nothrow get_status;
+
+    ///
+    /// Set the response status code.
     ///
     extern(System) void function (cef_response_t* self, int status) nothrow set_status;
 
@@ -18725,7 +19245,7 @@ struct cef_response_t
 cef_response_t* cef_response_create ();
 
 // CEF_INCLUDE_CAPI_CEF_RESPONSE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18760,7 +19280,7 @@ cef_response_t* cef_response_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=1c83177e8030f7637d8ce0aa68831e417fbf37d3$
+// $hash=bd8bf0bc352c1ff20740c04a8cd5f9df4841c8f0$
 //
 
 extern (C):
@@ -18768,6 +19288,8 @@ extern (C):
 ///
 /// Implement this structure to filter resource response content. The functions
 /// of this structure will be called on the browser process IO thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_response_filter_t
 {
@@ -18786,11 +19308,10 @@ struct cef_response_filter_t
     ///  1. Read input data from |data_in| and set |data_in_read| to the number of
     ///     bytes that were read up to a maximum of |data_in_size|. |data_in| will
     ///     be NULL if |data_in_size| is zero.
-    ///  2. Write filtered output data to |data_out| and set |data_out_written| to
-    ///     the number of bytes that were written up to a maximum of
 
     cef_base_ref_counted_t base;
-    extern(System) int function (cef_response_filter_t* self) nothrow init_filter;
+    extern(System) int function (cef_response_filter_t* self) nothrow init_filter; ///  2. Write filtered output data to |data_out| and set |data_out_written| to
+    ///     the number of bytes that were written up to a maximum of
     ///     |data_out_size|. If no output data was written then all data must be
     ///     read from |data_in| (user must set |data_in_read| = |data_in_size|).
     ///  3. Return RESPONSE_FILTER_DONE if all output data was written or
@@ -18827,7 +19348,7 @@ struct cef_response_filter_t
 
 
 // CEF_INCLUDE_CAPI_CEF_RESPONSE_FILTER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18862,13 +19383,15 @@ struct cef_response_filter_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dd3f6003f9a8f59c2eb4320c382651a441086aee$
+// $hash=3cfed97fc270ad63fb8aed253ba5f8d3121cf8ca$
 //
 
 extern (C):
 
 ///
 /// Structure that manages custom scheme registrations.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_scheme_registrar_t
 {
@@ -18885,11 +19408,11 @@ struct cef_scheme_registrar_t
     /// This function may be called on any thread. It should only be called once
     /// per unique |scheme_name| value. If |scheme_name| is already registered or
     /// if an error occurs this function will return false (0).
+
     ///
 
     ///
     /// Structure that creates cef_resource_handler_t instances for handling scheme
-    /// requests. The functions of this structure will always be called on the IO
 
     cef_base_scoped_t base;
     extern(System) int function (
@@ -18899,7 +19422,10 @@ struct cef_scheme_registrar_t
 }
 
 
+/// requests. The functions of this structure will always be called on the IO
 /// thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_scheme_handler_factory_t
 {
@@ -18939,8 +19465,8 @@ struct cef_scheme_handler_factory_t
 /// matches the specified |scheme_name| and optional |domain_name|. Returns
 /// false (0) if an error occurs. This function may be called on any thread in
 /// the browser process. Using this function is equivalent to calling cef_reques
-/// t_context_t::cef_request_context_get_global_context()-
-/// >register_scheme_handler_factory().
+/// t_context_t::cef_request_context_get_global_context()->register_scheme_handl
+/// er_factory().
 ///
 int cef_register_scheme_handler_factory (
     const(cef_string_t)* scheme_name,
@@ -18951,13 +19477,13 @@ int cef_register_scheme_handler_factory (
 /// Clear all scheme handler factories registered with the global request
 /// context. Returns false (0) on error. This function may be called on any
 /// thread in the browser process. Using this function is equivalent to calling
-/// cef_request_context_t::cef_request_context_get_global_context()-
-/// >clear_scheme_handler_factories().
+/// cef_request_context_t::cef_request_context_get_global_context()->clear_schem
+/// e_handler_factories().
 ///
 int cef_clear_scheme_handler_factories ();
 
 // CEF_INCLUDE_CAPI_CEF_SCHEME_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -18992,7 +19518,7 @@ int cef_clear_scheme_handler_factories ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=b85c5d4060c951571f122e519e7dc7e9a4c4e629$
+// $hash=ccb8dd9df0cd92e44f2a95bc6ee32cc66af6fd45$
 //
 
 extern (C):
@@ -19004,6 +19530,8 @@ extern (C):
 /// localhost). The functions of this structure are safe to call from any thread
 /// in the brower process unless otherwise indicated.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_server_t
 {
     ///
@@ -19014,12 +19542,12 @@ struct cef_server_t
     /// Returns the task runner for the dedicated server thread.
     ///
 
+    cef_base_ref_counted_t base;
+    extern(System) cef_task_runner_t* function (cef_server_t* self) nothrow get_task_runner;
+
     ///
     /// Stop the server and shut down the dedicated server thread. See
     /// cef_server_handler_t::OnServerCreated documentation for a description of
-
-    cef_base_ref_counted_t base;
-    extern(System) cef_task_runner_t* function (cef_server_t* self) nothrow get_task_runner;
     /// server lifespan.
     ///
     extern(System) void function (cef_server_t* self) nothrow shutdown;
@@ -19062,7 +19590,7 @@ struct cef_server_t
         int connection_id,
         const(cef_string_t)* content_type,
         const(void)* data,
-        size_t data_size) nothrow send_http200response;
+        size_t data_size) nothrow send_http200_response;
 
     ///
     /// Send an HTTP 404 "Not Found" response to the connection identified by
@@ -19071,7 +19599,7 @@ struct cef_server_t
     ///
     extern(System) void function (
         cef_server_t* self,
-        int connection_id) nothrow send_http404response;
+        int connection_id) nothrow send_http404_response;
 
     ///
     /// Send an HTTP 500 "Internal Server Error" response to the connection
@@ -19082,7 +19610,7 @@ struct cef_server_t
     extern(System) void function (
         cef_server_t* self,
         int connection_id,
-        const(cef_string_t)* error_message) nothrow send_http500response;
+        const(cef_string_t)* error_message) nothrow send_http500_response;
 
     ///
     /// Send a custom HTTP response to the connection identified by
@@ -19168,6 +19696,8 @@ void cef_server_create (
 /// It is therefore recommended to use a different cef_server_handler_t instance
 /// for each cef_server_t::CreateServer call to avoid thread safety issues in
 /// the cef_server_handler_t implementation.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_server_handler_t
 {
@@ -19286,7 +19816,7 @@ struct cef_server_handler_t
 
 
 // CEF_INCLUDE_CAPI_CEF_SERVER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19321,13 +19851,15 @@ struct cef_server_handler_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=3d208a996f65f37012460edb1890773218580913$
+// $hash=70d9aba509f824a05c705e07fd008185a41e3ad9$
 //
 
 extern (C):
 
 ///
 /// Structure that wraps platform-dependent share memory region mapping.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_shared_memory_region_t
 {
@@ -19348,8 +19880,6 @@ struct cef_shared_memory_region_t
     /// The returned pointer is only valid for the life span of this object.
     ///
 
-    // CEF_INCLUDE_CAPI_CEF_SHARED_MEMORY_REGION_CAPI_H_
-
     cef_base_ref_counted_t base;
     extern(System) int function (cef_shared_memory_region_t* self) nothrow is_valid;
     extern(System) size_t function (cef_shared_memory_region_t* self) nothrow size;
@@ -19357,7 +19887,9 @@ struct cef_shared_memory_region_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+// CEF_INCLUDE_CAPI_CEF_SHARED_MEMORY_REGION_CAPI_H_
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19392,7 +19924,7 @@ struct cef_shared_memory_region_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=1ae66f6ec465fda2d62530f5871efd58c89e7568$
+// $hash=63bb39e8c19a16637af5ee4dfeaa2c6aa2c3bdf3$
 //
 
 extern (C):
@@ -19401,6 +19933,8 @@ extern (C):
 /// Structure that builds a cef_process_message_t containing a shared memory
 /// region. This structure is not thread-safe but may be used exclusively on a
 /// different thread from the one which constructed it.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_shared_process_message_builder_t
 {
@@ -19419,11 +19953,11 @@ struct cef_shared_process_message_builder_t
 
     ///
     /// Returns the pointer to the writable memory. Returns nullptr for invalid
-    /// instances. The returned pointer is only valid for the life span of this
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_shared_process_message_builder_t* self) nothrow is_valid;
     extern(System) size_t function (cef_shared_process_message_builder_t* self) nothrow size;
+    /// instances. The returned pointer is only valid for the life span of this
     /// object.
     ///
     extern(System) void* function (cef_shared_process_message_builder_t* self) nothrow memory;
@@ -19447,7 +19981,7 @@ cef_shared_process_message_builder_t* cef_shared_process_message_builder_create 
     size_t byte_size);
 
 // CEF_INCLUDE_CAPI_CEF_SHARED_PROCESS_MESSAGE_BUILDER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19482,13 +20016,15 @@ cef_shared_process_message_builder_t* cef_shared_process_message_builder_create 
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d781f3791df17c6d6adc4414e8534a6b13a54ff2$
+// $hash=dce2233cf08d4c9a55470aa11e4f8fab3cb2bede$
 //
 
 extern (C):
 
 ///
 /// Structure representing SSL information.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_sslinfo_t
 {
@@ -19509,17 +20045,17 @@ struct cef_sslinfo_t
     /// Returns true (1) if the certificate status represents an error.
     ///
 
-    // CEF_INCLUDE_CAPI_CEF_SSL_INFO_CAPI_H_
-
     cef_base_ref_counted_t base;
     extern(System) cef_cert_status_t function (cef_sslinfo_t* self) nothrow get_cert_status;
-    extern(System) cef_x509certificate_t* function (
-        cef_sslinfo_t* self) nothrow get_x509certificate;
+    extern(System) cef_x509_certificate_t* function (
+        cef_sslinfo_t* self) nothrow get_x509_certificate;
 }
 
 
 int cef_is_cert_status_error (cef_cert_status_t status);
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+
+// CEF_INCLUDE_CAPI_CEF_SSL_INFO_CAPI_H_
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19554,13 +20090,15 @@ int cef_is_cert_status_error (cef_cert_status_t status);
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=1d224cc81c5a42ce8d7de172ff7341f1e0785f46$
+// $hash=9f93bc0dbf57e4dda50f1f1100ccd52249bd3aa7$
 //
 
 extern (C):
 
 ///
 /// Structure representing the SSL information for a navigation entry.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_sslstatus_t
 {
@@ -19581,28 +20119,28 @@ struct cef_sslstatus_t
     /// Returns the SSL version used for the SSL connection.
     ///
 
-    ///
-    /// Returns a bitmask containing the page security content status.
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) int function (cef_sslstatus_t* self) nothrow is_secure_connection;
     extern(System) cef_cert_status_t function (cef_sslstatus_t* self) nothrow get_cert_status;
     extern(System) cef_ssl_version_t function (cef_sslstatus_t* self) nothrow get_sslversion;
+
+    ///
+    /// Returns a bitmask containing the page security content status.
+    ///
     extern(System) cef_ssl_content_status_t function (
         cef_sslstatus_t* self) nothrow get_content_status;
 
     ///
     /// Returns the X.509 certificate.
     ///
-    extern(System) cef_x509certificate_t* function (
-        cef_sslstatus_t* self) nothrow get_x509certificate;
+    extern(System) cef_x509_certificate_t* function (
+        cef_sslstatus_t* self) nothrow get_x509_certificate;
 }
 
 
 
 // CEF_INCLUDE_CAPI_CEF_SSL_STATUS_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19637,7 +20175,7 @@ struct cef_sslstatus_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=f55fa17800b9a63d128fb78201372754f9250875$
+// $hash=650f1218832c4b81610ba0ddc8c77d307ce2a993$
 //
 
 extern (C):
@@ -19645,6 +20183,8 @@ extern (C):
 ///
 /// Structure the client can implement to provide a custom stream reader. The
 /// functions of this structure may be called on any thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_read_handler_t
 {
@@ -19662,12 +20202,6 @@ struct cef_read_handler_t
     /// failure.
     ///
 
-    ///
-    /// Return the current offset position.
-    ///
-
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) size_t function (
         cef_read_handler_t* self,
@@ -19675,7 +20209,13 @@ struct cef_read_handler_t
         size_t size,
         size_t n) nothrow read;
     extern(System) int function (cef_read_handler_t* self, long offset, int whence) nothrow seek;
+
+    ///
+    /// Return the current offset position.
+    ///
     extern(System) long function (cef_read_handler_t* self) nothrow tell;
+
+    ///
     /// Return non-zero if at end of file.
     ///
     extern(System) int function (cef_read_handler_t* self) nothrow eof;
@@ -19693,6 +20233,8 @@ struct cef_read_handler_t
 ///
 /// Structure used to read data from a stream. The functions of this structure
 /// may be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_stream_reader_t
 {
@@ -19760,6 +20302,8 @@ cef_stream_reader_t* cef_stream_reader_create_for_handler (
 /// Structure the client can implement to provide a custom stream writer. The
 /// functions of this structure may be called on any thread.
 ///
+/// NOTE: This struct is allocated client-side.
+///
 struct cef_write_handler_t
 {
     ///
@@ -19806,6 +20350,8 @@ struct cef_write_handler_t
 ///
 /// Structure used to write data to a stream. The functions of this structure
 /// may be called on any thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_stream_writer_t
 {
@@ -19863,7 +20409,7 @@ cef_stream_writer_t* cef_stream_writer_create_for_handler (
     cef_write_handler_t* handler);
 
 // CEF_INCLUDE_CAPI_CEF_STREAM_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19898,13 +20444,15 @@ cef_stream_writer_t* cef_stream_writer_create_for_handler (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=c43ca147d723753000bc819d64d09b83a23bfac2$
+// $hash=e8c2b9b6b1e907c6c042cbd38fc8dab5ce4c744e$
 //
 
 extern (C):
 
 ///
 /// Implement this structure to receive string values asynchronously.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_string_visitor_t
 {
@@ -19925,7 +20473,7 @@ struct cef_string_visitor_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -19960,7 +20508,7 @@ struct cef_string_visitor_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=d6055c4567fec4f3e9c72b0536812f40a97c0c3c$
+// $hash=d075982ed273707bf193b608acabf26db8896303$
 //
 
 extern (C):
@@ -19972,6 +20520,8 @@ extern (C):
 /// fails to post then the task object may be destroyed on the source thread
 /// instead of the target thread. For this reason be cautious when performing
 /// work in the task object destructor.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_task_t
 {
@@ -19986,17 +20536,19 @@ struct cef_task_t
     ///
     /// Structure that asynchronously executes tasks on the associated thread. It is
     /// safe to call the functions of this structure on any thread.
-    ///
-    /// CEF maintains multiple internal threads that are used for handling different
-    /// types of tasks in different processes. The cef_thread_id_t definitions in
 
     cef_base_ref_counted_t base;
     extern(System) void function (cef_task_t* self) nothrow execute;
 }
 
 
+///
+/// CEF maintains multiple internal threads that are used for handling different
+/// types of tasks in different processes. The cef_thread_id_t definitions in
 /// cef_types.h list the common CEF threads. Task runners are also available for
 /// other CEF threads as appropriate (for example, V8 WebWorker threads).
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_task_runner_t
 {
@@ -20078,7 +20630,7 @@ int cef_post_delayed_task (
     long delay_ms);
 
 // CEF_INCLUDE_CAPI_CEF_TASK_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -20113,7 +20665,119 @@ int cef_post_delayed_task (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=752a853dae97c9bfd9b6515d20f99af751ba2dd9$
+// $hash=98fbe5c90a7eb86068787b850ecf0b119719a0d4$
+//
+
+extern (C):
+
+///
+/// Structure that facilitates managing the browser-related tasks. The functions
+/// of this structure may only be called on the UI thread.
+///
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_task_manager_t
+{
+    ///
+    /// Base structure.
+    ///
+
+    ///
+    /// Returns the number of tasks currently tracked by the task manager. Returns
+    /// 0 if the function was called from the incorrect thread.
+    ///
+
+    ///
+    /// Gets the list of task IDs currently tracked by the task manager. Tasks
+    /// that share the same process id will always be consecutive. The list will
+    /// be sorted in a way that reflects the process tree: the browser process
+    /// will be first, followed by the gpu process if it exists. Related processes
+
+    cef_base_ref_counted_t base;
+    extern(System) size_t function (cef_task_manager_t* self) nothrow get_tasks_count;
+    /// (e.g., a subframe process and its parent) will be kept together if
+    /// possible. Callers can expect this ordering to be stable when a process is
+    /// added or removed. The task IDs are unique within the application lifespan.
+    /// Returns false (0) if the function was called from the incorrect thread.
+    ///
+    extern(System) int function (
+        cef_task_manager_t* self,
+        size_t* task_idsCount,
+        long* task_ids) nothrow get_task_ids_list;
+
+    ///
+    /// Gets information about the task with |task_id|. Returns true (1) if the
+    /// information about the task was successfully retrieved and false (0) if the
+    /// |task_id| is invalid or the function was called from the incorrect thread.
+    ///
+    extern(System) int function (
+        cef_task_manager_t* self,
+        long task_id,
+        cef_task_info_t* info) nothrow get_task_info;
+
+    ///
+    /// Attempts to terminate a task with |task_id|. Returns false (0) if the
+    /// |task_id| is invalid, the call is made from an incorrect thread, or if the
+    /// task cannot be terminated.
+    ///
+    extern(System) int function (cef_task_manager_t* self, long task_id) nothrow kill_task;
+
+    ///
+    /// Returns the task ID associated with the main task for |browser_id| (value
+    /// from cef_browser_t::GetIdentifier). Returns -1 if |browser_id| is invalid,
+    /// does not currently have an associated task, or the function was called
+    /// from the incorrect thread.
+    ///
+    extern(System) long function (
+        cef_task_manager_t* self,
+        int browser_id) nothrow get_task_id_for_browser_id;
+}
+
+
+
+///
+/// Returns the global task manager object. Returns nullptr if the function was
+/// called from the incorrect thread.
+///
+cef_task_manager_t* cef_task_manager_get ();
+
+// CEF_INCLUDE_CAPI_CEF_TASK_MANAGER_CAPI_H_
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//    * Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//    * Redistributions in binary form must reproduce the above
+// copyright notice, this list of conditions and the following disclaimer
+// in the documentation and/or other materials provided with the
+// distribution.
+//    * Neither the name of Google Inc. nor the name Chromium Embedded
+// Framework nor the names of its contributors may be used to endorse
+// or promote products derived from this software without specific prior
+// written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+// ---------------------------------------------------------------------------
+//
+// This file was generated by the CEF translator tool and should not edited
+// by hand. See the translator.README.txt file in the tools directory for
+// more information.
+//
+// $hash=cfb6c14f5002cca121bef52933749d37097a244e$
 //
 
 extern (C):
@@ -20129,16 +20793,17 @@ extern (C):
 /// thread. In most cases you can post tasks to an existing CEF thread instead
 /// of creating a new one; see cef_task.h for details.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_thread_t
 {
     ///
     /// Base structure.
     ///
 
+    cef_base_ref_counted_t base;
     ///
     /// Returns the cef_task_runner_t that will execute code on this thread's
-
-    cef_base_ref_counted_t base;
     /// message loop. This function is safe to call from any thread.
     ///
     extern(System) cef_task_runner_t* function (cef_thread_t* self) nothrow get_task_runner;
@@ -20185,7 +20850,7 @@ cef_thread_t* cef_thread_create (
     cef_com_init_mode_t com_init_mode);
 
 // CEF_INCLUDE_CAPI_CEF_THREAD_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -20220,7 +20885,7 @@ cef_thread_t* cef_thread_create (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=740d6eb5bea1bfc7c4ea413fefd3bf6586a81f20$
+// $hash=5e961bec40c2a8602d6625af303791e33aa16f8d$
 //
 
 extern (C):
@@ -20229,6 +20894,8 @@ extern (C):
 /// Implement this structure to receive notification when tracing has completed.
 /// The functions of this structure will be called on the browser process UI
 /// thread.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_end_tracing_callback_t
 {
@@ -20245,9 +20912,6 @@ struct cef_end_tracing_callback_t
     ///
     /// Start tracing events on all processes. Tracing is initialized asynchronously
     /// and |callback| will be executed on the UI thread after initialization is
-    /// complete.
-    ///
-    /// If CefBeginTracing was called previously, or if a CefEndTracingAsync call is
 
     cef_base_ref_counted_t base;
     extern(System) void function (
@@ -20255,7 +20919,11 @@ struct cef_end_tracing_callback_t
         const(cef_string_t)* tracing_file) nothrow on_end_tracing_complete;
 }
 
- /// pending, CefBeginTracing will fail and return false (0).
+
+/// complete.
+///
+/// If CefBeginTracing was called previously, or if a CefEndTracingAsync call is
+/// pending, CefBeginTracing will fail and return false (0).
 ///
 /// |categories| is a comma-delimited list of category wildcards. A category can
 /// have an optional '-' prefix to make it an excluded category. Having both
@@ -20297,7 +20965,7 @@ int cef_end_tracing (
 long cef_now_from_system_trace_time ();
 
 // CEF_INCLUDE_CAPI_CEF_TRACE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -20332,13 +21000,15 @@ long cef_now_from_system_trace_time ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=9ad38f2709d9e3b1bd0e99c279b0497b8aa4c82a$
+// $hash=8c45f30dd1dc404020c91509d0f93e03fa363007$
 //
 
 extern (C):
 
 ///
 /// Callback structure for asynchronous handling of an unresponsive process.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_unresponsive_process_callback_t
 {
@@ -20362,7 +21032,7 @@ struct cef_unresponsive_process_callback_t
 }
 
 
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -20397,7 +21067,7 @@ struct cef_unresponsive_process_callback_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=6a8ed2646d767d3c42ea79f7586f19769c1df742$
+// $hash=142a3f70bf67cc526ac7d6d88e878e8954d9e5fe$
 //
 
 extern (C):
@@ -20409,6 +21079,8 @@ extern (C):
 /// process. Once created the functions of the URL request object must be
 /// accessed on the same thread that created it.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_urlrequest_t
 {
     ///
@@ -20418,10 +21090,10 @@ struct cef_urlrequest_t
     ///
     /// Returns the request object used to create this URL request. The returned
     /// object is read-only and should not be modified.
-    ///
 
-    cef_base_ref_counted_t base;
+    cef_base_ref_counted_t base; ///
     extern(System) cef_request_t* function (cef_urlrequest_t* self) nothrow get_request;
+
     ///
     /// Returns the client.
     ///
@@ -20484,6 +21156,8 @@ cef_urlrequest_t* cef_urlrequest_create (
 /// Structure that should be implemented by the cef_urlrequest_t client. The
 /// functions of this structure will be called on the same thread that created
 /// the request unless otherwise documented.
+///
+/// NOTE: This struct is allocated client-side.
 ///
 struct cef_urlrequest_client_t
 {
@@ -20560,7 +21234,7 @@ struct cef_urlrequest_client_t
 
 
 // CEF_INCLUDE_CAPI_CEF_URLREQUEST_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -20595,7 +21269,7 @@ struct cef_urlrequest_client_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=5dd4948a92af2ad69e2171f2dffb8f2c23e5c147$
+// $hash=0a0b3e73342e72ae6aa846b67318516be5933bd9$
 //
 
 extern (C):
@@ -20605,9 +21279,11 @@ extern (C):
 /// from the thread on which they are created. Valid threads for creating a V8
 /// handle include the render process main thread (TID_RENDERER) and WebWorker
 /// threads. A task runner for posting tasks on the associated thread can be
-/// retrieved via the cef_v8context_t::get_task_runner() function.
+/// retrieved via the cef_v8_context_t::get_task_runner() function.
 ///
-struct cef_v8context_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_v8_context_t
 {
     ///
     /// Base structure.
@@ -20615,37 +21291,37 @@ struct cef_v8context_t
 
     ///
     /// Returns the task runner associated with this context. V8 handles can only
-    /// be accessed from the thread on which they are created. This function can
-    /// be called on any render process thread.
 
     cef_base_ref_counted_t base;
+    /// be accessed from the thread on which they are created. This function can
+    /// be called on any render process thread.
     ///
-    extern(System) cef_task_runner_t* function (cef_v8context_t* self) nothrow get_task_runner;
+    extern(System) cef_task_runner_t* function (cef_v8_context_t* self) nothrow get_task_runner;
 
     ///
     /// Returns true (1) if the underlying handle is valid and it can be accessed
     /// on the current thread. Do not call any other functions if this function
     /// returns false (0).
     ///
-    extern(System) int function (cef_v8context_t* self) nothrow is_valid;
+    extern(System) int function (cef_v8_context_t* self) nothrow is_valid;
 
     ///
     /// Returns the browser for this context. This function will return an NULL
     /// reference for WebWorker contexts.
     ///
-    extern(System) cef_browser_t* function (cef_v8context_t* self) nothrow get_browser;
+    extern(System) cef_browser_t* function (cef_v8_context_t* self) nothrow get_browser;
 
     ///
     /// Returns the frame for this context. This function will return an NULL
     /// reference for WebWorker contexts.
     ///
-    extern(System) cef_frame_t* function (cef_v8context_t* self) nothrow get_frame;
+    extern(System) cef_frame_t* function (cef_v8_context_t* self) nothrow get_frame;
 
     ///
     /// Returns the global object for this context. The context must be entered
     /// before calling this function.
     ///
-    extern(System) cef_v8value_t* function (cef_v8context_t* self) nothrow get_global;
+    extern(System) cef_v8_value_t* function (cef_v8_context_t* self) nothrow get_global;
 
     ///
     /// Enter this context. A context must be explicitly entered before creating a
@@ -20654,19 +21330,19 @@ struct cef_v8context_t
     /// objects belong to the context in which they are created. Returns true (1)
     /// if the scope was entered successfully.
     ///
-    extern(System) int function (cef_v8context_t* self) nothrow enter;
+    extern(System) int function (cef_v8_context_t* self) nothrow enter;
 
     ///
     /// Exit this context. Call this function only after calling enter(). Returns
     /// true (1) if the scope was exited successfully.
     ///
-    extern(System) int function (cef_v8context_t* self) nothrow exit;
+    extern(System) int function (cef_v8_context_t* self) nothrow exit;
 
     ///
     /// Returns true (1) if this object is pointing to the same handle as |that|
     /// object.
     ///
-    extern(System) int function (cef_v8context_t* self, cef_v8context_t* that) nothrow is_same;
+    extern(System) int function (cef_v8_context_t* self, cef_v8_context_t* that) nothrow is_same;
 
     ///
     /// Execute a string of JavaScript code in this V8 context. The |script_url|
@@ -20677,12 +21353,12 @@ struct cef_v8context_t
     /// to the exception, if any, and the function will return false (0).
     ///
     extern(System) int function (
-        cef_v8context_t* self,
+        cef_v8_context_t* self,
         const(cef_string_t)* code,
         const(cef_string_t)* script_url,
         int start_line,
-        cef_v8value_t** retval,
-        cef_v8exception_t** exception) nothrow eval;
+        cef_v8_value_t** retval,
+        cef_v8_exception_t** exception) nothrow eval;
 }
 
 
@@ -20690,24 +21366,26 @@ struct cef_v8context_t
 ///
 /// Returns the current (top) context object in the V8 context stack.
 ///
-cef_v8context_t* cef_v8context_get_current_context ();
+cef_v8_context_t* cef_v8_context_get_current_context ();
 
 ///
 /// Returns the entered (bottom) context object in the V8 context stack.
 ///
-cef_v8context_t* cef_v8context_get_entered_context ();
+cef_v8_context_t* cef_v8_context_get_entered_context ();
 
 ///
 /// Returns true (1) if V8 is currently inside a context.
 ///
-int cef_v8context_in_context ();
+int cef_v8_context_in_context ();
 
 ///
 /// Structure that should be implemented to handle V8 function calls. The
 /// functions of this structure will be called on the thread associated with the
 /// V8 function.
 ///
-struct cef_v8handler_t
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_v8_handler_t
 {
     ///
     /// Base structure.
@@ -20722,12 +21400,12 @@ struct cef_v8handler_t
     /// exception that will be thrown. Return true (1) if execution was handled.
     ///
     extern(System) int function (
-        cef_v8handler_t* self,
+        cef_v8_handler_t* self,
         const(cef_string_t)* name,
-        cef_v8value_t* object,
+        cef_v8_value_t* object,
         size_t argumentsCount,
-        cef_v8value_t** arguments,
-        cef_v8value_t** retval,
+        cef_v8_value_t** arguments,
+        cef_v8_value_t** retval,
         cef_string_t* exception) nothrow execute;
 }
 
@@ -20735,11 +21413,13 @@ struct cef_v8handler_t
 
 ///
 /// Structure that should be implemented to handle V8 accessor calls. Accessor
-/// identifiers are registered by calling cef_v8value_t::set_value(). The
+/// identifiers are registered by calling cef_v8_value_t::set_value(). The
 /// functions of this structure will be called on the thread associated with the
 /// V8 accessor.
 ///
-struct cef_v8accessor_t
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_v8_accessor_t
 {
     ///
     /// Base structure.
@@ -20754,10 +21434,10 @@ struct cef_v8accessor_t
     /// handled.
     ///
     extern(System) int function (
-        cef_v8accessor_t* self,
+        cef_v8_accessor_t* self,
         const(cef_string_t)* name,
-        cef_v8value_t* object,
-        cef_v8value_t** retval,
+        cef_v8_value_t* object,
+        cef_v8_value_t** retval,
         cef_string_t* exception) nothrow get;
 
     ///
@@ -20768,10 +21448,10 @@ struct cef_v8accessor_t
     /// handled.
     ///
     extern(System) int function (
-        cef_v8accessor_t* self,
+        cef_v8_accessor_t* self,
         const(cef_string_t)* name,
-        cef_v8value_t* object,
-        cef_v8value_t* value,
+        cef_v8_value_t* object,
+        cef_v8_value_t* value,
         cef_string_t* exception) nothrow set;
 }
 
@@ -20785,7 +21465,9 @@ struct cef_v8accessor_t
 /// property handlers (with first argument of type int) are called when object
 /// is indexed by integer.
 ///
-struct cef_v8interceptor_t
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_v8_interceptor_t
 {
     ///
     /// Base structure.
@@ -20802,10 +21484,10 @@ struct cef_v8interceptor_t
     /// Return true (1) if interceptor retrieval was handled, false (0) otherwise.
     ///
     extern(System) int function (
-        cef_v8interceptor_t* self,
+        cef_v8_interceptor_t* self,
         const(cef_string_t)* name,
-        cef_v8value_t* object,
-        cef_v8value_t** retval,
+        cef_v8_value_t* object,
+        cef_v8_value_t** retval,
         cef_string_t* exception) nothrow get_byname;
 
     ///
@@ -20817,10 +21499,10 @@ struct cef_v8interceptor_t
     /// interceptor retrieval was handled, false (0) otherwise.
     ///
     extern(System) int function (
-        cef_v8interceptor_t* self,
+        cef_v8_interceptor_t* self,
         int index,
-        cef_v8value_t* object,
-        cef_v8value_t** retval,
+        cef_v8_value_t* object,
+        cef_v8_value_t** retval,
         cef_string_t* exception) nothrow get_byindex;
 
     ///
@@ -20832,10 +21514,10 @@ struct cef_v8interceptor_t
     /// (1) if interceptor assignment was handled, false (0) otherwise.
     ///
     extern(System) int function (
-        cef_v8interceptor_t* self,
+        cef_v8_interceptor_t* self,
         const(cef_string_t)* name,
-        cef_v8value_t* object,
-        cef_v8value_t* value,
+        cef_v8_value_t* object,
+        cef_v8_value_t* value,
         cef_string_t* exception) nothrow set_byname;
 
     ///
@@ -20846,10 +21528,10 @@ struct cef_v8interceptor_t
     /// interceptor assignment was handled, false (0) otherwise.
     ///
     extern(System) int function (
-        cef_v8interceptor_t* self,
+        cef_v8_interceptor_t* self,
         int index,
-        cef_v8value_t* object,
-        cef_v8value_t* value,
+        cef_v8_value_t* object,
+        cef_v8_value_t* value,
         cef_string_t* exception) nothrow set_byindex;
 }
 
@@ -20859,7 +21541,9 @@ struct cef_v8interceptor_t
 /// Structure representing a V8 exception. The functions of this structure may
 /// be called on any render process thread.
 ///
-struct cef_v8exception_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_v8_exception_t
 {
     ///
     /// Base structure.
@@ -20870,13 +21554,13 @@ struct cef_v8exception_t
     /// Returns the exception message.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-    extern(System) cef_string_userfree_t function (cef_v8exception_t* self) nothrow get_message;
+    extern(System) cef_string_userfree_t function (cef_v8_exception_t* self) nothrow get_message;
 
     ///
     /// Returns the line of source code that the exception occurred within.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-    extern(System) cef_string_userfree_t function (cef_v8exception_t* self) nothrow get_source_line;
+    extern(System) cef_string_userfree_t function (cef_v8_exception_t* self) nothrow get_source_line;
 
     ///
     /// Returns the resource name for the script from where the function causing
@@ -20884,45 +21568,47 @@ struct cef_v8exception_t
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_v8exception_t* self) nothrow get_script_resource_name;
+        cef_v8_exception_t* self) nothrow get_script_resource_name;
 
     ///
     /// Returns the 1-based number of the line where the error occurred or 0 if
     /// the line number is unknown.
     ///
-    extern(System) int function (cef_v8exception_t* self) nothrow get_line_number;
+    extern(System) int function (cef_v8_exception_t* self) nothrow get_line_number;
 
     ///
     /// Returns the index within the script of the first character where the error
     /// occurred.
     ///
-    extern(System) int function (cef_v8exception_t* self) nothrow get_start_position;
+    extern(System) int function (cef_v8_exception_t* self) nothrow get_start_position;
 
     ///
     /// Returns the index within the script of the last character where the error
     /// occurred.
     ///
-    extern(System) int function (cef_v8exception_t* self) nothrow get_end_position;
+    extern(System) int function (cef_v8_exception_t* self) nothrow get_end_position;
 
     ///
     /// Returns the index within the line of the first character where the error
     /// occurred.
     ///
-    extern(System) int function (cef_v8exception_t* self) nothrow get_start_column;
+    extern(System) int function (cef_v8_exception_t* self) nothrow get_start_column;
 
     ///
     /// Returns the index within the line of the last character where the error
     /// occurred.
     ///
-    extern(System) int function (cef_v8exception_t* self) nothrow get_end_column;
+    extern(System) int function (cef_v8_exception_t* self) nothrow get_end_column;
 }
 
 
 
 ///
-/// Callback structure that is passed to cef_v8value_t::CreateArrayBuffer.
+/// Callback structure that is passed to cef_v8_value_t::CreateArrayBuffer.
 ///
-struct cef_v8array_buffer_release_callback_t
+/// NOTE: This struct is allocated client-side.
+///
+struct cef_v8_array_buffer_release_callback_t
 {
     ///
     /// Base structure.
@@ -20935,7 +21621,7 @@ struct cef_v8array_buffer_release_callback_t
     /// along with this object.
     ///
     extern(System) void function (
-        cef_v8array_buffer_release_callback_t* self,
+        cef_v8_array_buffer_release_callback_t* self,
         void* buffer) nothrow release_buffer;
 }
 
@@ -20946,9 +21632,11 @@ struct cef_v8array_buffer_release_callback_t
 /// from the thread on which they are created. Valid threads for creating a V8
 /// handle include the render process main thread (TID_RENDERER) and WebWorker
 /// threads. A task runner for posting tasks on the associated thread can be
-/// retrieved via the cef_v8context_t::get_task_runner() function.
+/// retrieved via the cef_v8_context_t::get_task_runner() function.
 ///
-struct cef_v8value_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_v8_value_t
 {
     ///
     /// Base structure.
@@ -20960,137 +21648,137 @@ struct cef_v8value_t
     /// on the current thread. Do not call any other functions if this function
     /// returns false (0).
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_valid;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_valid;
 
     ///
     /// True if the value type is undefined.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_undefined;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_undefined;
 
     ///
     /// True if the value type is null.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_null;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_null;
 
     ///
     /// True if the value type is bool.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_bool;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_bool;
 
     ///
     /// True if the value type is int.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_int;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_int;
 
     ///
     /// True if the value type is unsigned int.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_uint;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_uint;
 
     ///
     /// True if the value type is double.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_double;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_double;
 
     ///
     /// True if the value type is Date.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_date;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_date;
 
     ///
     /// True if the value type is string.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_string;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_string;
 
     ///
     /// True if the value type is object.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_object;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_object;
 
     ///
     /// True if the value type is array.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_array;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_array;
 
     ///
     /// True if the value type is an ArrayBuffer.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_array_buffer;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_array_buffer;
 
     ///
     /// True if the value type is function.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_function;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_function;
 
     ///
     /// True if the value type is a Promise.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_promise;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_promise;
 
     ///
     /// Returns true (1) if this object is pointing to the same handle as |that|
     /// object.
     ///
-    extern(System) int function (cef_v8value_t* self, cef_v8value_t* that) nothrow is_same;
+    extern(System) int function (cef_v8_value_t* self, cef_v8_value_t* that) nothrow is_same;
 
     ///
     /// Return a bool value.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow get_bool_value;
+    extern(System) int function (cef_v8_value_t* self) nothrow get_bool_value;
 
     ///
     /// Return an int value.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow get_int_value;
+    extern(System) int function (cef_v8_value_t* self) nothrow get_int_value;
 
     ///
     /// Return an unsigned int value.
     ///
-    extern(System) uint function (cef_v8value_t* self) nothrow get_uint_value;
+    extern(System) uint function (cef_v8_value_t* self) nothrow get_uint_value;
 
     ///
     /// Return a double value.
     ///
-    extern(System) double function (cef_v8value_t* self) nothrow get_double_value;
+    extern(System) double function (cef_v8_value_t* self) nothrow get_double_value;
 
     ///
     /// Return a Date value.
     ///
-    extern(System) cef_basetime_t function (cef_v8value_t* self) nothrow get_date_value;
+    extern(System) cef_basetime_t function (cef_v8_value_t* self) nothrow get_date_value;
 
     ///
     /// Return a string value.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-    extern(System) cef_string_userfree_t function (cef_v8value_t* self) nothrow get_string_value;
+    extern(System) cef_string_userfree_t function (cef_v8_value_t* self) nothrow get_string_value;
 
     ///
     /// Returns true (1) if this is a user created object.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow is_user_created;
+    extern(System) int function (cef_v8_value_t* self) nothrow is_user_created;
 
     ///
     /// Returns true (1) if the last function call resulted in an exception. This
     /// attribute exists only in the scope of the current CEF value object.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow has_exception;
+    extern(System) int function (cef_v8_value_t* self) nothrow has_exception;
 
     ///
     /// Returns the exception resulting from the last function call. This
     /// attribute exists only in the scope of the current CEF value object.
     ///
-    extern(System) cef_v8exception_t* function (cef_v8value_t* self) nothrow get_exception;
+    extern(System) cef_v8_exception_t* function (cef_v8_value_t* self) nothrow get_exception;
 
     ///
     /// Clears the last exception and returns true (1) on success.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow clear_exception;
+    extern(System) int function (cef_v8_value_t* self) nothrow clear_exception;
 
     ///
     /// Returns true (1) if this object will re-throw future exceptions. This
     /// attribute exists only in the scope of the current CEF value object.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow will_rethrow_exceptions;
+    extern(System) int function (cef_v8_value_t* self) nothrow will_rethrow_exceptions;
 
     ///
     /// Set whether this object will re-throw future exceptions. By default
@@ -21099,19 +21787,19 @@ struct cef_v8value_t
     /// caught and not re-thrown. Returns true (1) on success. This attribute
     /// exists only in the scope of the current CEF value object.
     ///
-    extern(System) int function (cef_v8value_t* self, int rethrow) nothrow set_rethrow_exceptions;
+    extern(System) int function (cef_v8_value_t* self, int rethrow) nothrow set_rethrow_exceptions;
 
     ///
     /// Returns true (1) if the object has a value with the specified identifier.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         const(cef_string_t)* key) nothrow has_value_bykey;
 
     ///
     /// Returns true (1) if the object has a value with the specified identifier.
     ///
-    extern(System) int function (cef_v8value_t* self, int index) nothrow has_value_byindex;
+    extern(System) int function (cef_v8_value_t* self, int index) nothrow has_value_byindex;
 
     ///
     /// Deletes the value with the specified identifier and returns true (1) on
@@ -21120,7 +21808,7 @@ struct cef_v8value_t
     /// will return true (1) even though deletion failed.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         const(cef_string_t)* key) nothrow delete_value_bykey;
 
     ///
@@ -21129,22 +21817,22 @@ struct cef_v8value_t
     /// deletion fails or an exception is thrown. For read-only and don't-delete
     /// values this function will return true (1) even though deletion failed.
     ///
-    extern(System) int function (cef_v8value_t* self, int index) nothrow delete_value_byindex;
+    extern(System) int function (cef_v8_value_t* self, int index) nothrow delete_value_byindex;
 
     ///
     /// Returns the value with the specified identifier on success. Returns NULL
     /// if this function is called incorrectly or an exception is thrown.
     ///
-    extern(System) cef_v8value_t* function (
-        cef_v8value_t* self,
+    extern(System) cef_v8_value_t* function (
+        cef_v8_value_t* self,
         const(cef_string_t)* key) nothrow get_value_bykey;
 
     ///
     /// Returns the value with the specified identifier on success. Returns NULL
     /// if this function is called incorrectly or an exception is thrown.
     ///
-    extern(System) cef_v8value_t* function (
-        cef_v8value_t* self,
+    extern(System) cef_v8_value_t* function (
+        cef_v8_value_t* self,
         int index) nothrow get_value_byindex;
 
     ///
@@ -21154,9 +21842,9 @@ struct cef_v8value_t
     /// (1) even though assignment failed.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         const(cef_string_t)* key,
-        cef_v8value_t* value,
+        cef_v8_value_t* value,
         cef_v8_propertyattribute_t attribute) nothrow set_value_bykey;
 
     ///
@@ -21166,19 +21854,19 @@ struct cef_v8value_t
     /// (1) even though assignment failed.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         int index,
-        cef_v8value_t* value) nothrow set_value_byindex;
+        cef_v8_value_t* value) nothrow set_value_byindex;
 
     ///
     /// Registers an identifier and returns true (1) on success. Access to the
-    /// identifier will be forwarded to the cef_v8accessor_t instance passed to
-    /// cef_v8value_t::cef_v8value_create_object(). Returns false (0) if this
+    /// identifier will be forwarded to the cef_v8_accessor_t instance passed to
+    /// cef_v8_value_t::cef_v8_value_create_object(). Returns false (0) if this
     /// function is called incorrectly or an exception is thrown. For read-only
     /// values this function will return true (1) even though assignment failed.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         const(cef_string_t)* key,
         cef_v8_propertyattribute_t attribute) nothrow set_value_byaccessor;
 
@@ -21186,7 +21874,7 @@ struct cef_v8value_t
     /// Read the keys for the object's values into the specified vector. Integer-
     /// based keys will also be returned as strings.
     ///
-    extern(System) int function (cef_v8value_t* self, cef_string_list_t keys) nothrow get_keys;
+    extern(System) int function (cef_v8_value_t* self, cef_string_list_t keys) nothrow get_keys;
 
     ///
     /// Sets the user data for this object and returns true (1) on success.
@@ -21194,95 +21882,95 @@ struct cef_v8value_t
     /// can only be called on user created objects.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         cef_base_ref_counted_t* user_data) nothrow set_user_data;
 
     ///
     /// Returns the user data, if any, assigned to this object.
     ///
-    extern(System) cef_base_ref_counted_t* function (cef_v8value_t* self) nothrow get_user_data;
+    extern(System) cef_base_ref_counted_t* function (cef_v8_value_t* self) nothrow get_user_data;
 
     ///
     /// Returns the amount of externally allocated memory registered for the
     /// object.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow get_externally_allocated_memory;
+    extern(System) int function (cef_v8_value_t* self) nothrow get_externally_allocated_memory;
 
     ///
     /// Adjusts the amount of registered external memory for the object. Used to
     /// give V8 an indication of the amount of externally allocated memory that is
     /// kept alive by JavaScript objects. V8 uses this information to decide when
-    /// to perform global garbage collection. Each cef_v8value_t tracks the amount
-    /// of external memory associated with it and automatically decreases the
-    /// global total by the appropriate amount on its destruction.
+    /// to perform global garbage collection. Each cef_v8_value_t tracks the
+    /// amount of external memory associated with it and automatically decreases
+    /// the global total by the appropriate amount on its destruction.
     /// |change_in_bytes| specifies the number of bytes to adjust by. This
     /// function returns the number of bytes associated with the object after the
     /// adjustment. This function can only be called on user created objects.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         int change_in_bytes) nothrow adjust_externally_allocated_memory;
 
     ///
     /// Returns the number of elements in the array.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow get_array_length;
+    extern(System) int function (cef_v8_value_t* self) nothrow get_array_length;
 
     ///
     /// Returns the ReleaseCallback object associated with the ArrayBuffer or NULL
     /// if the ArrayBuffer was not created with CreateArrayBuffer.
     ///
-    extern(System) cef_v8array_buffer_release_callback_t* function (
-        cef_v8value_t* self) nothrow get_array_buffer_release_callback;
+    extern(System) cef_v8_array_buffer_release_callback_t* function (
+        cef_v8_value_t* self) nothrow get_array_buffer_release_callback;
 
     ///
     /// Prevent the ArrayBuffer from using it's memory block by setting the length
     /// to zero. This operation cannot be undone. If the ArrayBuffer was created
     /// with CreateArrayBuffer then
-    /// cef_v8array_buffer_release_callback_t::ReleaseBuffer will be called to
+    /// cef_v8_array_buffer_release_callback_t::ReleaseBuffer will be called to
     /// release the underlying buffer.
     ///
-    extern(System) int function (cef_v8value_t* self) nothrow neuter_array_buffer;
+    extern(System) int function (cef_v8_value_t* self) nothrow neuter_array_buffer;
 
     ///
     /// Returns the length (in bytes) of the ArrayBuffer.
     ///
-    extern(System) size_t function (cef_v8value_t* self) nothrow get_array_buffer_byte_length;
+    extern(System) size_t function (cef_v8_value_t* self) nothrow get_array_buffer_byte_length;
 
     ///
     /// Returns a pointer to the beginning of the memory block for this
     /// ArrayBuffer backing store. The returned pointer is valid as long as the
-    /// cef_v8value_t is alive.
+    /// cef_v8_value_t is alive.
     ///
-    extern(System) void* function (cef_v8value_t* self) nothrow get_array_buffer_data;
+    extern(System) void* function (cef_v8_value_t* self) nothrow get_array_buffer_data;
 
     ///
     /// Returns the function name.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
-    extern(System) cef_string_userfree_t function (cef_v8value_t* self) nothrow get_function_name;
+    extern(System) cef_string_userfree_t function (cef_v8_value_t* self) nothrow get_function_name;
 
     ///
     /// Returns the function handler or NULL if not a CEF-created function.
     ///
-    extern(System) cef_v8handler_t* function (cef_v8value_t* self) nothrow get_function_handler;
+    extern(System) cef_v8_handler_t* function (cef_v8_value_t* self) nothrow get_function_handler;
 
     ///
     /// Execute the function using the current V8 context. This function should
-    /// only be called from within the scope of a cef_v8handler_t or
-    /// cef_v8accessor_t callback, or in combination with calling enter() and
-    /// exit() on a stored cef_v8context_t reference. |object| is the receiver
+    /// only be called from within the scope of a cef_v8_handler_t or
+    /// cef_v8_accessor_t callback, or in combination with calling enter() and
+    /// exit() on a stored cef_v8_context_t reference. |object| is the receiver
     /// ('this' object) of the function. If |object| is NULL the current context's
     /// global object will be used. |arguments| is the list of arguments that will
     /// be passed to the function. Returns the function return value on success.
     /// Returns NULL if this function is called incorrectly or an exception is
     /// thrown.
     ///
-    extern(System) cef_v8value_t* function (
-        cef_v8value_t* self,
-        cef_v8value_t* object,
+    extern(System) cef_v8_value_t* function (
+        cef_v8_value_t* self,
+        cef_v8_value_t* object,
         size_t argumentsCount,
-        cef_v8value_t** arguments) nothrow execute_function;
+        cef_v8_value_t** arguments) nothrow execute_function;
 
     ///
     /// Execute the function using the specified V8 context. |object| is the
@@ -21292,142 +21980,158 @@ struct cef_v8value_t
     /// value on success. Returns NULL if this function is called incorrectly or
     /// an exception is thrown.
     ///
-    extern(System) cef_v8value_t* function (
-        cef_v8value_t* self,
-        cef_v8context_t* context,
-        cef_v8value_t* object,
+    extern(System) cef_v8_value_t* function (
+        cef_v8_value_t* self,
+        cef_v8_context_t* context,
+        cef_v8_value_t* object,
         size_t argumentsCount,
-        cef_v8value_t** arguments) nothrow execute_function_with_context;
+        cef_v8_value_t** arguments) nothrow execute_function_with_context;
 
     ///
     /// Resolve the Promise using the current V8 context. This function should
-    /// only be called from within the scope of a cef_v8handler_t or
-    /// cef_v8accessor_t callback, or in combination with calling enter() and
-    /// exit() on a stored cef_v8context_t reference. |arg| is the argument passed
-    /// to the resolved promise. Returns true (1) on success. Returns false (0) if
-    /// this function is called incorrectly or an exception is thrown.
+    /// only be called from within the scope of a cef_v8_handler_t or
+    /// cef_v8_accessor_t callback, or in combination with calling enter() and
+    /// exit() on a stored cef_v8_context_t reference. |arg| is the argument
+    /// passed to the resolved promise. Returns true (1) on success. Returns false
+    /// (0) if this function is called incorrectly or an exception is thrown.
     ///
-    extern(System) int function (cef_v8value_t* self, cef_v8value_t* arg) nothrow resolve_promise;
+    extern(System) int function (cef_v8_value_t* self, cef_v8_value_t* arg) nothrow resolve_promise;
 
     ///
     /// Reject the Promise using the current V8 context. This function should only
-    /// be called from within the scope of a cef_v8handler_t or cef_v8accessor_t
+    /// be called from within the scope of a cef_v8_handler_t or cef_v8_accessor_t
     /// callback, or in combination with calling enter() and exit() on a stored
-    /// cef_v8context_t reference. Returns true (1) on success. Returns false (0)
+    /// cef_v8_context_t reference. Returns true (1) on success. Returns false (0)
     /// if this function is called incorrectly or an exception is thrown.
     ///
     extern(System) int function (
-        cef_v8value_t* self,
+        cef_v8_value_t* self,
         const(cef_string_t)* errorMsg) nothrow reject_promise;
 }
 
 
 
 ///
-/// Create a new cef_v8value_t object of type undefined.
+/// Create a new cef_v8_value_t object of type undefined.
 ///
-cef_v8value_t* cef_v8value_create_undefined ();
+cef_v8_value_t* cef_v8_value_create_undefined ();
 
 ///
-/// Create a new cef_v8value_t object of type null.
+/// Create a new cef_v8_value_t object of type null.
 ///
-cef_v8value_t* cef_v8value_create_null ();
+cef_v8_value_t* cef_v8_value_create_null ();
 
 ///
-/// Create a new cef_v8value_t object of type bool.
+/// Create a new cef_v8_value_t object of type bool.
 ///
-cef_v8value_t* cef_v8value_create_bool (int value);
+cef_v8_value_t* cef_v8_value_create_bool (int value);
 
 ///
-/// Create a new cef_v8value_t object of type int.
+/// Create a new cef_v8_value_t object of type int.
 ///
-cef_v8value_t* cef_v8value_create_int (int value);
+cef_v8_value_t* cef_v8_value_create_int (int value);
 
 ///
-/// Create a new cef_v8value_t object of type unsigned int.
+/// Create a new cef_v8_value_t object of type unsigned int.
 ///
-cef_v8value_t* cef_v8value_create_uint (uint value);
+cef_v8_value_t* cef_v8_value_create_uint (uint value);
 
 ///
-/// Create a new cef_v8value_t object of type double.
+/// Create a new cef_v8_value_t object of type double.
 ///
-cef_v8value_t* cef_v8value_create_double (double value);
+cef_v8_value_t* cef_v8_value_create_double (double value);
 
 ///
-/// Create a new cef_v8value_t object of type Date. This function should only be
-/// called from within the scope of a cef_render_process_handler_t,
-/// cef_v8handler_t or cef_v8accessor_t callback, or in combination with calling
-/// enter() and exit() on a stored cef_v8context_t reference.
+/// Create a new cef_v8_value_t object of type Date. This function should only
+/// be called from within the scope of a cef_render_process_handler_t,
+/// cef_v8_handler_t or cef_v8_accessor_t callback, or in combination with
+/// calling enter() and exit() on a stored cef_v8_context_t reference.
 ///
-cef_v8value_t* cef_v8value_create_date (cef_basetime_t date);
+cef_v8_value_t* cef_v8_value_create_date (cef_basetime_t date);
 
 ///
-/// Create a new cef_v8value_t object of type string.
+/// Create a new cef_v8_value_t object of type string.
 ///
-cef_v8value_t* cef_v8value_create_string (const(cef_string_t)* value);
+cef_v8_value_t* cef_v8_value_create_string (const(cef_string_t)* value);
 
 ///
-/// Create a new cef_v8value_t object of type object with optional accessor
+/// Create a new cef_v8_value_t object of type object with optional accessor
 /// and/or interceptor. This function should only be called from within the
-/// scope of a cef_render_process_handler_t, cef_v8handler_t or cef_v8accessor_t
+/// scope of a cef_render_process_handler_t, cef_v8_handler_t or
+/// cef_v8_accessor_t callback, or in combination with calling enter() and
+/// exit() on a stored cef_v8_context_t reference.
+///
+cef_v8_value_t* cef_v8_value_create_object (
+    cef_v8_accessor_t* accessor,
+    cef_v8_interceptor_t* interceptor);
+
+///
+/// Create a new cef_v8_value_t object of type array with the specified
+/// |length|. If |length| is negative the returned array will have length 0.
+/// This function should only be called from within the scope of a
+/// cef_render_process_handler_t, cef_v8_handler_t or cef_v8_accessor_t
 /// callback, or in combination with calling enter() and exit() on a stored
-/// cef_v8context_t reference.
+/// cef_v8_context_t reference.
 ///
-cef_v8value_t* cef_v8value_create_object (
-    cef_v8accessor_t* accessor,
-    cef_v8interceptor_t* interceptor);
+cef_v8_value_t* cef_v8_value_create_array (int length);
 
 ///
-/// Create a new cef_v8value_t object of type array with the specified |length|.
-/// If |length| is negative the returned array will have length 0. This function
-/// should only be called from within the scope of a
-/// cef_render_process_handler_t, cef_v8handler_t or cef_v8accessor_t callback,
-/// or in combination with calling enter() and exit() on a stored
-/// cef_v8context_t reference.
-///
-cef_v8value_t* cef_v8value_create_array (int length);
-
-///
-/// Create a new cef_v8value_t object of type ArrayBuffer which wraps the
+/// Create a new cef_v8_value_t object of type ArrayBuffer which wraps the
 /// provided |buffer| of size |length| bytes. The ArrayBuffer is externalized,
 /// meaning that it does not own |buffer|. The caller is responsible for freeing
 /// |buffer| when requested via a call to
-/// cef_v8array_buffer_release_callback_t::ReleaseBuffer. This function should
+/// cef_v8_array_buffer_release_callback_t::ReleaseBuffer. This function should
 /// only be called from within the scope of a cef_render_process_handler_t,
-/// cef_v8handler_t or cef_v8accessor_t callback, or in combination with calling
-/// enter() and exit() on a stored cef_v8context_t reference.
+/// cef_v8_handler_t or cef_v8_accessor_t callback, or in combination with
+/// calling enter() and exit() on a stored cef_v8_context_t reference.
 ///
-cef_v8value_t* cef_v8value_create_array_buffer (
+/// NOTE: Always returns nullptr when V8 sandbox is enabled.
+///
+cef_v8_value_t* cef_v8_value_create_array_buffer (
     void* buffer,
     size_t length,
-    cef_v8array_buffer_release_callback_t* release_callback);
+    cef_v8_array_buffer_release_callback_t* release_callback);
 
 ///
-/// Create a new cef_v8value_t object of type function. This function should
+/// Create a new cef_v8_value_t object of type ArrayBuffer which copies the
+/// provided |buffer| of size |length| bytes. This function should only be
+/// called from within the scope of a cef_render_process_handler_t,
+/// cef_v8_handler_t or cef_v8_accessor_t callback, or in combination with
+/// calling enter() and exit() on a stored cef_v8_context_t reference.
+///
+cef_v8_value_t* cef_v8_value_create_array_buffer_with_copy (
+    void* buffer,
+    size_t length);
+
+///
+/// Create a new cef_v8_value_t object of type function. This function should
 /// only be called from within the scope of a cef_render_process_handler_t,
-/// cef_v8handler_t or cef_v8accessor_t callback, or in combination with calling
-/// enter() and exit() on a stored cef_v8context_t reference.
+/// cef_v8_handler_t or cef_v8_accessor_t callback, or in combination with
+/// calling enter() and exit() on a stored cef_v8_context_t reference.
 ///
-extern(System) cef_v8value_t* cef_v8value_create_function (
+extern(System) cef_v8_value_t* cef_v8_value_create_function (
     const(cef_string_t)* name,
-    cef_v8handler_t* handler) nothrow;
+    cef_v8_handler_t* handler) nothrow;
 
 ///
-/// Create a new cef_v8value_t object of type Promise. This function should only
-/// be called from within the scope of a cef_render_process_handler_t,
-/// cef_v8handler_t or cef_v8accessor_t callback, or in combination with calling
-/// enter() and exit() on a stored cef_v8context_t reference.
+/// Create a new cef_v8_value_t object of type Promise. This function should
+/// only be called from within the scope of a cef_render_process_handler_t,
+/// cef_v8_handler_t or cef_v8_accessor_t callback, or in combination with
+/// calling enter() and exit() on a stored cef_v8_context_t reference.
 ///
-cef_v8value_t* cef_v8value_create_promise ();
+cef_v8_value_t* cef_v8_value_create_promise ();
 
 ///
 /// Structure representing a V8 stack trace handle. V8 handles can only be
 /// accessed from the thread on which they are created. Valid threads for
 /// creating a V8 handle include the render process main thread (TID_RENDERER)
 /// and WebWorker threads. A task runner for posting tasks on the associated
-/// thread can be retrieved via the cef_v8context_t::get_task_runner() function.
+/// thread can be retrieved via the cef_v8_context_t::get_task_runner()
+/// function.
 ///
-struct cef_v8stack_trace_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_v8_stack_trace_t
 {
     ///
     /// Base structure.
@@ -21439,18 +22143,18 @@ struct cef_v8stack_trace_t
     /// on the current thread. Do not call any other functions if this function
     /// returns false (0).
     ///
-    extern(System) int function (cef_v8stack_trace_t* self) nothrow is_valid;
+    extern(System) int function (cef_v8_stack_trace_t* self) nothrow is_valid;
 
     ///
     /// Returns the number of stack frames.
     ///
-    extern(System) int function (cef_v8stack_trace_t* self) nothrow get_frame_count;
+    extern(System) int function (cef_v8_stack_trace_t* self) nothrow get_frame_count;
 
     ///
     /// Returns the stack frame at the specified 0-based index.
     ///
-    extern(System) cef_v8stack_frame_t* function (
-        cef_v8stack_trace_t* self,
+    extern(System) cef_v8_stack_frame_t* function (
+        cef_v8_stack_trace_t* self,
         int index) nothrow get_frame;
 }
 
@@ -21460,16 +22164,19 @@ struct cef_v8stack_trace_t
 /// Returns the stack trace for the currently active context. |frame_limit| is
 /// the maximum number of frames that will be captured.
 ///
-cef_v8stack_trace_t* cef_v8stack_trace_get_current (int frame_limit);
+cef_v8_stack_trace_t* cef_v8_stack_trace_get_current (int frame_limit);
 
 ///
 /// Structure representing a V8 stack frame handle. V8 handles can only be
 /// accessed from the thread on which they are created. Valid threads for
 /// creating a V8 handle include the render process main thread (TID_RENDERER)
 /// and WebWorker threads. A task runner for posting tasks on the associated
-/// thread can be retrieved via the cef_v8context_t::get_task_runner() function.
+/// thread can be retrieved via the cef_v8_context_t::get_task_runner()
+/// function.
 ///
-struct cef_v8stack_frame_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_v8_stack_frame_t
 {
     ///
     /// Base structure.
@@ -21481,14 +22188,14 @@ struct cef_v8stack_frame_t
     /// on the current thread. Do not call any other functions if this function
     /// returns false (0).
     ///
-    extern(System) int function (cef_v8stack_frame_t* self) nothrow is_valid;
+    extern(System) int function (cef_v8_stack_frame_t* self) nothrow is_valid;
 
     ///
     /// Returns the name of the resource script that contains the function.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_v8stack_frame_t* self) nothrow get_script_name;
+        cef_v8_stack_frame_t* self) nothrow get_script_name;
 
     ///
     /// Returns the name of the resource script that contains the function or the
@@ -21497,35 +22204,35 @@ struct cef_v8stack_frame_t
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_v8stack_frame_t* self) nothrow get_script_name_or_source_url;
+        cef_v8_stack_frame_t* self) nothrow get_script_name_or_source_url;
 
     ///
     /// Returns the name of the function.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_v8stack_frame_t* self) nothrow get_function_name;
+        cef_v8_stack_frame_t* self) nothrow get_function_name;
 
     ///
     /// Returns the 1-based line number for the function call or 0 if unknown.
     ///
-    extern(System) int function (cef_v8stack_frame_t* self) nothrow get_line_number;
+    extern(System) int function (cef_v8_stack_frame_t* self) nothrow get_line_number;
 
     ///
     /// Returns the 1-based column offset on the line for the function call or 0
     /// if unknown.
     ///
-    extern(System) int function (cef_v8stack_frame_t* self) nothrow get_column;
+    extern(System) int function (cef_v8_stack_frame_t* self) nothrow get_column;
 
     ///
     /// Returns true (1) if the function was compiled using eval().
     ///
-    extern(System) int function (cef_v8stack_frame_t* self) nothrow is_eval;
+    extern(System) int function (cef_v8_stack_frame_t* self) nothrow is_eval;
 
     ///
     /// Returns true (1) if the function was called as a constructor via "new".
     ///
-    extern(System) int function (cef_v8stack_frame_t* self) nothrow is_constructor;
+    extern(System) int function (cef_v8_stack_frame_t* self) nothrow is_constructor;
 }
 
 
@@ -21591,10 +22298,10 @@ struct cef_v8stack_frame_t
 int cef_register_extension (
     const(cef_string_t)* extension_name,
     const(cef_string_t)* javascript_code,
-    cef_v8handler_t* handler);
+    cef_v8_handler_t* handler);
 
 // CEF_INCLUDE_CAPI_CEF_V8_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -21629,7 +22336,7 @@ int cef_register_extension (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=f1ac6a6d5605078a38b7fa7e898619623eca6d51$
+// $hash=aab41106167d5748ab4d15e255ffd0b68160fd7e$
 //
 
 extern (C):
@@ -21638,6 +22345,8 @@ extern (C):
 /// Structure that wraps other data value types. Complex types (binary,
 /// dictionary and list) will be referenced but not owned by this object. Can be
 /// used on any process and thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_value_t
 {
@@ -21652,13 +22361,12 @@ struct cef_value_t
     /// or dictionary) and that other object is then modified or destroyed. This
     /// value object can be re-used by calling Set*() even if the underlying data
     /// is invalid.
-    ///
+
+    cef_base_ref_counted_t base; ///
+    extern(System) int function (cef_value_t* self) nothrow is_valid;
 
     ///
     /// Returns true (1) if the underlying data is owned by another object.
-
-    cef_base_ref_counted_t base;
-    extern(System) int function (cef_value_t* self) nothrow is_valid;
     ///
     extern(System) int function (cef_value_t* self) nothrow is_owned;
 
@@ -21807,6 +22515,8 @@ cef_value_t* cef_value_create ();
 /// Structure representing a binary value. Can be used on any process and
 /// thread.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_binary_value_t
 {
     ///
@@ -21884,6 +22594,8 @@ cef_binary_value_t* cef_binary_value_create (
 ///
 /// Structure representing a dictionary value. Can be used on any process and
 /// thread.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_dictionary_value_t
 {
@@ -22145,6 +22857,8 @@ cef_dictionary_value_t* cef_dictionary_value_create ();
 ///
 /// Structure representing a list value. Can be used on any process and thread.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_list_value_t
 {
     ///
@@ -22367,7 +23081,7 @@ struct cef_list_value_t
 cef_list_value_t* cef_list_value_create ();
 
 // CEF_INCLUDE_CAPI_CEF_VALUES_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -22402,7 +23116,7 @@ cef_list_value_t* cef_list_value_create ();
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=7dbd68a4517f8fc578a523d590d1ff7a8aa2a49a$
+// $hash=9557ee036441059712a50397b99979c3c232dc27$
 //
 
 extern (C):
@@ -22418,18 +23132,20 @@ extern (C):
 /// a WaitableEvent by calling the *wait() functions is not allowed on the
 /// browser process UI or IO threads.
 ///
+/// NOTE: This struct is allocated DLL-side.
+///
 struct cef_waitable_event_t
 {
     ///
     /// Base structure.
     ///
 
+    cef_base_ref_counted_t base;
     ///
     /// Put the event in the un-signaled state.
     ///
-
-    cef_base_ref_counted_t base;
     extern(System) void function (cef_waitable_event_t* self) nothrow reset;
+
     ///
     /// Put the event in the signaled state. This causes any thread blocked on
     /// Wait to be woken up.
@@ -22474,7 +23190,7 @@ cef_waitable_event_t* cef_waitable_event_create (
     int initially_signaled);
 
 // CEF_INCLUDE_CAPI_CEF_WAITABLE_EVENT_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -22509,7 +23225,7 @@ cef_waitable_event_t* cef_waitable_event_create (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=e20d330e3d1cd3ac5bcd3ce7ee09bc1025490f63$
+// $hash=2c9a65c33971ecb12e76d207894650ac53f024e5$
 //
 
 extern (C):
@@ -22517,7 +23233,9 @@ extern (C):
 ///
 /// Structure representing the issuer or subject field of an X.509 certificate.
 ///
-struct cef_x509cert_principal_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_x509_cert_principal_t
 {
     ///
     /// Base structure.
@@ -22535,44 +23253,45 @@ struct cef_x509cert_principal_t
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
 
-    ///
-    /// Returns the locality name.
-
     cef_base_ref_counted_t base;
     extern(System) cef_string_userfree_t function (
-        cef_x509cert_principal_t* self) nothrow get_display_name;
+        cef_x509_cert_principal_t* self) nothrow get_display_name;
     extern(System) cef_string_userfree_t function (
-        cef_x509cert_principal_t* self) nothrow get_common_name; ///
+        cef_x509_cert_principal_t* self) nothrow get_common_name;
+
+    ///
+    /// Returns the locality name.
+    ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_x509cert_principal_t* self) nothrow get_locality_name;
+        cef_x509_cert_principal_t* self) nothrow get_locality_name;
 
     ///
     /// Returns the state or province name.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_x509cert_principal_t* self) nothrow get_state_or_province_name;
+        cef_x509_cert_principal_t* self) nothrow get_state_or_province_name;
 
     ///
     /// Returns the country name.
     ///
     // The resulting string must be freed by calling cef_string_userfree_free().
     extern(System) cef_string_userfree_t function (
-        cef_x509cert_principal_t* self) nothrow get_country_name;
+        cef_x509_cert_principal_t* self) nothrow get_country_name;
 
     ///
     /// Retrieve the list of organization names.
     ///
     extern(System) void function (
-        cef_x509cert_principal_t* self,
+        cef_x509_cert_principal_t* self,
         cef_string_list_t names) nothrow get_organization_names;
 
     ///
     /// Retrieve the list of organization unit names.
     ///
     extern(System) void function (
-        cef_x509cert_principal_t* self,
+        cef_x509_cert_principal_t* self,
         cef_string_list_t names) nothrow get_organization_unit_names;
 }
 
@@ -22581,7 +23300,9 @@ struct cef_x509cert_principal_t
 ///
 /// Structure representing a X.509 certificate.
 ///
-struct cef_x509certificate_t
+/// NOTE: This struct is allocated DLL-side.
+///
+struct cef_x509_certificate_t
 {
     ///
     /// Base structure.
@@ -22593,51 +23314,51 @@ struct cef_x509certificate_t
     /// certificates this represents the web server.  The common name of the
     /// subject should match the host name of the web server.
     ///
-    extern(System) cef_x509cert_principal_t* function (
-        cef_x509certificate_t* self) nothrow get_subject;
+    extern(System) cef_x509_cert_principal_t* function (
+        cef_x509_certificate_t* self) nothrow get_subject;
 
     ///
     /// Returns the issuer of the X.509 certificate.
     ///
-    extern(System) cef_x509cert_principal_t* function (
-        cef_x509certificate_t* self) nothrow get_issuer;
+    extern(System) cef_x509_cert_principal_t* function (
+        cef_x509_certificate_t* self) nothrow get_issuer;
 
     ///
     /// Returns the DER encoded serial number for the X.509 certificate. The value
     /// possibly includes a leading 00 byte.
     ///
     extern(System) cef_binary_value_t* function (
-        cef_x509certificate_t* self) nothrow get_serial_number;
+        cef_x509_certificate_t* self) nothrow get_serial_number;
 
     ///
     /// Returns the date before which the X.509 certificate is invalid.
     /// CefBaseTime.GetTimeT() will return 0 if no date was specified.
     ///
-    extern(System) cef_basetime_t function (cef_x509certificate_t* self) nothrow get_valid_start;
+    extern(System) cef_basetime_t function (cef_x509_certificate_t* self) nothrow get_valid_start;
 
     ///
     /// Returns the date after which the X.509 certificate is invalid.
     /// CefBaseTime.GetTimeT() will return 0 if no date was specified.
     ///
-    extern(System) cef_basetime_t function (cef_x509certificate_t* self) nothrow get_valid_expiry;
+    extern(System) cef_basetime_t function (cef_x509_certificate_t* self) nothrow get_valid_expiry;
 
     ///
     /// Returns the DER encoded data for the X.509 certificate.
     ///
     extern(System) cef_binary_value_t* function (
-        cef_x509certificate_t* self) nothrow get_derencoded;
+        cef_x509_certificate_t* self) nothrow get_derencoded;
 
     ///
     /// Returns the PEM encoded data for the X.509 certificate.
     ///
     extern(System) cef_binary_value_t* function (
-        cef_x509certificate_t* self) nothrow get_pemencoded;
+        cef_x509_certificate_t* self) nothrow get_pemencoded;
 
     ///
     /// Returns the number of certificates in the issuer chain. If 0, the
     /// certificate is self-signed.
     ///
-    extern(System) size_t function (cef_x509certificate_t* self) nothrow get_issuer_chain_size;
+    extern(System) size_t function (cef_x509_certificate_t* self) nothrow get_issuer_chain_size;
 
     ///
     /// Returns the DER encoded data for the certificate issuer chain. If we
@@ -22645,7 +23366,7 @@ struct cef_x509certificate_t
     /// array but is an NULL string.
     ///
     extern(System) void function (
-        cef_x509certificate_t* self,
+        cef_x509_certificate_t* self,
         size_t* chainCount,
         cef_binary_value_t** chain) nothrow get_derencoded_issuer_chain;
 
@@ -22655,7 +23376,7 @@ struct cef_x509certificate_t
     /// array but is an NULL string.
     ///
     extern(System) void function (
-        cef_x509certificate_t* self,
+        cef_x509_certificate_t* self,
         size_t* chainCount,
         cef_binary_value_t** chain) nothrow get_pemencoded_issuer_chain;
 }
@@ -22663,7 +23384,7 @@ struct cef_x509certificate_t
 
 
 // CEF_INCLUDE_CAPI_CEF_X509_CERTIFICATE_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -22698,7 +23419,7 @@ struct cef_x509certificate_t
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=53c197aa80f55c9a1c9496de4a4d3598a9d7c735$
+// $hash=af8006814745c9ec2f51018f578d3e592933046b$
 //
 
 extern (C):
@@ -22707,6 +23428,8 @@ extern (C):
 /// Structure that supports the reading of XML data via the libxml streaming
 /// API. The functions of this structure should only be called on the thread
 /// that creates the object.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_xml_reader_t
 {
@@ -22725,13 +23448,13 @@ struct cef_xml_reader_t
     /// occurs on the correct thread.
     ///
 
-    ///
-    /// Returns true (1) if an error has been reported by the XML parser.
-    ///
-
     cef_base_ref_counted_t base;
     extern(System) int function (cef_xml_reader_t* self) nothrow move_to_next_node;
     extern(System) int function (cef_xml_reader_t* self) nothrow close;
+
+    ///
+    /// Returns true (1) if an error has been reported by the XML parser.
+    ///
     extern(System) int function (cef_xml_reader_t* self) nothrow has_error;
 
     ///
@@ -22920,7 +23643,7 @@ cef_xml_reader_t* cef_xml_reader_create (
     const(cef_string_t)* URI);
 
 // CEF_INCLUDE_CAPI_CEF_XML_READER_CAPI_H_
-// Copyright (c) 2024 Marshall A. Greenblatt. All rights reserved.
+// Copyright (c) 2025 Marshall A. Greenblatt. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -22955,7 +23678,7 @@ cef_xml_reader_t* cef_xml_reader_create (
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=134a172de5a6674836b723af06baf792553bf9be$
+// $hash=94f18dd234f8478eb4f167febc3d821e30432e3c$
 //
 
 extern (C):
@@ -22964,6 +23687,8 @@ extern (C):
 /// Structure that supports the reading of zip archives via the zlib unzip API.
 /// The functions of this structure should only be called on the thread that
 /// creates the object.
+///
+/// NOTE: This struct is allocated DLL-side.
 ///
 struct cef_zip_reader_t
 {
@@ -22983,11 +23708,11 @@ struct cef_zip_reader_t
 
     ///
     /// Moves the cursor to the specified file in the archive. If |caseSensitive|
-    /// is true (1) then the search will be case sensitive. Returns true (1) if
 
     cef_base_ref_counted_t base;
     extern(System) int function (cef_zip_reader_t* self) nothrow move_to_first_file;
     extern(System) int function (cef_zip_reader_t* self) nothrow move_to_next_file;
+    /// is true (1) then the search will be case sensitive. Returns true (1) if
     /// the cursor position was set successfully.
     ///
     extern(System) int function (

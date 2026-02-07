@@ -484,9 +484,11 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		this(new MiniguiCefClient(openNewWindow), parent, false);
 
 		cef_window_info_t window_info;
+		window_info.size = cef_window_info_t.sizeof;
 		window_info.parent_window = containerWindow.nativeWindowHandle;
+		window_info.runtime_style = cef_runtime_style_t.CEF_RUNTIME_STYLE_ALLOY;
 
-		writeln(cast(long) containerWindow.nativeWindowHandle);
+		// writeln(cast(long) containerWindow.nativeWindowHandle, " ", url);
 
 		cef_string_t cef_url = cef_string_t(url);//"http://arsdnet.net/test.html");
 
@@ -496,6 +498,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 		settings.set(&browser_settings);
 
 		auto got = libcef.browser_host_create_browser(&window_info, client.passable, &cef_url, &browser_settings, null, null);
+		// writeln("browser_host_create_browser ", got);
 	}
 
 	/+
@@ -589,7 +592,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 					closeAttempted = true;
 					browserHandle.get_host.close_browser(false);
 					ce.preventDefault();
-				 	sdpyPrintDebugString("closing 1");
+				 	// sdpyPrintDebugString("closing 1");
 				} else {
 					browserHandle.get_host.close_browser(true);
 				 	sdpyPrintDebugString("closing 2");
@@ -600,7 +603,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 
 	~this() {
 		import core.stdc.stdio;
-		printf("GC'd %p\n", cast(void*) this);
+		//printf("GC'd %p\n", cast(void*) this);
 	}
 
 	private MiniguiCefClient client;
@@ -699,7 +702,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 
 	private Window devTools;
 	override void showDevTools() {
-		if(!browserHandle) return;
+		if(!browserHandle) { sdpyPrintDebugString("null"); return; }
 
 		if(devTools is null) {
 			auto host = browserHandle.get_host;
@@ -710,6 +713,7 @@ class WebViewWidget_CEF : WebViewWidgetBase {
 			}
 
 			cef_window_info_t windowinfo;
+			windowinfo.size = cef_window_info_t.sizeof;
 			version(linux) {
 				auto sw = new Window("DevTools");
 				//sw.win.beingOpenKeepsAppOpen = false;
@@ -767,16 +771,23 @@ version(cef) {
 	class MiniguiCefLifeSpanHandler : CEF!cef_life_span_handler_t {
 		private MiniguiCefClient client;
 		this(MiniguiCefClient client) {
+			// sdpyPrintDebugString("lifespan handler");
 			this.client = client;
 		}
 
 		override void on_before_dev_tools_popup(RC!(cef_browser_t), cef_window_info_t*, cef_client_t**, cef_browser_settings_t*, cef_dictionary_value_t**, int*) nothrow {
+			sdpyPrintDebugString("on_before_dev_tools_popup");
+		}
+
+		override void on_before_popup_aborted(RC!(cef_browser_t), int) nothrow {
+			sdpyPrintDebugString("on_before_popup_aborted");
 
 		}
 
 		override int on_before_popup(
 			RC!cef_browser_t browser,
 			RC!cef_frame_t frame,
+			int popup_id,
 			const(cef_string_t)* target_url,
 			const(cef_string_t)* target_frame_name,
 			cef_window_open_disposition_t target_disposition,
@@ -788,7 +799,7 @@ version(cef) {
 			cef_dictionary_value_t** extra_info,
 			int* no_javascript_access
 		) {
-		sdpyPrintDebugString("on_before_popup");
+			// sdpyPrintDebugString("on_before_popup");
 			if(this.client.openNewWindow is null)
 				return 1; // new windows disabled
 
@@ -820,6 +831,7 @@ version(cef) {
 
 				return ret;
 			} catch(Exception e) {
+				//try sdpyPrintDebugString(e.toString()); catch(Exception e) {}
 				return 1;
 			}
 			/+
@@ -828,6 +840,7 @@ version(cef) {
 			+/
 		}
 		override void on_after_created(RC!cef_browser_t browser) {
+			// sdpyPrintDebugString("*********************on_after_created");
 			auto handle = cast(NativeWindowHandle) browser.get_host().get_window_handle();
 			auto ptr = browser.passable; // this adds to the refcount until it gets inside
 
@@ -863,7 +876,7 @@ version(cef) {
 					// XSelectInput(XDisplayConnection.get, handle, EventMask.StructureNotifyMask);
 
 					wv.browserHostWrapped.onDestroyed = delegate{
-						import std.stdio; writefln("browser host %d destroyed (handle %d)", wv.browserWindowWrapped.window, wv.browserWindow);
+						// import std.stdio; writefln("browser host %d destroyed (handle %d)", wv.browserWindowWrapped.window, wv.browserWindow);
 
 						auto bce = new BrowserClosedEvent(wv);
 						bce.dispatch();
@@ -1031,6 +1044,13 @@ version(cef) {
 	}
 
 	class MiniguiDisplayHandler : CEF!cef_display_handler_t {
+		override int on_contents_bounds_change(RC!(cef_browser_t), const(cef_rect_t)*) nothrow {
+			return 0;
+		}
+		override int get_root_window_screen_rect(RC!(cef_browser_t), cef_rect_t*) nothrow {
+			return 0;
+		}
+
 		override void on_address_change(RC!(cef_browser_t) browser, RC!(cef_frame_t), const(cef_string_utf16_t)* address) {
 			auto url = address.toGC;
 			browser.runOnWebView((wv) {
@@ -1158,7 +1178,7 @@ version(cef) {
 		override int on_certificate_error(RC!(cef_browser_t), cef_errorcode_t, const(cef_string_utf16_t)*, RC!(cef_sslinfo_t), RC!(cef_callback_t)) nothrow {
 			return 0;
 		}
-		override int on_select_client_certificate(RC!(cef_browser_t), int, const(cef_string_utf16_t)*, int, ulong, cef_x509certificate_t**, RC!(cef_select_client_certificate_callback_t)) nothrow {
+		override int on_select_client_certificate(RC!(cef_browser_t), int, const(cef_string_utf16_t)*, int, ulong, cef_x509_certificate_t**, RC!(cef_select_client_certificate_callback_t)) nothrow {
 			return 0;
 		}
 		override void on_render_view_ready(RC!(cef_browser_t) p) nothrow {
@@ -1203,9 +1223,18 @@ version(cef) {
 				// toGCAndFree
 				addItem("Open link in new window", 1);
 				addItem("Copy link URL", 2);
+				addItem("Open in ytv", 6);
 
 				// FIXME: open in other browsers
-				// FIXME: open in ytv
+				addSeparator();
+			}
+
+			if(flags & cef_context_menu_type_flags_t.CM_TYPEFLAG_FRAME) {
+				addItem("Open frame in new window", 7);
+				addItem("Copy frame URL", 8);
+
+				addItem("Open frame in ytv", 9);
+
 				addSeparator();
 			}
 
@@ -1217,7 +1246,6 @@ version(cef) {
 				addItem("Download media", 5);
 				addSeparator();
 			}
-
 
 			// get_page_url
 			// get_title_text
@@ -1268,6 +1296,32 @@ version(cef) {
 				case cef_menu_id_t.MENU_ID_USER_FIRST + 5: // download media
 					auto str = cef_string_t(params.get_source_url().toGCAndFree());
 					browser.get_host().start_download(&str);
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 6: // open link in ytv
+					auto what = params.get_link_url().toGCAndFree();
+
+					import std.process; try spawnProcess(["ytv", what]).wait; catch(Exception e) {}
+					return 1;
+
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 7: // open frame in new window
+					auto what = params.get_frame_url().toGCAndFree();
+
+					browser.runOnWebView((widget) {
+						auto event = new NewWindowRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 8: // copy frame url
+					auto what = params.get_frame_url().toGCAndFree();
+					browser.runOnWebView((widget) {
+						auto event = new CopyRequestedEvent(what, widget);
+						event.dispatch();
+					});
+					return 1;
+				case cef_menu_id_t.MENU_ID_USER_FIRST + 9: // open frame in ytv
+					auto what = params.get_frame_url().toGCAndFree();
+
+					import std.process; try spawnProcess(["ytv", what]).wait; catch(Exception e) {}
 					return 1;
 				default:
 					return 0;
@@ -1425,6 +1479,7 @@ version(cef) {
 			return keyboardHandler.returnable;
 		}
 		override cef_life_span_handler_t* get_life_span_handler() {
+			//sdpyPrintDebugString("get_life_span_handler*************");
 			return lsh.returnable;
 		}
 		override cef_load_handler_t* get_load_handler() {
