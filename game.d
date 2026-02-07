@@ -25,7 +25,7 @@
 
 	The general idea is you provide a game class which implements a minimum of
 	three functions: `update`, `drawFrame`, and `getWindow`. Your main function
-	calls `runGame!YourClass();`.
+	calls `runGame!YourClass();`, or you can `mixin GenericGame!YourClass;`
 
 	`getWindow` is called first. It is responsible for creating the window and
 	initializing your setup. Then the game loop is started, which will call `update`,
@@ -392,6 +392,9 @@ class GameScreenBase {
 	abstract void drawFrame(float interpolate);
 	abstract void load();
 
+	void onBecomeActiveScreen() {}
+	void onExitActiveScreen() {}
+
 	private bool loaded;
 	final void ensureLoaded(GameHelperBase game) {
 		if(!this.loaded) {
@@ -433,13 +436,14 @@ class GameScreen(Game) : GameScreenBase {
 
 	// convenience accessors
 	final AudioOutputThread audio() {
+		// FIXME: if the audio thread threw, we should forward it at some point
 		if(this is null || game is null) return AudioOutputThread.init;
 		return game.audio;
 	}
 
-	final VirtualController snes() {
+	final VirtualController snes(int player = 0) {
 		if(this is null || game is null) return VirtualController.init;
-		return game.snes;
+		return game.sneses[player];
 	}
 
 	/+
@@ -578,7 +582,7 @@ public import arsd.joystick;
 	Creates a simple 2d (old-style) opengl simpledisplay window. It sets the matrix for pixel coordinates and enables alpha blending and textures.
 +/
 SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
-	auto window = new SimpleWindow(width, height, title, OpenGlOptions.yes);
+	auto window = new SimpleWindow(width, height, title, OpenGlOptions.yes, Resizeability.allowResizing);
 
 	//window.visibleForTheFirstTime = () {
 		window.setAsCurrentOpenGlContext();
@@ -598,6 +602,7 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 		glEnable(GL_TEXTURE_2D);
 	//};
 
+	// because the render thread holds the opengl context so everything has to happen there, but still can provide the dg here
 	window.windowResized = (newWidth, newHeight) {
 		int x, y, w, h;
 
@@ -613,7 +618,6 @@ SimpleWindow create2dWindow(string title, int width = 512, int height = 512) {
 			x = (newWidth - w) / 2;
 			y = 0;
 		}
-
 		window.setAsCurrentOpenGlContext();
 		glViewport(x, y, w, h);
 		window.redrawOpenGlSceneSoon();
@@ -711,7 +715,7 @@ abstract class GameHelperBase : SynchronizableObject {
 	AudioOutputThread audio;
 
 	this() {
-		audio = AudioOutputThread(wantAudio());
+		audio = AudioOutputThread(wantAudio() && primaryAudioDevice != "null");
 	}
 
 	protected bool redrawForced;
@@ -732,10 +736,15 @@ abstract class GameHelperBase : SynchronizableObject {
 	+/
 	void showScreen(this This, Screen)(Screen cs, GameScreenBase transition = null) {
 		cs.setGame(cast(This) this);
+		if(currentScreen)
+			currentScreen.onExitActiveScreen();
 		currentScreen = cs;
+		currentScreen.onBecomeActiveScreen();
 		// FIXME: pause the update thread here, and fast forward the game clock when it is unpaused
 		// (this actually SHOULD be called from the update thread, except for the initial load... and even that maybe it will then)
 		// but i have to be careful waiting here because it can deadlock with teh mutex still locked.
+
+		// FIXME: do some onDisplay and onOut events in the screen you can override
 	}
 
 	/++
@@ -785,7 +794,9 @@ abstract class GameHelperBase : SynchronizableObject {
 	/++
 
 	+/
-	VirtualController snes;
+	ref VirtualController snes() { return sneses[0]; }
+
+	VirtualController[4] sneses;
 }
 
 /++
@@ -837,17 +848,21 @@ struct VirtualController {
 
 	/++
 		History: Added April 30, 2020
+
+		Parameter `allowAutoRepeat` added December 25, 2025
 	+/
-	bool justPressed(Button idx) const {
-		auto before = (previousState & (1 << (cast(int) idx))) ? true : false;
+	bool justPressed(Button idx, bool allowAutoRepeat = true) const {
+		auto before = ((allowAutoRepeat ? previousState : truePreviousState) & (1 << (cast(int) idx))) ? true : false;
 		auto after = (state & (1 << (cast(int) idx))) ? true : false;
 		return !before && after;
 	}
 	/++
 		History: Added April 30, 2020
+
+		Parameter `allowAutoRepeat` added December 25, 2025
 	+/
-	bool justReleased(Button idx) const {
-		auto before = (previousState & (1 << (cast(int) idx))) ? true : false;
+	bool justReleased(Button idx, bool allowAutoRepeat = true) const {
+		auto before = ((allowAutoRepeat ? previousState : truePreviousState) & (1 << (cast(int) idx))) ? true : false;
 		auto after = (state & (1 << (cast(int) idx))) ? true : false;
 		return before && !after;
 	}
@@ -889,6 +904,59 @@ struct ButtonCheck {
 }
 
 /++
+	Multi-level wrappers for [runGame]. `GenericGame` mixes in a `main` function that forwards its arguments to `runGameMain`, and then `runGameMain` will parse some generic command line arguments before passing the rest of the arguments to `runGame`. These let you focus on game-specific code while keeping things configurable by the user.
+
+	The arguments you set are generally maximums, but users can turn it down via the command line.
+
+	Params:
+		GameObjectType = the type of your [GameHelperBase] subclass that implements the game.
+		targetUpdateRate = the design rate at which your game's `update` methods are called. If 0, it comes from [GameHelperBase.designFps]
+		maxRedrawRate = the maximum frames per second you will draw. If higher than the update rate, you may be asked to draw interpolated frames. If lower, it will skip some frames as it prioritizes keeping updates on schedule. Users can request a lower redraw rate via command line arguments or gui launcher.
+
+	User_Configuration:
+		NONE OF THIS IS IMPLEMENTED
+
+		speed = changing the update rate to make the game run faster or slower in real time
+
+		fps = lets the user reduce the max redraw rate
+
+		audio = changes the default audio device. `null` means it will not allow audio output at all.
+
+		controller = lets you remap the controller
+
+		config = load and maybe save changes to a config file
+
+		gui = makes a gui launcher to set other args before starting the game
+
+	History:
+		Added January 28, 2026
++/
+mixin template GenericGame(GameObjectType, int targetUpdateRate = 0, int maxRedrawRate = 0) {
+	int main(string[] args) {
+		return runGameMain!(GameObjectType, targetUpdateRate, maxRedrawRate)(args);
+	}
+}
+
+/// ditto
+int runGameMain(GameObjectType, int targetUpdateRate = 0, int maxRedrawRate = 0)(string[] args) {
+	import arsd.cli;
+
+	static int cliWrapper(int redrawRate, string audioDevice, string[] args) {
+		//if(redrawRate > maxRedrawRate)
+			//redrawRate = maxRedrawRate; // FIXME: handle the 0 case of max...
+
+		primaryAudioDevice = audioDevice;
+
+		return runGame!GameObjectType(targetUpdateRate, redrawRate, [""] ~ args);
+	}
+	return runCli!cliWrapper(args);
+
+	//return runGame!(GameObjectType)(targetUpdateRate, maxRedrawRate, args);
+}
+
+private __gshared string primaryAudioDevice;
+
+/++
 	Deprecated, use the other overload instead.
 
 	History:
@@ -916,11 +984,25 @@ void runGame()(GameHelperBase game, int targetUpdateRate = 20, int maxRedrawRate
 	Params:
 	targetUpdateRate = The number of game state updates you get per second. You want this to be quick enough that players don't feel input lag, but conservative enough that any supported computer can keep up with it easily.
 	maxRedrawRate = The maximum draw frame rate. 0 means it will only redraw after a state update changes things. It will be automatically capped at the user's monitor refresh rate. Frames in between updates can be interpolated or skipped.
+	args = command line arguments to use to construct the game object
 +/
-void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0) {
+int runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0, string[] args = null) {
 
-	auto game = new T();
-	scope(exit) .destroy(game);
+	T game;
+	if(args.length) {
+		import arsd.cli;
+		int ret;
+		game = constructFromCliArgs!T(args, ret);
+		if(game is null)
+			return ret;
+	} else {
+		game = new T();
+	}
+	g_game = game;
+	scope(exit) {
+		g_game = null;
+		.destroy(game);
+	}
 
 	if(targetUpdateRate == 0)
 		targetUpdateRate = game.designFps();
@@ -1020,63 +1102,63 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 		}
 
 		foreach(p; 0 .. joystickPlayers) {
+			if(p >= 4)
+				continue;
 			version(linux)
 				readJoystickEvents(joystickFds[p]);
 			auto update = getJoystickUpdate(p);
 
-			if(p == 0) {
-				static if(__traits(isSame, Button, PS1Buttons)) {
-					// PS1 style joystick mapping compiled in
-					with(Button) with(VirtualController.Button) {
-						// so I did the "wasJustPressed thing because it interplays
-						// better with the keyboard as well which works on events...
-						if(update.buttonWasJustPressed(square)) game.snes[Y] = true;
-						if(update.buttonWasJustPressed(triangle)) game.snes[X] = true;
-						if(update.buttonWasJustPressed(cross)) game.snes[B] = true;
-						if(update.buttonWasJustPressed(circle)) game.snes[A] = true;
-						if(update.buttonWasJustPressed(select)) game.snes[Select] = true;
-						if(update.buttonWasJustPressed(start)) game.snes[Start] = true;
-						if(update.buttonWasJustPressed(l1)) game.snes[L] = true;
-						if(update.buttonWasJustPressed(r1)) game.snes[R] = true;
-						// note: no need to check analog stick here cuz joystick.d already does it for us (per old playstation tradition)
-						if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < -8) game.snes[Left] = true;
-						if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > 8) game.snes[Right] = true;
-						if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < -8) game.snes[Up] = true;
-						if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > 8) game.snes[Down] = true;
+			static if(__traits(isSame, Button, PS1Buttons)) {
+				// PS1 style joystick mapping compiled in
+				with(Button) with(VirtualController.Button) {
+					// so I did the "wasJustPressed thing because it interplays
+					// better with the keyboard as well which works on events...
+					if(update.buttonWasJustPressed(square)) game.sneses[p][Y] = true;
+					if(update.buttonWasJustPressed(triangle)) game.sneses[p][X] = true;
+					if(update.buttonWasJustPressed(cross)) game.sneses[p][B] = true;
+					if(update.buttonWasJustPressed(circle)) game.sneses[p][A] = true;
+					if(update.buttonWasJustPressed(select)) game.sneses[p][Select] = true;
+					if(update.buttonWasJustPressed(start)) game.sneses[p][Start] = true;
+					if(update.buttonWasJustPressed(l1)) game.sneses[p][L] = true;
+					if(update.buttonWasJustPressed(r1)) game.sneses[p][R] = true;
+					// note: no need to check analog stick here cuz joystick.d already does it for us (per old playstation tradition)
+					if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < -8) game.sneses[p][Left] = true;
+					if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > 8) game.sneses[p][Right] = true;
+					if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < -8) game.sneses[p][Up] = true;
+					if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > 8) game.sneses[p][Down] = true;
 
-						if(update.buttonWasJustReleased(square)) game.snes[Y] = false;
-						if(update.buttonWasJustReleased(triangle)) game.snes[X] = false;
-						if(update.buttonWasJustReleased(cross)) game.snes[B] = false;
-						if(update.buttonWasJustReleased(circle)) game.snes[A] = false;
-						if(update.buttonWasJustReleased(select)) game.snes[Select] = false;
-						if(update.buttonWasJustReleased(start)) game.snes[Start] = false;
-						if(update.buttonWasJustReleased(l1)) game.snes[L] = false;
-						if(update.buttonWasJustReleased(r1)) game.snes[R] = false;
-						if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > -8) game.snes[Left] = false;
-						if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < 8) game.snes[Right] = false;
-						if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > -8) game.snes[Up] = false;
-						if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < 8) game.snes[Down] = false;
-					}
-
-				} else static if(__traits(isSame, Button, XBox360Buttons)) {
-				static assert(0);
-					// XBox style mapping
-					// the reason this exists is if the programmer wants to use the xbox details, but
-					// might also want the basic controller in here. joystick.d already does translations
-					// so an xbox controller with the default build actually uses the PS1 branch above.
-					/+
-					case XBox360Buttons.a: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_A) ? true : false;
-					case XBox360Buttons.b: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_B) ? true : false;
-					case XBox360Buttons.x: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_X) ? true : false;
-					case XBox360Buttons.y: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_Y) ? true : false;
-
-					case XBox360Buttons.lb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) ? true : false;
-					case XBox360Buttons.rb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? true : false;
-
-					case XBox360Buttons.back: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) ? true : false;
-					case XBox360Buttons.start: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_START) ? true : false;
-					+/
+					if(update.buttonWasJustReleased(square)) game.sneses[p][Y] = false;
+					if(update.buttonWasJustReleased(triangle)) game.sneses[p][X] = false;
+					if(update.buttonWasJustReleased(cross)) game.sneses[p][B] = false;
+					if(update.buttonWasJustReleased(circle)) game.sneses[p][A] = false;
+					if(update.buttonWasJustReleased(select)) game.sneses[p][Select] = false;
+					if(update.buttonWasJustReleased(start)) game.sneses[p][Start] = false;
+					if(update.buttonWasJustReleased(l1)) game.sneses[p][L] = false;
+					if(update.buttonWasJustReleased(r1)) game.sneses[p][R] = false;
+					if(update.axisChange(Axis.horizontalDpad) > 0 && update.axisPosition(Axis.horizontalDpad) > -8) game.sneses[p][Left] = false;
+					if(update.axisChange(Axis.horizontalDpad) < 0 && update.axisPosition(Axis.horizontalDpad) < 8) game.sneses[p][Right] = false;
+					if(update.axisChange(Axis.verticalDpad) > 0 && update.axisPosition(Axis.verticalDpad) > -8) game.sneses[p][Up] = false;
+					if(update.axisChange(Axis.verticalDpad) < 0 && update.axisPosition(Axis.verticalDpad) < 8) game.sneses[p][Down] = false;
 				}
+
+			} else static if(__traits(isSame, Button, XBox360Buttons)) {
+			static assert(0);
+				// XBox style mapping
+				// the reason this exists is if the programmer wants to use the xbox details, but
+				// might also want the basic controller in here. joystick.d already does translations
+				// so an xbox controller with the default build actually uses the PS1 branch above.
+				/+
+				case XBox360Buttons.a: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_A) ? true : false;
+				case XBox360Buttons.b: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_B) ? true : false;
+				case XBox360Buttons.x: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_X) ? true : false;
+				case XBox360Buttons.y: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_Y) ? true : false;
+
+				case XBox360Buttons.lb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) ? true : false;
+				case XBox360Buttons.rb: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? true : false;
+
+				case XBox360Buttons.back: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) ? true : false;
+				case XBox360Buttons.start: return (what.Gamepad.wButtons & XINPUT_GAMEPAD_START) ? true : false;
+				+/
 			}
 
 			game.joysticks[p] = update;
@@ -1089,22 +1171,25 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 		auto now = MonoTime.currTime;
 		bool changed;
 		changed = (cast(shared)game).updateWithManualLock({ lastUpdate = now; });
-		auto stateChange = game.snes.truePreviousState ^ game.snes.state;
-		game.snes.previousState = game.snes.state;
-		game.snes.truePreviousState = game.snes.state;
 
-		if(stateChange == 0) {
-			game.snes.lastStateChange++;
-			auto r = game.snesRepeatRate();
-			if(r != typeof(r).max && !game.snes.repeating && game.snes.lastStateChange == game.snesRepeatDelay()) {
-				game.snes.lastStateChange = 0;
-				game.snes.repeating = true;
-			} else if(r != typeof(r).max && game.snes.repeating && game.snes.lastStateChange == r) {
-				game.snes.lastStateChange = 0;
-				game.snes.previousState = 0;
+		foreach(ref snes; game.sneses) {
+			auto stateChange = snes.truePreviousState ^ game.snes.state;
+			snes.previousState = snes.state;
+			snes.truePreviousState = snes.state;
+
+			if(stateChange == 0) {
+				snes.lastStateChange++;
+				auto r = game.snesRepeatRate();
+				if(r != typeof(r).max && !snes.repeating && snes.lastStateChange == game.snesRepeatDelay()) {
+					snes.lastStateChange = 0;
+					snes.repeating = true;
+				} else if(r != typeof(r).max && snes.repeating && snes.lastStateChange == r) {
+					snes.lastStateChange = 0;
+					snes.previousState = 0;
+				}
+			} else {
+				snes.repeating = false;
 			}
-		} else {
-			game.snes.repeating = false;
 		}
 
 		if(game.redrawForced) {
@@ -1132,6 +1217,7 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 	if(game.multithreadCompatible()) {
 		window.redrawOpenGlScene = null;
 		renderThread = new Thread({
+			scope(failure) runInGuiThreadAsync(() { window.close(); });
 			// FIXME: catch exception and inform the parent
 			int frames = 0;
 			int skipped = 0;
@@ -1142,6 +1228,11 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 
 			MonoTime initial = MonoTime.currTime;
 
+			auto windowResized = window.windowResized;
+			window.windowResized = null;
+			int storedWidth;
+			int storedHeight;
+
 			while(!volatileLoad(&exit)) {
 				MonoTime start = MonoTime.currTime;
 				{
@@ -1150,6 +1241,16 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 						window.mtUnlock();
 					window.setAsCurrentOpenGlContext();
 				}
+
+				{
+					auto newWidth = window.width;
+					auto newHeight = window.height;
+					if(newWidth != storedWidth || newHeight != storedHeight)
+						windowResized(newWidth, newHeight);
+					storedWidth = newWidth;
+					storedHeight = newHeight;
+				}
+
 
 				bool actuallyDrew;
 
@@ -1206,6 +1307,7 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 		});
 
 		updateThread = new Thread({
+			scope(failure) runInGuiThreadAsync(() { window.close(); });
 			// FIXME: catch exception and inform the parent
 			int frames;
 
@@ -1290,11 +1392,19 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 		}
 
 		if(renderThread) {
-			renderThread.join();
+			auto ex = renderThread.join(false);
+			if(ex) {
+				import arsd.core;
+				writelnStderr("From Render Thread: ", ex.toString());
+			}
 			renderThread = null;
 		}
 		if(updateThread) {
-			updateThread.join();
+			auto ex = updateThread.join(false);
+			if(ex) {
+				import arsd.core;
+				writelnStderr("From Update Thread: ", ex.toString());
+			}
 			updateThread = null;
 		}
 	};
@@ -1307,6 +1417,8 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 
 			with(VirtualController.Button)
 			switch(ke.key) {
+				case Key.Escape: window.close(); break;
+
 				case Key.Up, Key.W: game.snes[Up] = ke.pressed; break;
 				case Key.Down, Key.S: game.snes[Down] = ke.pressed; break;
 				case Key.Left, Key.A: game.snes[Left] = ke.pressed; break;
@@ -1324,7 +1436,12 @@ void runGame(T : GameHelperBase)(int targetUpdateRate = 0, int maxRedrawRate = 0
 			}
 		}
 	);
+
+	return 0;
 }
+
+// explicitly undocumented probably will not stick around
+__gshared GameHelperBase g_game;
 
 /++
 	Simple class for putting a TrueColorImage in as an OpenGL texture.
@@ -1365,6 +1482,7 @@ final class OpenGlTexture {
 
 		glColor4f(cast(float)bg.r/255.0, cast(float)bg.g/255.0, cast(float)bg.b/255.0, cast(float)bg.a / 255.0);
 		glBindTexture(GL_TEXTURE_2D, _tex);
+
 		glBegin(GL_QUADS);
 			glTexCoord2f(0, 0); 				glVertex2i(0, 0);
 			glTexCoord2f(texCoordWidth, 0); 		glVertex2i(width, 0);
