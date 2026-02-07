@@ -1228,10 +1228,12 @@ class XlsxFile {
 				relationships[element.attrs.Id] = Relationship(element.attrs.Id, element.attrs.Type, element.attrs.Target);
 		});
 
+		try
 		loadXml("xl/sharedStrings.xml", (document) {
 			foreach(element; document.querySelectorAll("si t"))
 				sharedStrings ~= element.textContent;
 		});
+		catch(Exception e) {} // this xml might not exist and that's ok
 
 		loadXml("xl/styles.xml", (document) {
 			// need to keep the generic hardcoded formats first
