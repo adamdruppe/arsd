@@ -1550,10 +1550,14 @@ mixin template EnableWindowsSubsystem() {
 	version(Windows)
 	version(CRuntime_Microsoft) {
 		pragma(linkerDirective, "/subsystem:windows");
-		version(LDC)
-			pragma(linkerDirective, "/entry:wmainCRTStartup");
-		else
+		version(D_OpenD) {
 			pragma(linkerDirective, "/entry:mainCRTStartup");
+		} else {
+			version(LDC)
+				pragma(linkerDirective, "/entry:wmainCRTStartup");
+			else
+				pragma(linkerDirective, "/entry:mainCRTStartup");
+		}
 	}
 }
 
@@ -4841,30 +4845,42 @@ struct EventLoopImpl {
 	version(X11)
 		int displayFd = -1;
 
+	ICoreEventLoop.UnregisterToken[] unregisters;
+
 	version(with_eventloop)
 	void dispose() {}
 	else
 	void dispose() @system {
 		disposed = true;
+		loopInitialized = false;
+
+		foreach(urt; unregisters)
+			urt.unregister();
+		unregisters = null;
+
 		version(X11) {
 			if(pulseFd != -1) {
 				import unix = core.sys.posix.unistd;
 				unix.close(pulseFd);
 				pulseFd = -1;
 			}
+			if(customSignalFD != -1) {
+				import unix = core.sys.posix.unistd;
+				unix.close(customSignalFD);
+				customSignalFD = -1;
+			}
 
-				version(Emscripten) {} else
-				version(linux)
-				if(displayFd != -1) {
-					// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = displayFd;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, displayFd, &ev);
-					displayFd = -1;
-				}
-
+			version(Emscripten) {} else
+			version(linux)
+			if(displayFd != -1) {
+				// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
+				ep.epoll_event ev = void;
+				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
+				ev.events = ep.EPOLLIN;
+				ev.data.fd = displayFd;
+				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, displayFd, &ev);
+				displayFd = -1;
+			}
 		} else version(Windows) {
 			if(pulser !is null) {
 				pulser.destroy();
@@ -4917,6 +4933,8 @@ struct EventLoopImpl {
 		}
 	}
 
+	static bool loopInitialized = false;
+
 	version(with_eventloop) {
 		int loopHelper(bool delegate() whileCondition) {
 			// FIXME: whileCondition
@@ -4937,14 +4955,13 @@ struct EventLoopImpl {
 				import arsd.core;
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
 
-				static bool loopInitialized = false;
 				if(!loopInitialized) {
 					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? -1 : cast(int)wto); };
-					el.addDelegateOnLoopIteration(&doXNextEventVoid, 3);
-					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+					unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventVoid, 3);
+					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 
 					if(customSignalFD != -1)
-					cast(void) el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
+					unregisters ~= el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
 						version(linux) {
 							import core.sys.linux.sys.signalfd;
 							import core.sys.posix.unistd : read;
@@ -4961,8 +4978,8 @@ struct EventLoopImpl {
 						}
 					}));
 
-					if(display.fd != -1)
-					cast(void) el.addCallbackOnFdReadable(display.fd, new CallbackHelper(() {
+					if(displayFd != -1)
+					unregisters ~= el.addCallbackOnFdReadable(displayFd, new CallbackHelper(() {
 						this.mtLock();
 						scope(exit) this.mtUnlock();
 						while(!done && XPending(display)) {
@@ -4971,7 +4988,7 @@ struct EventLoopImpl {
 					}));
 
 					if(pulseFd != -1)
-					cast(void) el.addCallbackOnFdReadable(pulseFd, new CallbackHelper(() {
+					unregisters ~= el.addCallbackOnFdReadable(pulseFd, new CallbackHelper(() {
 						long expirationCount;
 						// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
 
@@ -4987,7 +5004,7 @@ struct EventLoopImpl {
 					}));
 
 					if(customEventFDRead != -1)
-					cast(void) el.addCallbackOnFdReadable(customEventFDRead, new CallbackHelper(() {
+					unregisters ~= el.addCallbackOnFdReadable(customEventFDRead, new CallbackHelper(() {
 						// we have some custom events; process 'em
 						import core.sys.posix.unistd : read;
 						ulong n;
@@ -5216,11 +5233,10 @@ struct EventLoopImpl {
 			static if(use_arsd_core) {
 				import arsd.core;
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
-				static bool loopInitialized = false;
 				if(!loopInitialized) {
 					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? INFINITE : cast(int)wto); };
-					el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
-					el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
+					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+					unregisters ~= el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
 					loopInitialized = true;
 				}
 				el.run(() => !whileCondition());
@@ -5295,7 +5311,6 @@ struct EventLoopImpl {
 
 			import arsd.core;
 			auto el = getThisThreadEventLoop(EventLoopType.Ui);
-			static bool loopInitialized = false;
 			if(!loopInitialized) {
 				el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 				loopInitialized = true;
@@ -8370,7 +8385,7 @@ struct MouseEvent {
 			Added December 21, 2025
 	+/
 	bool isMouseWheel() const {
-		return button != MouseButton.wheelLeft && button != MouseButton.wheelRight && button != MouseButton.wheelUp && button != MouseButton.wheelDown;
+		return button == MouseButton.wheelLeft || button == MouseButton.wheelRight || button == MouseButton.wheelUp || button == MouseButton.wheelDown;
 	}
 
 	/// Returns a linear representation of mouse button,
