@@ -20,6 +20,9 @@
 		`--` always stops populating names and puts the remaining in the final string[] args param (if there is one)
 		`--help` always
 
+	Bugs:
+		no positional arg support at all
+
 	Return values:
 		int is the return value to the cli
 		string is output, returns 0
@@ -86,14 +89,20 @@ import arsd.core;
 
 /++
 
+	Params:
+		handler = function or class holding the handler
+		handlerCtorArgs = arguments to pass to the constructor of `handler`, if it is a class
+
+	History:
+		handlerCtorArgs were added November 21, 2025
 +/
-int runCli(alias handler)(string[] args) {
+int runCli(alias handler, HandlerCtorArgs...)(string[] args, HandlerCtorArgs handlerCtorArgs) {
 	CliHandler thing;
 
 	static if(is(handler == class)) {
 		CliHandler[] allOptions;
 
-		scope auto instance = new handler();
+		scope auto instance = new handler(handlerCtorArgs);
 		foreach(memberName; __traits(derivedMembers, handler)) {
 			static if(memberName != "__ctor" && memberName != "__dtor") {
 				alias member = __traits(getMember, handler, memberName);
@@ -120,6 +129,7 @@ int runCli(alias handler)(string[] args) {
 		if(args.length)
 			args = args[1 .. $]; // cut off the original args(0) as irrelevant now, the command is the new args[0]
 	} else {
+		static assert(HandlerCtorArgs.length == 0, "can only pass ctor args to a class handler");
 		auto instance = null;
 		thing = createCliHandler!handler();
 	}
@@ -139,6 +149,69 @@ int runCli(alias handler)(string[] args) {
 	if(ret.error.length)
 		writelnStderr(ret.error);
 	return ret.returnValue;
+}
+
+/++
+	Allows you to construct a class from CLI arguments, if and only if it has exactly one constructor.
+
+	It will print error messages to stderr and, if requested, help to stdout, giving you a return value in the `ret` argument. If this returns `null`, you should forward `ret` to `main` (usually). If the return value is not `null`, you should not use `ret`.
+
+	The purpose of this is to use cli stuff as a startup helper, but then proceed with the program using the class object. You may add `@Cli` udas to your constructor arguments.
+
+	History:
+		Added February 1, 2026
++/
+Class constructFromCliArgs(Class)(string[] args, out int ret) {
+	assert(args.length > 0);
+
+	Class c;
+
+	static class Helper {
+		this(Class* c) {
+			this.c = c;
+		}
+		Class* c;
+
+		static if(is(typeof(__traits(getMember, Class, "__ctor")) Params == __parameters))
+		int factory(Params p) {
+			*c = new Class(p);
+			return 100;
+		}
+		else static assert(0, "Class did not have a constructor");
+	}
+
+	ret = runCli!Helper([args[0], "factory"] ~ args[1..$], &c);
+	if(ret != 100)
+		return null;
+
+	return c;
+}
+
+///
+unittest {
+	import arsd.cli;
+
+	int main(string[] args) {
+		static class A {
+			this(@Cli(required: true) int a) {
+				assert(a == 4);
+			}
+		}
+		int ret;
+		A a = constructFromCliArgs!A([null, "--a=4"], ret);
+		assert(a !is null); // for this test, the construction must succeed
+
+		// but if it didn't, we should return the error from `main`
+		if(a is null)
+			return ret;
+
+		// can now use `a` here
+
+		return 0;
+	}
+
+	// the `null` here is the program name, args[0] by tradition, then args for the constructor, so the param for `int a`
+	assert(main([null, "--a=4"]) == 0);
 }
 
 /++
@@ -388,6 +461,9 @@ private ExtractedCliArgs[] extractCliArgs(string[] args, bool needsCommandName, 
 	}
 
 	foreach(idx, arg; args) {
+		if(arg is null)
+			continue;
+
 		if(arg == "--") {
 			remainder.values ~= args[idx + 1 .. $];
 			break;
