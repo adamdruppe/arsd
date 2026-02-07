@@ -90,7 +90,7 @@ class Sqlite : Database {
 	this(string filename, int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) {
 		int error = sqlite3_open_v2(toStringz(filename), &db, flags, null);
 		if(error != SQLITE_OK)
-			throw new DatabaseException(this.error());
+			throw new DatabaseConnectionException(this.error());
 	/+
 		int error = sqlite3_open(toStringz(filename), &db);
 		if(error != SQLITE_OK)
@@ -195,7 +195,7 @@ class Sqlite : Database {
 				m[v] = mesg[v];
 
 			sqlite3_free(mesg);
-			throw new DatabaseException("exec " ~ m.idup);
+			throw new SqlException("exec " ~ m.idup);
 		}
 
 		return 0;
@@ -292,7 +292,7 @@ struct Statement {
 
 		this.db = db;
 		if(sqlite3_prepare_v2(db.db, toStringz(sql), cast(int) sql.length, &s, null) != SQLITE_OK)
-			throw new DatabaseException(db.error() ~ " " ~ sql);
+			throw new SqlException(db.error() ~ " " ~ sql);
 	}
 
 	version(sqlite_extended_metadata_available)

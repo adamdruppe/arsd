@@ -2,21 +2,32 @@
 // It's probably godawful, if it works at all.
 /++
 	Implementation of [arsd.database.Database] interface for
-	Microsoft SQL Server, via ODBC.
+	Microsoft SQL Server (among others), via ODBC.
+
+	On Unix, needs the `unixodbc` library.
+
+	History:
+		Originally written November 9, 2011
+
+		Unix support added December 11, 2025.
 +/
 module arsd.mssql;
 
-version(Windows):
-
-pragma(lib, "odbc32");
+version(Windows)
+	pragma(lib, "odbc32");
+else
+	pragma(lib, "odbc");
 
 public import arsd.database;
 
 import std.string;
 import std.exception;
 
-import core.sys.windows.sql;
-import core.sys.windows.sqlext;
+import etc.c.odbc.sql;
+import etc.c.odbc.sqlext;
+
+//import core.sys.windows.sql;
+//import core.sys.windows.sqlext;
 
 ///
 class MsSql : Database {
@@ -38,7 +49,7 @@ class MsSql : Database {
 			SQL_DRIVER_NOPROMPT );
 
 		if ((ret != SQL_SUCCESS_WITH_INFO) && (ret != SQL_SUCCESS))
-			throw new DatabaseException("Unable to connect to ODBC object: " ~ getSQLError(SQL_HANDLE_DBC, conn)); // FIXME: print error
+			throw new DatabaseConnectionException("Unable to connect to ODBC object: " ~ getSQLError(SQL_HANDLE_DBC, conn)); // FIXME: print error
 
 		//query("SET NAMES 'utf8'"); // D does everything with utf8
 	}
@@ -69,7 +80,7 @@ class MsSql : Database {
 
 		returned = SQLExecDirect(statement, cast(ubyte*)sql.ptr, cast(SQLINTEGER) sql.length);
 		if(returned != SQL_SUCCESS)
-			throw new DatabaseException(getSQLError(SQL_HANDLE_STMT, statement));
+			throw new SqlException(getSQLError(SQL_HANDLE_STMT, statement));
 
 		return new MsSqlResult(statement);
 	}

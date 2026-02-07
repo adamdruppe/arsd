@@ -59,10 +59,10 @@ class PostgreSql : Database {
 		this.connectionString = connectionString;
 		conn = PQconnectdb(toStringz(connectionString));
 		if(conn is null)
-			throw new DatabaseException("Unable to allocate PG connection object");
+			throw new DatabaseConnectionException("Unable to allocate PG connection object");
 		if(PQstatus(conn) != CONNECTION_OK) {
 			this.connectionOk = false;
-			throw new DatabaseException(error());
+			throw new DatabaseConnectionException(error());
 		}
 		query("SET NAMES 'utf8'"); // D does everything with utf8
 		this.connectionOk = true;
@@ -139,14 +139,14 @@ class PostgreSql : Database {
 				PQfinish(conn);
 				conn = PQconnectdb(toStringz(connectionString));
 				if(conn is null)
-					throw new DatabaseException("Unable to allocate PG connection object");
+					throw new DatabaseConnectionException("Unable to allocate PG connection object");
 				if(PQstatus(conn) != CONNECTION_OK) {
 					this.connectionOk = false;
-					throw new DatabaseException(error());
+					throw new DatabaseConnectionException(error());
 				}
 				goto retry;
 			}
-			throw new DatabaseException(error());
+			throw new SqlException(error());
 		}
 
 		return new PostgresResult(res);
@@ -433,8 +433,11 @@ extern(C) {
 	void PQclear(PGresult*);
 
 	PGresult* PQprepare(PGconn*, const char* stmtName, const char* query, int nParams, const void* paramTypes);
+	int PQsendPrepare(PGconn*, const char*, const char*, int, const Oid*);
 
 	PGresult* PQexecPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+	int PQsendQueryPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+	int PQsendClosePrepared(PGconn* conn, const char* name);
 
 	int PQresultStatus(PGresult*); // FIXME check return value
 
@@ -447,8 +450,31 @@ extern(C) {
 	size_t PQescapeString (char *to, const char *from, size_t length);
 
 	enum int CONNECTION_OK = 0;
+
+	enum int PGRES_EMPTY_QUERY = 0;
 	enum int PGRES_COMMAND_OK = 1;
 	enum int PGRES_TUPLES_OK = 2;
+	enum int PGRES_COPY_OUT = 3;
+	enum int PGRES_COPY_IN = 4;
+	enum int PGRES_BAD_RESPONSE = 5;
+	enum int PGRES_NONFATAL_ERROR = 6;
+	enum int PGRES_FATAL_ERROR = 7;
+	enum int PGRES_COPY_BOTH = 8;
+	enum int PGRES_SINGLE_TUPLE = 9;
+	enum int PGRES_PIPELINE_SYNC = 10;
+	enum int PGRES_PIPELINE_ABORTED = 11;
+	// looks like chunks was added in pq version 17...
+
+	int PQsetSingleRowMode(PGconn* conn);
+
+	// https://www.postgresql.org/docs/current/libpq-notify.html
+
+	enum int PGRES_POLLING_FAILED = 0;
+	enum int PGRES_POLLING_READING = 1;
+	enum int PGRES_POLLING_WRITING = 2;
+	enum int PGRES_POLLING_OK = 3;
+	PGconn* PQconnectStart(const char* connInfo);
+	int PQconnectPoll(PGconn* conn);
 
 	int PQgetlength(const PGresult *res,
 			int row_number,
@@ -487,7 +513,34 @@ extern(C) {
 
 	char* PQcmdTuples(PGresult *res);
 
+	int PQsendQuery(PGconn* conn, const char* command);
+	int PQsendQueryParams(PGconn* conn, const char* command, int params, const Oid* paramTypes, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+
 	PGresult *PQdescribePrepared(PGconn *conn, const char *stmtName);
+	int PQsendDescribePrepared(PGconn *conn, const char *stmtName);
+
+	PGresult* PQgetResult(PGconn* conn); // call until it returns null
+
+	int PQenterPipelineMode(PGconn* conn); // returns 1 on success
+	int PQexitPipelineMode(PGconn* conn); // ditto
+	PGpipelineStatus PQpipelineStatus(const PGconn* conn);
+	enum PGpipelineStatus {
+		// FIXME: confirm values
+		PQ_PIPELINE_ON,
+		PQ_PIPELINE_OFF,
+		PQ_PIPELINE_ABORTED
+	}
+	int PQpipelineSync(PGconn* conn);
+	int PQsendPipelineSync(PGconn* conn);
+	int PQsendFlushRequest(PGconn* conn);
+
+	int PQconsumeInput(PGconn* conn);
+	int PQisBusy(PGconn* conn);
+
+	int PQsetnonblocking(PGconn* conn, int arg);
+	int PQflush(PGconn* conn); // if returns 1, wait for socket readiness
+
+	int PQsocket(const PGconn* conn); // returns a fd
 }
 
 /*

@@ -200,7 +200,7 @@ class MySql : Database {
 		mysql = enforce!(DatabaseException)(
 			mysql_init(null),
 			"Couldn't init mysql");
-		enforce!(DatabaseException)(
+		enforce!(DatabaseConnectionException)(
 			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), port, null, 0),
 			error());
 
@@ -386,7 +386,7 @@ class MySql : Database {
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 
-		enforce!(DatabaseException)(
+		enforce!(SqlException)(
 			!mysql_query(mysql, toCstring(sql)),
 		error() ~ " :::: " ~ sql);
 

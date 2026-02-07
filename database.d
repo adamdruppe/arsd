@@ -79,17 +79,6 @@ private import arsd.core : LimitedVariant;
 
 ///
 interface Database {
-	/// Actually implements the query for the database. The query() method
-	/// below might be easier to use.
-	ResultSet queryImpl(string sql, Variant[] args...);
-
-	/// Escapes data for inclusion into an sql string literal
-	string escape(string sqlData);
-	/// Escapes binary data for inclusion into a sql string. Note that unlike `escape`, the returned string here SHOULD include the quotes.
-	string escapeBinaryString(const(ubyte)[] sqlData);
-
-	/// query to start a transaction, only here because sqlite is apparently different in syntax...
-	void startTransaction();
 
 	/// Just executes a query. It supports placeholders for parameters
 	final ResultSet query(T...)(string sql, T t) {
@@ -106,29 +95,32 @@ interface Database {
 	}
 
 	final ResultSet query(Args...)(arsd.core.InterpolationHeader header, Args args, arsd.core.InterpolationFooter footer) {
-		import arsd.core;
-		Variant[] vargs;
-		string sql;
-
-		// FIXME: use the new helper functions sqlFromInterpolatedArgs and variantsFromInterpolatedArgs
-		foreach(arg; args) {
-			static if(is(typeof(arg) == InterpolatedLiteral!str, string str)) {
-				sql ~= str;
-			} else static if(is(typeof(arg) == InterpolatedExpression!str, string str)) {
-				// intentionally blank
-			} else static if(is(typeof(arg) == InterpolationHeader) || is(typeof(arg) == InterpolationFooter)) {
-				static assert(0, "Nested interpolations not allowed at this time");
-			} else {
-				sql ~= "?";
-				vargs ~= Variant(arg);
-			}
-		}
-		return queryImpl(sql, vargs);
+		return queryImpl(sqlFromInterpolatedArgs!Args, variantsFromInterpolatedArgs(args));
 	}
-	// see test/dbis.d
 
+	final void withTransaction(scope void delegate() dg) {
+		this.startTransaction();
+		scope(success)
+			this.query("COMMIT");
+		scope(failure)
+			this.query("ROLLBACK");
+		dg();
+	}
+
+	/// query to start a transaction, only here because sqlite is apparently different in syntax...
+	void startTransaction();
+
+	/// Actually implements the query for the database. The query() method
+	/// below might be easier to use.
+	ResultSet queryImpl(string sql, Variant[] args...);
+
+	/// Escapes data for inclusion into an sql string literal
+	string escape(string sqlData);
+	/// Escapes binary data for inclusion into a sql string. Note that unlike `escape`, the returned string here SHOULD include the quotes.
+	string escapeBinaryString(const(ubyte)[] sqlData);
 	/// turns a systime into a value understandable by the target database as a timestamp to be concated into a query. so it should be quoted and escaped etc as necessary
 	string sysTimeToValue(SysTime);
+	// see test/dbis.d
 
 	/++
 		Return true if the connection appears to be alive
@@ -144,7 +136,6 @@ interface Database {
 
 	*/
 }
-import std.stdio;
 
 // Added Oct 26, 2021
 Row queryOneRow(string file = __FILE__, size_t line = __LINE__, T...)(Database db, string sql, T t) {
@@ -236,6 +227,16 @@ struct DatabaseDatum {
 
 	/// ditto
 	string toArsdJsVar() { return this.toString; }
+
+	/++
+		Explicit indicator that you want a NULL value for the database.
+
+		History:
+			Added December 8, 2025
+	+/
+	static DatabaseDatum NULL() {
+		return DatabaseDatum();
+	}
 }
 
 unittest {
@@ -245,6 +246,8 @@ unittest {
 	assert(to!long(db) == 1234567);
 	assert(to!int(DatabaseDatum("1234567")) == 1234567);
 	assert(to!long(DatabaseDatum("1234567")) == 1234567);
+
+	assert(DatabaseDatum.NULL.isNull());
 }
 
 /++
@@ -873,12 +876,58 @@ class ConnectionPool(alias connectionFactory) : ConnectionPoolBase {
 	}
 }
 
+/++
+	Parent class of various forms of errors you can get when using the database.d library. It may be thrown generically when other details are not provided by a driver.
+
+	See_Also:
+		[DatabaseConnectionException], [SqlException], [DataUsageException]
+
+	History:
+		Added prior to July 2011.
++/
 class DatabaseException : Exception {
 	this(string msg, string file = __FILE__, size_t line = __LINE__) {
 		super(msg, file, line);
 	}
 }
 
+/++
+	Thrown when something is wrong with your connection to the database server.
+
+	History:
+		Added December 11, 2025
++/
+class DatabaseConnectionException : DatabaseException {
+	this(string msg, string file = __FILE__, size_t line = __LINE__) {
+		super(msg, file, line);
+	}
+}
+
+/++
+	Thrown when your sql query has reached the database server, but failed to run there for some reason.
+
+	It is possible for this to be thrown on a connection problem in a query too, if the driver didn't differentiate the cause.
+
+	History:
+		Added December 11, 2025
++/
+class SqlException : DatabaseException {
+	this(string msg, string file = __FILE__, size_t line = __LINE__) {
+		super(msg, file, line);
+	}
+}
+
+/++
+	Thrown when you use result data incorrectly. These almost always are preventable, but may be the result of a schema change and a `select *` query too.
+
+	History:
+		Added December 11, 2025
++/
+class DataUsageException : DatabaseException {
+	this(string msg, string file = __FILE__, size_t line = __LINE__) {
+		super(msg, file, line);
+	}
+}
 
 
 abstract class SqlBuilder { }
@@ -1564,7 +1613,7 @@ class DataObject {
 
 	string opIndex(string field, string file = __FILE__, size_t line = __LINE__) {
 		if(field !in fields)
-			throw new DatabaseException("No such field in data object: " ~ field, file, line);
+			throw new DataUsageException("No such field in data object: " ~ field, file, line);
 		return fields[field];
 	}
 
