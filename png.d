@@ -742,6 +742,8 @@ PNG* readPng(in ubyte[] data) {
 	auto p = new PNG;
 
 	p.length = cast(int) data.length;
+	if(p.length < 8)
+		throw new Exception("not a png, too short");
 	p.magic[0..8] = data[0..8];
 
 	if(p.magic != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
