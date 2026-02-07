@@ -2,6 +2,8 @@
 // for VT on Windows P s = 1 8 → Report the size of the text area in characters as CSI 8 ; height ; width t
 // could be used to have the TE volunteer the size
 
+// echo -e '\033]11;?\007'; sleep 1 # gets the default background color
+
 // FIXME: have some flags or formal api to set color to vtsequences even on pipe etc on demand.
 
 
@@ -758,6 +760,20 @@ struct Terminal {
 		} else static assert(0);
 	}
 
+	private bool outputtingToATty() {
+		version(Posix)
+			return (fdOut != 1 || stdoutIsTerminal);
+		else
+			return stdoutIsTerminal;
+	}
+
+	private bool inputtingFromATty() {
+		version(Posix)
+			return (fdIn != 0 || stdinIsTerminal);
+		else
+			return stdinIsTerminal;
+	}
+
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
@@ -771,7 +787,7 @@ struct Terminal {
 
 		// we're not writing to a terminal at all!
 		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
-		if(!stdoutIsTerminal || !stdinIsTerminal)
+		if(!outputtingToATty || !inputtingFromATty)
 			return false;
 
 		import std.process;
@@ -951,7 +967,7 @@ struct Terminal {
 
 	// Looks up a termcap item and tries to execute it. Returns false on failure
 	bool doTermcap(T...)(string key, T t) {
-		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing && !stdoutIsTerminal)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing && !outputtingToATty)
 			return false;
 
 		import std.conv;
@@ -1367,6 +1383,7 @@ struct Terminal {
 			this.usingDirectEmulator = false;
 
 		if(usingDirectEmulator) {
+			initNoColor();
 			version(Win32Console)
 				UseWin32Console = false;
 			UseVtSequences = true;
@@ -1464,6 +1481,7 @@ struct Terminal {
 
 	version(Win32Console)
 	void windowsInitialize(ConsoleOutputType type) {
+		initNoColor();
 		_initialized = true;
 		if(UseVtSequences) {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -1499,6 +1517,7 @@ struct Terminal {
 
 	version(Posix)
 	private void posixInitialize(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		initNoColor();
 		this.fdIn = fdIn;
 		this.fdOut = fdOut;
 		this.getSizeOverride = getSizeOverride;
@@ -1528,7 +1547,7 @@ struct Terminal {
 	}
 
 	private void goCellular() {
-		if(!usingDirectEmulator && !Terminal.stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
+		if(!usingDirectEmulator && !Terminal.outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("Cannot go to cellular mode with redirected output");
 
 		if(UseVtSequences) {
@@ -1564,6 +1583,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			clear();
 		}
+
+		cursorPositionDirty = false;
 	}
 
 	private void goLinear() {
@@ -1737,6 +1758,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_currentForegroundRGB = foreground;
 		_currentBackgroundRGB = background;
 
+		if(noColor)
+			return false;
+
 		if(UseVtSequences) {
 			// FIXME: if the terminal reliably does support 24 bit color, use it
 			// instead of the round off. But idk how to detect that yet...
@@ -1788,9 +1812,33 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		return false;
 	}
 
+	/++
+		True if no color is requested. Set if `NO_COLOR` env var is set by the Terminal constructor, then left alone by the library after that.
+		You can turn it back on if, for example, the user specifically requested it with a command line argument.
+
+		Please note, if not outputting to a tty, it never sends color. This may change in future versions.
+
+		See_Also:
+			[color], [setTrueColor] both will be no-ops if this is `true`.
+
+		Standards:
+			https://no-color.org/
+
+		History:
+			Added January 29, 2026
+	+/
+	bool noColor;
+
+	private void initNoColor() {
+		import std.process;
+		noColor = environment.get("NO_COLOR", "").length > 0;
+	}
+
 	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
-		if(!usingDirectEmulator && !stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
+		if(noColor)
+			return;
+		if(!usingDirectEmulator && !outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			return;
 		if(force != ForceOption.neverSend) {
 			if(UseVtSequences) {
@@ -2020,7 +2068,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		if(!usingDirectEmulator && stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing) {
+		if(!usingDirectEmulator && outputtingToATty && type != ConsoleOutputType.minimalProcessing) {
 			if(UseVtSequences)
 				writeStringRaw("\033[0m");
 			else version(Win32Console) if(UseWin32Console) {
@@ -2039,6 +2087,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	// FIXME: add moveRelative
+
+	/++
+		If you need precise cursorX and cursorY locations, setting this to `true` will cause
+		the library to ask the terminal instead of trusting its own internal counter. This causes
+		a significant performance degradation, but ensures you have accurate recording when using
+		East Asian characters, emoji, and other output that may not be predicted correctly by
+		terminal.d, or may not be supported across terminal emulators.
+
+		History:
+			Added December 18, 2025. It was on by default for a while between 2022 and 2025,
+			but is now off until you opt in.
+	+/
+	public bool cursorPositionPrecise = false;
 
 	/++
 		The current cached x and y positions of the output cursor. 0 == leftmost column for x and topmost row for y.
@@ -2256,7 +2317,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(getSizeOverride)
 			return getSizeOverride();
 
-		if(!usingDirectEmulator && !stdoutIsTerminal && type != ConsoleOutputType.minimalProcessing)
+		if(!usingDirectEmulator && !outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("unable to get size of non-terminal");
 		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
@@ -2359,7 +2420,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	+/
         void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
 		writePrintableString_(s, force);
-		cursorPositionDirty = true;
+		if(cursorPositionPrecise)
+			cursorPositionDirty = true;
         }
 
 	void writePrintableString_(const(char)[] s, ForceOption force = ForceOption.automatic) {
@@ -2561,7 +2623,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	+/
 	string getline(string prompt = null, dchar echoChar = dchar_invalid, string prefilledData = null) {
 		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
-		if(!stdoutIsTerminal || !stdinIsTerminal) {
+		if(!outputtingToATty || !inputtingFromATty) {
 			import std.stdio;
 			import std.string;
 			return readln().chomp;
@@ -2646,7 +2708,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 	private void updateCursorPosition_impl() {
 		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
-		if(!stdinIsTerminal || !stdoutIsTerminal)
+		if(!inputtingFromATty || !outputtingToATty)
 			throw new Exception("cannot update cursor position on non-terminal");
 		auto terminal = &this;
 		version(Win32Console) {
@@ -7668,8 +7730,10 @@ mixin template LineGetterConstructors() {
 	}
 }
 
-/// This is a line getter that customizes the tab completion to
-/// fill in file names separated by spaces, like a command line thing.
+/++
+	This is a line getter that customizes the tab completion to
+	fill in file names separated by spaces, like a command line thing.
++/
 class FileLineGetter : LineGetter {
 	mixin LineGetterConstructors;
 
@@ -7683,13 +7747,33 @@ class FileLineGetter : LineGetter {
 	}
 
 	override protected string[] tabComplete(in dchar[] candidate, in dchar[] afterCursor) {
-		import std.file, std.conv, std.algorithm, std.string;
+		import arsd.core;
+
+		char[120] buffer;
+		auto candidateUtf8 = transcodeUtf(candidate, buffer[]);
+
+		auto fp = FilePath(cast(string) candidateUtf8);
+		auto prefix = fp.directoryName;
+		if(searchDirectory != ".")
+			fp = fp.makeAbsolute(FilePath(searchDirectory));
+
+		auto lookIn = fp.directoryName;
+		if(lookIn is null)
+			lookIn = searchDirectory;
 
 		string[] list;
-		foreach(string name; dirEntries(searchDirectory, SpanMode.breadth)) {
+		try
+		getFiles(lookIn, (string name, bool isDirectory) {
+			/+
 			// both with and without the (searchDirectory ~ "/")
 			list ~= name[searchDirectory.length + 1 .. $];
 			list ~= name[0 .. $];
+			+/
+			list ~= cast(string) prefix ~ name ~ (isDirectory ? "/" : "");
+		});
+		catch(Exception e) {
+			// just carry on, not important if it fails
+			logSwallowedException(e);
 		}
 
 		return list;
@@ -7927,6 +8011,27 @@ struct ScrollbackBuffer {
 		scrollbackPosition_ = scrollTopPosition(width, height);
 	}
 
+	/++
+		If you add [LineComponent]s, you can give them a `markId` argument. This will let you scroll back to that location.
+
+		History:
+			Added December 17, 2025
+	+/
+	void scrollToMark(int markId, int offset = 0) {
+		/+
+		private int[int] marks;
+		if(markId !in marks)
+			return; // throw new Exception("unknown mark");
+		scrollbackPosition_ = marks[markId] + offset;
+		if(scrollbackPosition_ < 0)
+			scrollbackPosition_ = 0;
+		+/
+
+		scrollbackPosition_ = scrollTopPosition(width, height, markId) + offset;
+		if(scrollbackPosition_ < 0)
+			scrollbackPosition_ = 0;
+	}
+
 
 	/++
 		You can construct these to get more control over specifics including
@@ -7946,23 +8051,26 @@ struct ScrollbackBuffer {
 			RGB backgroundRgb;
 		}
 		private bool delegate() onclick; // return true if you need to redraw
+		private int markId; // added Dec 17, 2025
 
 		// 16 color ctor
-		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null) {
+		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null, int markId = 0) {
 			this.text = text;
 			this.color = color;
 			this.background = background;
 			this.onclick = onclick;
 			this.isRgb = false;
+			this.markId = markId;
 		}
 
 		// true color ctor
-		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null) {
+		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null, int markId = 0) {
 			this.text = text;
 			this.colorRgb = colorRgb;
 			this.backgroundRgb = backgroundRgb;
 			this.onclick = onclick;
 			this.isRgb = true;
+			this.markId = markId;
 		}
 	}
 
@@ -8068,7 +8176,7 @@ struct ScrollbackBuffer {
 
 		Please note that this is O(n) with the length of the scrollback buffer.
 	+/
-	int scrollTopPosition(int width, int height) {
+	int scrollTopPosition(int width, int height, int markId = -1) {
 		int lineCount;
 
 		foreach_reverse(line; lines) {
@@ -8086,6 +8194,8 @@ struct ScrollbackBuffer {
 					else
 						written++;
 				}
+				if(markId >= 0 && component.markId == markId)
+					break;
 			}
 			lineCount++;
 		}
@@ -8103,6 +8213,11 @@ struct ScrollbackBuffer {
 	void drawInto(Terminal* terminal, in int x = 0, in int y = 0, int width = 0, int height = 0) {
 		if(lines.length == 0)
 			return;
+
+		auto old = terminal.cursorPositionPrecise;
+		terminal.cursorPositionPrecise = false;
+		scope(exit)
+			terminal.cursorPositionPrecise = old;
 
 		if(width == 0)
 			width = terminal.width;
