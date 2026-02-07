@@ -19,7 +19,7 @@
 module arsd.calendar;
 
 import arsd.core;
-
+import core.time;
 import std.datetime;
 
 /++
@@ -72,7 +72,7 @@ SimplifiedUtcTimestamp parseTimestampString(string when, SysTime relativeTo) /*p
 			// FIXME: what about midnight?
 			int multiplier = 3600;
 			foreach(part; word.split(":")) {
-				import std.conv;
+				import arsd.conv;
 				secondsCount += multiplier * to!int(part);
 				multiplier /= 60;
 			}
@@ -80,7 +80,7 @@ SimplifiedUtcTimestamp parseTimestampString(string when, SysTime relativeTo) /*p
 			if(wasPm)
 				secondsCount += 12 * 3600;
 		} else if(word.isNumeric()) {
-			import std.conv;
+			import arsd.conv;
 			bufferedNumber = to!int(word);
 		} else if(word == "seconds" || word == "second") {
 			addSeconds(word, bufferedNumber, 1);
@@ -108,7 +108,7 @@ SimplifiedUtcTimestamp parseTimestampString(string when, SysTime relativeTo) /*p
 }
 
 unittest {
-	auto testTime = SysTime(DateTime(Date(2024, 07, 03), TimeOfDay(10, 0, 0)), UTC());
+	auto testTime = SysTime(std.datetime.DateTime(std.datetime.Date(2024, 07, 03), TimeOfDay(10, 0, 0)), UTC());
 	void test(string what, string expected) {
 		auto result = parseTimestampString(what, testTime).toString;
 		assert(result == expected, result);
@@ -119,6 +119,68 @@ unittest {
 	test("in 5 minutes, 45 seconds", "2024-07-03T10:05:45Z");
 	test("at 5:44", "2024-07-03T05:44:00Z");
 	test("at 5:44pm", "2024-07-03T17:44:00Z");
+}
+
+private alias UErrorCode = int;
+private enum UErrorCode U_ZERO_ERROR = 0;
+private bool U_SUCCESS(UErrorCode code) { return code <= U_ZERO_ERROR; }
+/+
+int ucal_getWindowsTimeZoneID(
+	const wchar* od, int len,
+	wchar* winIdBuffer, int winIdLength,
+	UErrorCode* status);
++/
+private extern(C) alias TF = int function(const wchar*, int, wchar*, int, UErrorCode*);
+
+/++
+	Gets a Phobos TimeZone object for the given tz-style location, including on newer Windows computers using their built in database.
+
+	History:
+		Added December 13, 2025
+
+	See_Also:
+		https://devblogs.microsoft.com/oldnewthing/20210527-00/?p=105255
++/
+immutable(std.datetime.TimeZone) getTimeZoneForLocation(string location) {
+	version(Windows) {
+		import core.sys.windows.windows;
+		auto handle = LoadLibrary("icu.dll");
+		if(handle is null)
+			throw new WindowsApiException("LoadLibrary", GetLastError());
+		scope(exit)
+			FreeLibrary(handle);
+		auto addr = GetProcAddress(handle, "ucal_getWindowsTimeZoneID");
+		if(addr is null)
+			throw new WindowsApiException("GetProcAddress", GetLastError());
+
+		auto fn = cast(TF) addr;
+
+		WCharzBuffer wloc = location;
+
+		wchar[128] buffer = void;
+		UErrorCode status;
+		auto result = fn(wloc.ptr, -1, buffer.ptr, cast(int) buffer.length, &status);
+		if(U_SUCCESS(status)) {
+			buffer[result] = 0;
+			string converted = makeUtf8StringFromWindowsString(buffer[0 .. result]);
+			return WindowsTimeZone.getTimeZone(converted);
+		} else {
+			throw new Exception("failure in time zone lookup");
+		}
+	} else {
+		return PosixTimeZone.getTimeZone(location);
+	}
+}
+version(none)
+unittest {
+	getTimeZoneForLocation("America/New_York");
+}
+
+/++
+	Does an efficient search to determine which iteration of the interval on the given date comes closest to the target point without going past it.
++/
+int findNearestIterationTo(PackedDateTime targetPoint, PackedDateTime startPoint, PackedInterval pi) {
+	return 0;
 }
 
 version(none)
@@ -137,8 +199,9 @@ class Calendar {
 
 +/
 class CalendarEvent {
-	DateWithOptionalTime start;
-	DateWithOptionalTime end;
+	string tzlocation;
+	PackedDateTime start;
+	PackedDateTime end;
 
 	Recurrence recurrence;
 
@@ -148,37 +211,32 @@ class CalendarEvent {
 
 	string uid;
 
-	this(DateWithOptionalTime start, DateWithOptionalTime end, Recurrence recurrence = Recurrence.none) {
+	this(PackedDateTime start, PackedDateTime end, Recurrence recurrence = Recurrence.none) {
 		this.start = start;
 		this.end = end;
 		this.recurrence = recurrence;
 	}
 }
 
-/++
-
-+/
-struct DateWithOptionalTime {
-	string tzlocation;
-	DateTime dt;
-	bool hadTime;
-
-	@implicit
-	this(DateTime dt) {
-		this.dt = dt;
-		this.hadTime = true;
-	}
-
-	@implicit
-	this(Date d) {
-		this.dt = DateTime(d, TimeOfDay.init);
-		this.hadTime = false;
-	}
-
-	this(in char[] s) {
-		// FIXME
-	}
+/+
+struct Date {
+	int year;
+	int month;
+	int day;
 }
+
+struct Time {
+	int hour;
+	int minute;
+	int second;
+	int fractionalSeconds;
+}
+
+struct DateTime {
+	Date date;
+	Time time;
+}
++/
 
 /++
 
@@ -189,33 +247,75 @@ struct Recurrence {
 	}
 }
 
-/+
-
 enum FREQ {
-
+	SECONDLY,
+	MINUTELY,
+	HOURLY,
+	DAILY,
+	WEEKLY,
+	MONTHLY,
+	YEARLY,
 }
 
+PackedInterval packedIntervalForRruleFreq(FREQ freq, int interval) {
+	final switch(freq) {
+		case FREQ.SECONDLY:
+			return PackedInterval(0, 0, 1000 * interval);
+		case FREQ.MINUTELY:
+			return PackedInterval(0, 0, 60 * 1000 * interval);
+		case FREQ.HOURLY:
+			return PackedInterval(0, 0, 60 * 60 * 1000 * interval);
+		case FREQ.DAILY:
+			return PackedInterval(0, 1 * interval, 0);
+		case FREQ.WEEKLY:
+			return PackedInterval(0, 7 * interval, 0);
+		case FREQ.MONTHLY:
+			return PackedInterval(1 * interval, 0, 0);
+		case FREQ.YEARLY:
+			return PackedInterval(12 * interval, 0, 0);
+	}
+}
+
+// https://datatracker.ietf.org/doc/html/rfc5545
 struct RRULE {
 	FREQ freq;
 	int interval;
 	int count;
-	DAY wkst;
+
+	DAY wkst; // this determines, i think, how you determine how often a thing is allowed to occur. so if wkstart == wednesday and you set every other tuesday/thursday starting from a tuesday... it starts then, then +2 weeks for the next. but when you get to wednesday, it reset the counter figuring one happened last week, so it'll be another wek. thus it alternates tue/thurs each week. kinda nuts.
+
+	alias DAY = int;
+	static struct DAYSET {
+		ulong firstBits;
+		ushort moreBits;
+	}
+	alias MONTHDAYSET = ulong;
+	alias HOURSET = uint;
+	alias MONTHDSET = ushort;
+	alias WEEKSET = ulong;
+
+	// if there's a BYsomething available, that changes the start time for the interval. multiple by things make multiple intervals.
+
+	// i don't think it ever really filters.
 
 	// these can be negative too indicating the xth from the last...
-	DAYSET byday; // ubyte bitmask... except it can also have numbers atached wtf
-
+	DAYSET byday; // ubyte bitmask... except it can also have numbers attached wtf.
 	// so like `BYDAY=-2MO` means second-to-last monday
+	// we can prolly have anything from -5 to +5 for each of the 7 days. 0 means all of them. and you can have multiple of any.
+	// but who would ever say -5 lol? i guess that would be the first day in a month where there are 5.
+	// so that's 11 numbers * 7 days = 77 bits.
 
-	MONTHDAYSET byMonthDay; // uint bitmask
+	MONTHDAYSET byMonthDay; // uint bitmask. can also be negative numbers so probably two.. or just a ulong.
 	HOURSET byHour; // uint bitmask
 	MONTHDSET byMonth; // ushort bitmask
 
-	WEEKSET byWeekNo; // ulong bitmask
+	WEEKSET byWeekNo; // ulong bitmask. can also be negative.
 
-	int BYSETPOS;
+	short[4] BYSETPOS; // can be like -365 inclusive to +365. you can have multiple of these but i don't think packing it is useful. just a sorted array prolly... if there's more than 4, meh, wtf.
+
+	PackedDateTime DTSTART;
+	PackedDateTime UNTIL; // inclusive
 }
-
-+/
 
 struct ICalParser {
 	// if the following line starts with whitespace, remove the cr/lf/ and that ONE ws char, then add to the previous line
