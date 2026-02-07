@@ -3,6 +3,8 @@
 
 FIXME: fix `(new A()).b`
 
+FIXME: named params!!
+
 
 	FIXME: i kinda do want a catch type filter e.g. catch(Exception f)
 		and perhaps overloads

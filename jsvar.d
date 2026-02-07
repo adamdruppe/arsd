@@ -583,6 +583,18 @@ unittest {
 
 ///
 struct var {
+
+	/++
+		When calling var.toJson or var.toJsonValue, null members of objects are usually skipped entirely.  Setting this to true includes them, false excludes them.
+
+		Note this is global to a thread, not to a json object.
+
+		History:
+			Added December 6, 2025. Before, they were never included, so this being default `true` is a breaking change.
+	+/
+	static bool includeExplicitNullsWhenConvertingToJson = true;
+
+
 	@implicit
 	public this(T)(T t) {
 		static if(is(T == var))
@@ -1138,9 +1150,12 @@ struct var {
 			case Type.Floating:
 				static if(isFloatingPoint!T || isIntegral!T)
 					return to!T(this._payload._floating);
-				else static if(isSomeString!T)
-					return to!T(this._payload._floating);
-				else
+				else static if(isSomeString!T) {
+					// phobos this does insufficient precision, even money amounts truncated
+					//return to!T(this._payload._floating);
+					import arsd.conv;
+					return arsd.conv.to!T(this._payload._floating);
+				} else
 					return T.init;
 			case Type.String:
 				static if(__traits(compiles, to!T(this._payload._string))) {
@@ -1963,7 +1978,12 @@ class PrototypeObject {
 				continue;
 			if(v.payloadType == var.Type.Object) {
 				// I'd love to get the json value out but idk. FIXME
-				if(v._payload._object is null) continue;
+				if(v._payload._object is null) {
+					if(var.includeExplicitNullsWhenConvertingToJson) {
+						tmp[k] = null;
+					}
+					continue;
+				}
 				if(auto wno = cast(WrappedNativeObject) v._payload._object) {
 					auto obj = wno.getObject();
 					if(obj is null)
