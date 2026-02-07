@@ -3659,6 +3659,12 @@ version(Posix) {
 			core.sys.posix.unistd.execv(argv[0], argv);
 		} else {
 			childrenAlive = 1;
+			import arsd.core;
+			auto ep = new ExternalProcess(pid);
+			ep.oncomplete = (ep) {
+				childrenAlive = 0;
+				ICoreEventLoop.exitApplication();
+			};
 			masterFunc(master);
 		}
 	}
@@ -4202,7 +4208,9 @@ mixin template PtySupport(alias resizeHelper) {
 	} else version(Posix) {
 		void readyToRead(int fd) {
 			import core.sys.posix.unistd;
-			ubyte[4096] buffer;
+			static ubyte[] buffer;
+			if(buffer is null)
+				buffer = new ubyte[](1024 * 32);
 
 			// the count is to limit how long we spend in this loop
 			// when it runs out, it goes back to the main event loop
@@ -4219,7 +4227,7 @@ mixin template PtySupport(alias resizeHelper) {
 			// it'd save bandwidth
 
 			while(--cnt) {
-				auto len = read(fd, buffer.ptr, 4096);
+				auto len = read(fd, buffer.ptr, buffer.length);
 				if(len < 0) {
 					import core.stdc.errno;
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
