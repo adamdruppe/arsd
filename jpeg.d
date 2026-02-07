@@ -3563,74 +3563,7 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
     }
   }
 
-  static void rotate180(TrueColorImage img) {
-	size_t cursor = img.imageData.colors.length - 1;
-
-	foreach(i, px; img.imageData.colors) {
-		img.imageData.colors[i] = img.imageData.colors[cursor];
-		img.imageData.colors[cursor] = px;
-
-		cursor -= 1;
-		if(i == cursor)
-			break;
-	}
-  }
-
-  static void mirrorHorizontally(TrueColorImage img) {
-  	if(img.width < 2)
-		return;
-  	foreach(row; 0 .. img.height) {
-		auto off1 = row * img.width;
-		auto off2 = off1 + img.width - 1;
-
-		while(off1 < off2) {
-			auto px = img.imageData.colors[off1];
-			img.imageData.colors[off1] = img.imageData.colors[off2];
-			img.imageData.colors[off2] = px;
-
-			off1++;
-			off2--;
-		}
-	}
-  }
-
-  static void mirrorVertically(TrueColorImage img) {
-  	if(img.height < 2)
-		return;
-  	foreach(column; 0 .. img.width) {
-		auto off1 = column;
-		auto off2 = img.imageData.colors.length - img.width + off1;
-
-		while(off1 < off2) {
-			auto px = img.imageData.colors[off1];
-			img.imageData.colors[off1] = img.imageData.colors[off2];
-			img.imageData.colors[off2] = px;
-
-			off1 += img.width;
-			off2 -= img.width;
-		}
-	}
-  }
-
-
-  static TrueColorImage rotate90(const TrueColorImage img) {
-	auto rotatedImage = new TrueColorImage(img.height, img.width); // swapped due to rotation
-	const area = img.imageData.colors.length;
-	const rowLength = img.height;
-	ptrdiff_t cursor = -1;
-
-	foreach(px; img.imageData.colors) {
-		cursor += rowLength;
-		if(cursor > area) {
-			cursor -= (area + 1);
-		}
-
-		rotatedImage.imageData.colors[cursor] = px;
-	}
-
-	return rotatedImage;
-  }
-
+  import arsd.color;
   if(decoder.autoRotateBasedOnExifOrientation && img.imageData.colors.length)
   switch(decoder.orientation) {
   	case 0:
@@ -3639,35 +3572,35 @@ public MemoryImage readJpegFromStream (scope JpegStreamReadFunc rfn) {
 	break;
 	case 2:
 		// mirror horizontal
-		mirrorHorizontally(img);
+		ImageTransforms.mirrorHorizontally(img);
 	break;
 	case 3:
 		// rotate 180
-		rotate180(img);
+		ImageTransforms.rotate180(img);
 	break;
 	case 4:
 		// mirror vertical
-		mirrorVertically(img);
+		ImageTransforms.mirrorVertically(img);
 	break;
 	case 5:
 		// mirror horizontal and rotate 270 CW
-		mirrorHorizontally(img);
-		rotate180(img);
-		img = rotate90(img);
+		ImageTransforms.mirrorHorizontally(img);
+		ImageTransforms.rotate180(img);
+		img = ImageTransforms.rotate90(img);
 	break;
 	case 6:
 		// rotate 90 CW
-		img = rotate90(img);
+		img = ImageTransforms.rotate90(img);
 	break;
 	case 7:
 		// mirror horizontal and rotate 90 CW
-		mirrorHorizontally(img);
-		img = rotate90(img);
+		ImageTransforms.mirrorHorizontally(img);
+		img = ImageTransforms.rotate90(img);
 	break;
 	case 8:
 		// rotate 270 CW aka 90 CCW
-		rotate180(img);
-		img = rotate90(img);
+		ImageTransforms.rotate180(img);
+		img = ImageTransforms.rotate90(img);
 	break;
 
 	default:

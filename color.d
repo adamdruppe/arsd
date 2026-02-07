@@ -1977,6 +1977,22 @@ struct Size {
 	}
 }
 
+/+
+/++
+	History:
+		Added December 28, 2025
++/
+struct Point3f {
+	float x = 0.0;
+	float y = 0.0;
+	float z = 0.0;
+
+	Point opCast(T: Point)() const {
+		return Point(cast(int) x, cast(int) y);
+	}
+}
++/
+
 /++
 	Calculates the linear offset of a point
 	from the start (0/0) of a rectangle.
@@ -2271,6 +2287,90 @@ void floodFill(T)(
 		floodFill(what, width, height, target, replacement,
 			x, y + 1, additionalCheck);
 	+/
+}
+
+/++
+	A container for some basic image transform functions.
+
+	Note that the ones that return `void` modify the image in place, and the others return a new image, thus taking the original as `const`.
+	You may want to call [MemoryImage.clone] on the `void` returning ones if you want to keep the original.
+
+	See_Also:
+		[arsd.imageresize]
+
+	History:
+		Added January 7, 2026 (function impls were previously private inside [arsd.jpeg])
++/
+struct ImageTransforms {
+
+	static void rotate180(TrueColorImage img) {
+		size_t cursor = img.imageData.colors.length - 1;
+
+		foreach(i, px; img.imageData.colors) {
+			img.imageData.colors[i] = img.imageData.colors[cursor];
+			img.imageData.colors[cursor] = px;
+
+			cursor -= 1;
+			if(i == cursor)
+				break;
+		}
+	}
+
+	static void mirrorHorizontally(TrueColorImage img) {
+		if(img.width < 2)
+			return;
+		foreach(row; 0 .. img.height) {
+			auto off1 = row * img.width;
+			auto off2 = off1 + img.width - 1;
+
+			while(off1 < off2) {
+				auto px = img.imageData.colors[off1];
+				img.imageData.colors[off1] = img.imageData.colors[off2];
+				img.imageData.colors[off2] = px;
+
+				off1++;
+				off2--;
+			}
+		}
+	}
+
+	static void mirrorVertically(TrueColorImage img) {
+		if(img.height < 2)
+			return;
+		foreach(column; 0 .. img.width) {
+			auto off1 = column;
+			auto off2 = img.imageData.colors.length - img.width + off1;
+
+			while(off1 < off2) {
+				auto px = img.imageData.colors[off1];
+				img.imageData.colors[off1] = img.imageData.colors[off2];
+				img.imageData.colors[off2] = px;
+
+				off1 += img.width;
+				off2 -= img.width;
+			}
+		}
+	}
+
+
+	static TrueColorImage rotate90(const TrueColorImage img) {
+		auto rotatedImage = new TrueColorImage(img.height, img.width); // swapped due to rotation
+		const area = img.imageData.colors.length;
+		const rowLength = img.height;
+		ptrdiff_t cursor = -1;
+
+		foreach(px; img.imageData.colors) {
+			cursor += rowLength;
+			if(cursor > area) {
+				cursor -= (area + 1);
+			}
+
+			rotatedImage.imageData.colors[cursor] = px;
+		}
+
+		return rotatedImage;
+	}
+
 }
 
 // for scripting, so you can tag it without strictly needing to import arsd.jsvar
