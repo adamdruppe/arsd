@@ -2731,7 +2731,7 @@ package string decodeUriComponent(string s, bool translatePlusToSpace = false) {
 			if(idx + 2 >= s.length)
 				throw ArsdException!"Invalid percent-encoding"("End of string reached", idx, s);
 
-			n ~= (hexDecode(s[idx + 1]) << 4) | hexDecode(s[idx + 2]);
+			n ~= cast(char) ((hexDecode(s[idx + 1]) << 4) | hexDecode(s[idx + 2]));
 
 			previous = idx + 3;
 		} else if(translatePlusToSpace && ch == '+') {
@@ -2761,6 +2761,8 @@ unittest {
 
 	assert(decodeUriComponent("+") == "+");
 	assert(decodeUriComponent("+", true) == " ");
+
+	assert(decodeUriComponent("%C3%A4") == "ä");
 }
 
 public auto toDelegate(T)(T t) {
@@ -11076,7 +11078,7 @@ debug void dump(T...)(T t, string file = __FILE__, size_t line = __LINE__) {
 private string makeString(scope char[] buffer) @safe {
 	return buffer.idup;
 }
-private string makeStringCasting(scope return char[] buffer) @system @nogc nothrow pure {
+private string makeStringCasting(scope /*return*/ char[] buffer) @system @nogc nothrow pure {
 	return cast(string) buffer;
 }
 private string actuallyWriteToStdout(scope char[] buffer) @safe {
