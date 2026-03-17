@@ -247,7 +247,11 @@ version(Emscripten)  {
 
 	import core.sys.darwin.sys.event;
 } else version(iOS) {
-	version=Arsd_core_dispatch;
+	version(ArsdNoCocoa) {
+		version=Arsd_core_kqueue;
+	} else {
+		version=Arsd_core_dispatch;
+	}
 
 	import core.sys.darwin.sys.event;
 }

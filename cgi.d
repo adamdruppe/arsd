@@ -6599,6 +6599,8 @@ version(Posix) {
 void startAddonServer()(string arg) {
 	version(OSX) {
 		assert(0, "Not implemented");
+	} else version(iOS) {
+		assert(0, "Not implemented");
 	} else version(linux) {
 		import core.sys.posix.unistd;
 		pid_t pid;
