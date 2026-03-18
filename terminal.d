@@ -5719,7 +5719,10 @@ class LineGetter {
 					terminal.doTermcap("te");
 				}
 			}
-			version(Posix) {
+			version(iOS)
+			{
+				return null;
+			} else version(Posix) {
 				import std.stdio;
 				// need to go to the parent terminal jic we're in an embedded terminal with redirection
 				terminal.write(" !! Editor may be in parent terminal !!");
