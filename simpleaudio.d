@@ -383,7 +383,7 @@ class DummySample : SampleController {
 	void seek(float where) {}
 }
 
-private final class SampleControlFlags : SampleController {
+final class SampleControlFlags : SampleController {
 	import arsd.core : EnableSynchronization;
 	mixin EnableSynchronization;
 

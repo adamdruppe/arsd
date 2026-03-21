@@ -1540,6 +1540,11 @@ class DataObject {
 		return val;
 	}
 
+	void setFromAA(string[string] aa) {
+		foreach(k, v; aa)
+			this[k] = v;
+	}
+
 	this(Database db, string[string] res, Tuple!(string, string)[string] mappings) {
 		this.db = db;
 		this.mappings = mappings;

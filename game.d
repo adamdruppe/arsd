@@ -94,6 +94,8 @@
 	[GameHelperBase.keyboardState] and (FIXME: expose mouse). Touch events are not implemented at this time and I have
 	no timetable for when they will be, but I do want to add them at some point.
 
+	FIXME: keep a log of input events in between updates.
+
 	The SNES controller is great if your game can work with it because it will automatically map to various gamepads
 	as well as to the standard computer keyboard. This gives the user a lot of flexibility in how they control the game.
 	If it doesn't though, you can try the other models. However, I don't recommend you try to mix them in the same game mode,

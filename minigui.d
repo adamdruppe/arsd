@@ -8065,6 +8065,7 @@ class InlineBlockLayout : Layout {
 	}
 }
 
+// ctrl+pageup/down could rotate tabs...
 /++
 	A TabMessageWidget is a clickable row of tabs followed by a content area, very similar
 	to the [TabWidget]. The difference is the TabMessageWidget only sends messages, whereas
@@ -14543,6 +14544,9 @@ class TextDisplayHelper : Widget {
 					l.selection.replaceContent(preservedPrimaryText);
 				else
 					l.selection.replaceContent(txt);
+
+				adjustScrollbarSizes();
+				scrollForCaret();
 				redraw();
 			});
 		}
