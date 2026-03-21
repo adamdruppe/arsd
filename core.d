@@ -2469,7 +2469,7 @@ inout(char)[] stripRightInternal(return inout(char)[] s) {
 +/
 string toStringInternal(T)(T t) {
 	char[256] bufferBacking;
-	return writeGuts(bufferBacking[], null, null, null, false, false, &makeString, t);
+	return cast(string) writeGuts(bufferBacking[], null, null, null, false, false, &makeString, t); // cuz i know makeString returns string the cast is ok
 	/+
 	char[64] buffer;
 	static if(is(typeof(t.toString) : string))
@@ -2512,8 +2512,9 @@ unittest {
 	assert(toStringInternal(4.5) == "4.5");
 }
 
-char[] toTextBuffer(T...)(char[] bufferBacking, T t) {
-	return cast(char[]) writeGuts(bufferBacking[], null, null, null, false, false, &makeStringCasting, t);
+version(D_OpenD) // opend exclusive because -dip1000 breaks it
+const(char)[] toTextBuffer(T...)(scope return char[] bufferBacking, T t) {
+	return writeGuts(bufferBacking[], null, null, null, false, false, &makeStringCasting, t);
 }
 
 /++
@@ -10939,7 +10940,7 @@ package(arsd) string enumNameForValue(T)(T t) {
 		* writing
 		* converting single value to string?
 +/
-private string writeGuts(T...)(char[] buffer, string prefix, string suffix, string argSeparator, bool printInterpolatedCode, bool quoteStrings, string function(scope char[] result) writer, T t) {
+private const(char)[] writeGuts(T...)(scope char[] buffer, string prefix, string suffix, string argSeparator, bool printInterpolatedCode, bool quoteStrings, string function(scope char[] result) writer, T t) {
 	int pos;
 
 	if(prefix.length)
@@ -11082,7 +11083,8 @@ debug void dump(T...)(T t, string file = __FILE__, size_t line = __LINE__) {
 private string makeString(scope char[] buffer) @safe {
 	return buffer.idup;
 }
-private string makeStringCasting(scope /*return*/ char[] buffer) @system @nogc nothrow pure {
+version(D_OpenD)
+private string makeStringCasting(scope char[] buffer) @system @nogc nothrow pure {
 	return cast(string) buffer;
 }
 private string actuallyWriteToStdout(scope char[] buffer) @safe {
@@ -12000,6 +12002,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			void setBackgroundColor(NSColor color) @selector("setBackgroundColor:");
 
 			void setIsVisible(bool b) @selector("setIsVisible:");
+			void toggleFullScreen(NSid sender) @selector("toggleFullScreen:");
 		}
 
 		version(OSX)

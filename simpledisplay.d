@@ -2116,6 +2116,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 						MonitorInfo.info.assumeSafeAppend();
 						foreach(idx, monitor; monitors[0 .. count]) {
 							MonitorInfo.info ~= MonitorInfo(
+								getAtomName(monitor.name, display),
 								Rectangle(Point(monitor.x, monitor.y), Size(monitor.width, monitor.height)),
 								Size(monitor.mwidth, monitor.mheight),
 								cast(int) (customScalingFactorForMonitor(cast(int) idx) * getDpi()[0])
@@ -2186,7 +2187,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	version(X11) private {
 		bool requestedInput;
 		static bool xRandrInfoLoadAttemped;
-		struct MonitorInfo {
+		public struct MonitorInfo {
+			string name;
 			Rectangle position;
 			Size size;
 			int dpi;
@@ -2741,7 +2743,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	version(Windows)
 	private WINDOWPLACEMENT g_wpPrev;
 
-	/// not fully implemented but planned for a future release
+	/++
+		Asks the operating system to put the window in or out of full screen mode.
+	+/
 	void fullscreen(bool yes) {
 		version(Windows) {
 			g_wpPrev.length = WINDOWPLACEMENT.sizeof;
@@ -2771,6 +2775,9 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		} else version(X11) {
 			setNetWmStateAtom(this.impl.window, GetAtom!("_NET_WM_STATE_FULLSCREEN", false)(XDisplayConnection.get), yes);
+		} else version(OSXCocoa) {
+			if(yes != _fullscreen)
+			window.toggleFullScreen(cast(void*) window);
 		}
 
 		_fullscreen = yes;
@@ -4304,7 +4311,8 @@ class InputDevice {
 		int deviceId;
 	} else version(Windows) {
 		HANDLE deviceId;
-	}
+	} else
+		void* deviceId;
 	string name;
 	bool enabled;
 
@@ -4335,7 +4343,8 @@ struct InputDeviceEvent {
 		int deviceId;
 	} else version(Windows) {
 		HANDLE deviceId;
-	}
+	} else
+		void* deviceId;
 
 	int detail;
 	int flags;
@@ -5312,7 +5321,7 @@ struct EventLoopImpl {
 			import arsd.core;
 			auto el = getThisThreadEventLoop(EventLoopType.Ui);
 			if(!loopInitialized) {
-				el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
 				loopInitialized = true;
 				sdpyPrintDebugString("one");
 				NSApp.run();
