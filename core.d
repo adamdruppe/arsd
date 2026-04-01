@@ -7804,11 +7804,11 @@ version(HasThread) class SchedulableTask : Fiber {
 
 	// the api
 
-	this(void delegate() dg) {
+	this(void delegate() dg, size_t stackSize = 4096 * 1000 /* 4 MB default */) {
 		assert(dg !is null);
 
 		this.dg = dg;
-		super(&taskRunner);
+		super(&taskRunner, stackSize);
 
 		if(taskRoot !is null) {
 			this.next = taskRoot;
@@ -8435,7 +8435,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				//GetQueuedCompletionStatusEx();
 				assert(0); // FIXME
 			} else {
-				auto wto = getTimeout();
+				auto wto = getTimeout ? getTimeout() : 0;
 
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
