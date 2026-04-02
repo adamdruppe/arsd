@@ -2347,6 +2347,8 @@ void enableInteractiveShell() {
 
 		/* Save default terminal attributes for shell.  */
 		//tcgetattr (0, &shell_tmodes);
+	} else version(Windows) {
+		SetConsoleCtrlHandler(null, true);
 	}
 }
 
