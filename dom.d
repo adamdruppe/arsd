@@ -9582,11 +9582,11 @@ private struct ElementStreamFilter {
 	}
 }
 
-alias arsd.core.indexOf indexOf;
-alias arsd.core.stripInternal strip;
-alias arsd.core.stripRightInternal stripRight;
-alias arsd.core.startsWith startsWith;
-alias arsd.core.endsWith endsWith;
+private alias arsd.core.indexOf indexOf;
+private alias arsd.core.stripInternal strip;
+private alias arsd.core.stripRightInternal stripRight;
+private alias arsd.core.startsWith startsWith;
+private alias arsd.core.endsWith endsWith;
 
 // FIXME: start index can be useful but i used 0 here anyway
 private size_t indexOf(string haystack, string needle, bool caseSensitive) {
