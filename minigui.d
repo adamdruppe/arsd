@@ -15904,13 +15904,12 @@ class MessageBox : Dialog {
 		if(mainWidth > 600)
 			mainWidth = 600;
 
-		super(originator, mainWidth, 100);
+		super(originator, mainWidth, 100, title);
 
 		assert(buttons.length);
 		assert(buttons.length ==  buttonIds.length);
 
 		this.message = message;
-		if(title) this.title = title;
 
 		auto label = new TextDisplay(message, this);
 
