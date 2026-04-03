@@ -15876,8 +15876,14 @@ class MessageBox : Dialog {
 	this(string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
 		this(null, message, buttons, buttonIds);
 	}
-	/// ditto
+
+	///ditto
 	this(Window originator, string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
+		this(originator, null, message, buttons, buttonIds);
+	}
+
+	/// ditto
+	this(Window originator, string title, string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
 		message = message.stripRightInternal;
 		int mainWidth;
 
@@ -15898,7 +15904,7 @@ class MessageBox : Dialog {
 		if(mainWidth > 600)
 			mainWidth = 600;
 
-		super(originator, mainWidth, 100);
+		super(originator, mainWidth, 100, title);
 
 		assert(buttons.length);
 		assert(buttons.length ==  buttonIds.length);
@@ -16050,7 +16056,7 @@ MessageBoxButton messageBox(Window originator, string title, string message, Mes
 				buttonIds = [MessageBoxButton.Retry, MessageBoxButton.Cancel, MessageBoxButton.Continue];
 			break;
 		}
-		auto mb = new MessageBox(originator, message, buttons, buttonIds);
+		auto mb = new MessageBox(originator, title, message, buttons, buttonIds);
 		EventLoop el = EventLoop.get;
 		el.run(() { return !mb.win.closed; });
 		return mb.buttonPressed;
