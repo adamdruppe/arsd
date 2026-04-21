@@ -1823,10 +1823,10 @@ class HttpRequest {
 	}
 
 	struct HeaderReadingState {
-		bool justSawLf;
 		bool justSawCr;
 		bool atStartOfLine = true;
 		bool readingLineContinuation;
+		bool finishing;
 	}
 	HeaderReadingState headerReadingState;
 
@@ -1940,23 +1940,12 @@ class HttpRequest {
 
 			size_t position = 0;
 			for(position = 0; position < data.length; position++) {
-				if(headerReadingState.readingLineContinuation) {
-					if(data[position] == ' ' || data[position] == '\t')
-						continue;
-					headerReadingState.readingLineContinuation = false;
-				}
-
-				if(headerReadingState.atStartOfLine) {
-					headerReadingState.atStartOfLine = false;
-					// FIXME it being \r should never happen... and i don't think it does
-					if(data[position] == '\r' || data[position] == '\n') {
-						// done with headers
-
-						position++; // skip the \r
-
-						if(responseData.headers.length)
-							parseLastHeader();
-
+				//import std.stdio;
+				//writeln(position, " ", headerReadingState, data[0 .. position]);
+				if(headerReadingState.finishing) {
+					if(data[position] == '\n') {
+						headerReadingState.finishing = false;
+						headerReadingState.atStartOfLine = true;
 						if(responseData.code >= 100 && responseData.code < 200) {
 							// "100 Continue" - we should continue uploading request data at this point
 							// "101 Switching Protocols" - websocket, not expected here...
@@ -1969,26 +1958,44 @@ class HttpRequest {
 							// can give useful headers we want to keep
 
 							responseData.headers = null;
-							headerReadingState.atStartOfLine = true;
 
-							continue; // the \n will be skipped by the for loop advance
+							continue; // still doing headers
 						}
 
 						if(this.requestParameters.method == HttpVerb.HEAD)
 							state = State.complete;
 						else
 							state = State.readingBody;
+						//writeln(state, bodyReadingState);//responseData.headers);
 
-						// skip the \n before we break
-						position++;
+						break; // break the header reading loop and proceed to the body reading loop
+					} else
+						throw new Exception(`\r not followed by \n`);
+				} else if(headerReadingState.atStartOfLine) {
+					if(headerReadingState.readingLineContinuation) {
+						if(data[position] == ' ' || data[position] == '\t')
+							continue;
+						else {
+							headerReadingState.readingLineContinuation = false;
+						}
+					}
 
-						break;
+					// immediate \r means we looking at a \r\n\r\n thing; done with headers
+					if(data[position] == '\r') {
+						headerReadingState.finishing = true;
+
+						if(responseData.headers.length)
+							parseLastHeader();
+
+						continue;
 					} else if(data[position] == ' ' || data[position] == '\t') {
 						// line continuation, ignore all whitespace and collapse it into a space
 						headerReadingState.readingLineContinuation = true;
 						responseData.headers[$-1] ~= ' ';
+						continue;
 					} else {
 						// new header
+						headerReadingState.atStartOfLine = false;
 						if(responseData.headers.length)
 							parseLastHeader();
 						responseData.headers ~= "";
@@ -1998,15 +2005,17 @@ class HttpRequest {
 				if(data[position] == '\r') {
 					headerReadingState.justSawCr = true;
 					continue;
-				} else
-					headerReadingState.justSawCr = false;
+				}
 
-				if(data[position] == '\n') {
-					headerReadingState.justSawLf = true;
-					headerReadingState.atStartOfLine = true;
-					continue;
-				} else
-					headerReadingState.justSawLf = false;
+				if(headerReadingState.justSawCr) {
+					if(data[position] == '\n') {
+						headerReadingState.atStartOfLine = true;
+						headerReadingState.justSawCr = false;
+						continue;
+					} else {
+						throw new Exception(`\r without \n`);
+					}
+				}
 
 				responseData.headers[$-1] ~= data[position];
 			}
