@@ -1968,6 +1968,7 @@ class HttpRequest {
 							state = State.readingBody;
 						//writeln(state, bodyReadingState);//responseData.headers);
 
+						position++; // skip the terminating \n
 						break; // break the header reading loop and proceed to the body reading loop
 					} else
 						throw new Exception(`\r not followed by \n`);
