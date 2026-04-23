@@ -1977,29 +1977,30 @@ class HttpRequest {
 						if(data[position] == ' ' || data[position] == '\t')
 							continue;
 						else {
+							headerReadingState.atStartOfLine = false;
 							headerReadingState.readingLineContinuation = false;
 						}
-					}
-
-					// immediate \r means we looking at a \r\n\r\n thing; done with headers
-					if(data[position] == '\r') {
-						headerReadingState.finishing = true;
-
-						if(responseData.headers.length)
-							parseLastHeader();
-
-						continue;
-					} else if(data[position] == ' ' || data[position] == '\t') {
-						// line continuation, ignore all whitespace and collapse it into a space
-						headerReadingState.readingLineContinuation = true;
-						responseData.headers[$-1] ~= ' ';
-						continue;
 					} else {
-						// new header
-						headerReadingState.atStartOfLine = false;
-						if(responseData.headers.length)
-							parseLastHeader();
-						responseData.headers ~= "";
+						// immediate \r means we looking at a \r\n\r\n thing; done with headers
+						if(data[position] == '\r') {
+							headerReadingState.finishing = true;
+
+							if(responseData.headers.length)
+								parseLastHeader();
+
+							continue;
+						} else if(data[position] == ' ' || data[position] == '\t') {
+							// line continuation, ignore all whitespace and collapse it into a space
+							headerReadingState.readingLineContinuation = true;
+							responseData.headers[$-1] ~= ' ';
+							continue;
+						} else {
+							// new header
+							headerReadingState.atStartOfLine = false;
+							if(responseData.headers.length)
+								parseLastHeader();
+							responseData.headers ~= "";
+						}
 					}
 				}
 
@@ -2065,6 +2066,7 @@ class HttpRequest {
 							}
 						break;
 						case 1: // reading until end of line
+							// FIXME: it should prolly enforce \r\n per spec but this also basically work fine.
 							char c = data[a];
 							if(c == '\n') {
 								if(bodyReadingState.contentLengthRemaining == 0)
@@ -2236,6 +2238,29 @@ class HttpRequest {
 
 	}
 }
+
+unittest {
+	auto req = new HttpRequest();
+	req.state = HttpRequest.State.waitingForResponse;
+	// check basic function plus a line continuation
+	req.handleIncomingData(cast(ubyte[]) "HTTP/1.1 200 OK\r\nFoo: bar\r\n\tbaz\r\n\r\nBody");
+	auto res = req.responseData;
+	assert(res.code == 200);
+	assert(res.contentText == "Body");
+	assert(res.headers.length == 2);
+}
+
+unittest {
+	auto req = new HttpRequest();
+	req.state = HttpRequest.State.waitingForResponse;
+	// check handling of \n without \r, it should NOT read as a new header
+	req.handleIncomingData(cast(ubyte[]) "HTTP/1.1 200 OK\r\nX: 1\n\n foo\r\n\r\nBody");
+	auto res = req.responseData;
+	assert(res.code == 200);
+	assert(res.contentText == "Body");
+	assert(res.headers.length == 2);
+}
+
 
 /++
 	Waits for the first of the given requests to be either aborted or completed.
