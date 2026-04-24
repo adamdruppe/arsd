@@ -3829,6 +3829,14 @@ struct RealTimeConsoleInput {
 							// old style event then follows as the fallback
 							e.character = cast(dchar) cast(wchar) '\n';
 							newEvents ~= InputEvent(e, terminal);
+						} else if(ev.UnicodeChar == 127) {
+							// this is windows-ese for ctrl+backspace
+							ke.which = cast(dchar) cast(wchar) '\b';
+							newEvents ~= InputEvent(ke, terminal);
+
+							// old style event then follows as the fallback
+							e.character = cast(dchar) cast(wchar) '\b';
+							newEvents ~= InputEvent(e, terminal);
 						} else if(ev.wVirtualKeyCode == 0x1b) {
 							ke.which = cast(KeyboardEvent.Key) (ev.wVirtualKeyCode + 0xF0000);
 							newEvents ~= InputEvent(ke, terminal);
@@ -4385,7 +4393,10 @@ struct RealTimeConsoleInput {
 				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
 			} else {
 				// exceedingly quick esc followed by char is also what many terminals do for alt
-				return charPressAndRelease(nextChar(c), cast(uint)ModifierState.alt);
+				auto next = nextChar(c);
+				if(next == 127) // some terminals send 127 on the backspace. Let's normalize that.
+					next = '\b';
+				return charPressAndRelease(next, cast(uint)ModifierState.alt);
 			}
 		} else {
 			// FIXME: what if it is neither? we should check the termcap
@@ -7027,10 +7038,11 @@ class LineGetter {
 							}
 						}
 					break;
+					case 127:
 					case '\b':
 						justHitTab = false;
 						// i use control for delete word, but gnu uses alt. so this allows both
-						if(ev.modifierState & (ModifierState.control | ModifierState.alt)) {
+						if(ch != 127 && (ev.modifierState & (ModifierState.control | ModifierState.alt))) {
 							lineChanged = true;
 							killWord();
 							justKilled = true;
