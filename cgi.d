@@ -180,7 +180,7 @@ void main() {
 
 	For example,
 
-	For CGI, `dmd yourfile.d cgi.d` then put the executable in your cgi-bin directory.
+	For CGI, `dmd yourfile.d cgi.d` then put the executable in your cgi-bin directory. You should check your server's configuration for security as described here https://httpoxy.org/ if you also do client http requests.
 
 	For FastCGI: `dmd yourfile.d cgi.d -version=fastcgi` and run it. spawn-fcgi helps on nginx. You can put the file in the directory for Apache. On IIS, run it with a port on the command line (this causes it to call FCGX_OpenSocket, which can work on nginx too).
 
