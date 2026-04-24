@@ -1831,6 +1831,8 @@ package(arsd) void setCloExec(int fd) {
 
 	History:
 		Moved from simpledisplay.d to core.d in March 2023 (dub v11.0).
+
+	See_Also: [OsCharzBuffer] is an alias to this on Windows platforms (added April 10, 2026)
 +/
 version(Windows)
 struct WCharzBuffer {
@@ -1880,6 +1882,8 @@ struct WCharzBuffer {
 
 	History:
 		Added March 18, 2023 (dub v11.0)
+
+	See_Also: [OsCharzBuffer] is an alias to this on non-Windows platforms (added April 10, 2026)
 +/
 struct CharzBuffer {
 	private char[] buffer;
@@ -1927,6 +1931,13 @@ struct CharzBuffer {
 		buffer = buffer[0 .. data.length + 1];
 	}
 }
+
+version(Windows)
+	///
+	alias OsCharzBuffer = WCharzBuffer;
+else
+	///
+	alias OsCharzBuffer = CharzBuffer;
 
 /++
 	Given the string `str`, converts it to a string compatible with the Windows API and puts the result in `buffer`, returning the slice of `buffer` actually used. `buffer` must be at least [sizeOfConvertedWstring] elements long.

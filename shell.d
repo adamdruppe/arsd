@@ -60,6 +60,11 @@
 +/
 module arsd.shell;
 
+// $_: In most shells, $_ expands to the last argument of the previous command-especially useful interactively or in simple scripts when you need to operate on the same long path twice:
+// disown a background job?
+// |& means pipe both stderr and stdout to the same thing
+
+
 import arsd.core;
 
 import core.thread.fiber;
@@ -1995,6 +2000,10 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 
 			void writeln(scope const(char)[] msg) {
 				msg ~= "\n";
+				write(msg);
+			}
+
+			void write(scope const(char)[] msg) {
 				version(Posix) {
 					import unix = core.sys.posix.unistd;
 					import core.stdc.errno;
@@ -2110,14 +2119,18 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 			}
 		}
 
-		int echo(string[] args) {
+		int echo(bool n, string[] args) {
 			import arsd.string;
-			writeln(args.join(" "));
+			if(n)
+				write(args.join(" "));
+			else
+				writeln(args.join(" "));
 			return 0;
 		}
 
 		// FIXME: -R, -l, -h all useful to me. also --sort is nice. maybe --color
-		int ls(bool a, string[] args) {
+		// FIXME: --color OR --color=auto and stuff can be in the cli. how do i handle that?
+		int ls(bool a, bool color, string[] args) {
 			void handler(string name, bool isDirectory) {
 				if(!a && name.length && name[0] == '.')
 					return;
@@ -2146,6 +2159,45 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 					CharzBuffer bfr = file;
 					if(unistd.unlink(bfr.ptr) == -1)
 						throw new ErrnoApiException("unlink", errno);
+				}
+			}
+		}
+
+		void mv(string[] files) {
+			if(files.length < 2)
+				throw new Exception("need files");
+
+			OsCharzBuffer dst = files[$-1];
+			foreach(file; files[0 .. $-1]) {
+				version(Windows) {
+					WCharzBuffer bfr = file;
+					if(!MoveFileW(bfr.ptr, dst.ptr))
+						throw new WindowsApiException("MoveFileW", GetLastError());
+				} else version(Posix) {
+					throw new Exception("not implemented");
+					/+
+					CharzBuffer bfr = file;
+					import stdio = core.stdc.stdio;
+					if(stdio.rename(bfr.ptr, dst.ptr) == -1)
+						throw new ErrnoApiException("rename", errno);
+					+/
+				}
+			}
+		}
+
+		void cp(string[] files) {
+			if(files.length < 2)
+				throw new Exception("need files");
+
+			OsCharzBuffer dst = files[$-1];
+			foreach(file; files[0 .. $-1]) {
+				version(Windows) {
+					WCharzBuffer bfr = file;
+					if(!CopyFileW(bfr.ptr, dst.ptr))
+						throw new WindowsApiException("CopyFileW", GetLastError());
+				} else version(Posix) {
+					throw new Exception("not implemented");
+					// copy_file_range introduced linux 2016.
 				}
 			}
 		}
@@ -2241,27 +2293,23 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 			writeln(fn);
 			return 0;
 		}
+		/+
+			gonna want some kind of:
+				sort
+
+				nc (netcat)
+				xsel
+
+				du ?
+
+				env ?
+
+				no chmod, ln, or unlink because Windows doesn't do them anyway...
+
+				on Windows i do def want `start`
+		+/
 	}
 
-	/+
-		gonna want some kind of:
-			mv
-				rename(2)
-				MoveFileW
-			cp
-				copy_file_range introduced linux 2016.
-				CopyFileW
-			sort
-
-			nc
-			xsel
-
-			du ?
-
-			env ?
-
-			no chmod, ln, or unlink because Windows doesn't do them anyway...
-	+/
 	MatchesResult matches(string arg0) {
 		switch(arg0) {
 			foreach(memberName; __traits(derivedMembers, Commands))
