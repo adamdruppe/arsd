@@ -517,7 +517,7 @@
 				},
 				{
 					"name": "cgi",
-					"versions": ["traditional_cgi"]
+					"versions": ["plain_cgi"]
 				},
 				{
 					"name": "fastcgi",
