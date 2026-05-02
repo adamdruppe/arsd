@@ -3719,15 +3719,31 @@ struct RequestServer {
 				// FIXME: what about heterogeneous listen specs?
 				if(this.listenSpec[0].startsWith("scgi:"))
 					serveScgi!(fun, CustomCgi, maxContentLength)();
+				else if(this.listenSpec[0].startsWith("fcgi:"))
+					serveFastCgi!(fun, CustomCgi, maxContentLength)(this);
 				else
 					serveEmbeddedHttp!(fun, CustomCgi, maxContentLength)();
 			} else {
 				import std.process;
+				// detect cgi
 				if("REQUEST_METHOD" in environment) {
 					// GATEWAY_INTERFACE must be set according to the spec for it to be a cgi request
 					// REQUEST_METHOD must also be set
 					handleCgiRequest!(fun, CustomCgi, maxContentLength)();
 				} else {
+					version(Posix) {
+						// https://fast-cgi.github.io/original/#S2.2
+						// FCGI_LISTENSOCK_FILENO equals STDIN_FILENO. The standard descriptors STDOUT_FILENO and STDERR_FILENO are closed when the application begins execution. A reliable method for an application to determine whether it was invoked using CGI or FastCGI is to call getpeername(FCGI_LISTENSOCK_FILENO), which returns -1 with errno set to ENOTCONN for a FastCGI application.
+						//
+						// not sure if that is sane on Windows but tbh it is prolly not important there anyway since there should be a listenspec...
+						sockaddr s;
+						uint e;
+						if(getpeername(0, &s, &e) == -1 && errno == ENOTCONN) {
+							serveFastCgi!(fun, CustomCgi, maxContentLength)(this);
+							return;
+						}
+					}
+					help:
 					import std.stdio;
 					writeln("To start a local-only http server, use `thisprogram --listen http://localhost:PORT_NUMBER`");
 					writeln("To start a externally-accessible http server, use `thisprogram --listen http://:PORT_NUMBER`");
@@ -4131,23 +4147,24 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 	}
 }
 
-version(fastcgi)
 void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)(RequestServer params) {
 	//         SetHandler fcgid-script
 	FCGX_Stream* input, output, error;
 	FCGX_ParamArray env;
 
-
+	if(!loadFastCgiLibrary()) {
+		throw new Exception("unable to load fastcgi C library");
+	}
 
 	const(ubyte)[] getFcgiChunk() {
 		const(ubyte)[] ret;
-		while(FCGX_HasSeenEOF(input) != -1)
-			ret ~= cast(ubyte) FCGX_GetChar(input);
+		while(fastcgi.FCGX_HasSeenEOF(input) != -1)
+			ret ~= cast(ubyte) fastcgi.FCGX_GetChar(input);
 		return ret;
 	}
 
 	void writeFcgi(const(ubyte)[] data) {
-		FCGX_PutStr(data.ptr, cast(c_int) data.length, output);
+		fastcgi.FCGX_PutStr(data.ptr, cast(int) data.length, output);
 	}
 
 	void doARequest() {
@@ -4168,14 +4185,14 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 		}
 
 		void flushFcgi() {
-			FCGX_FFlush(output);
+			fastcgi.FCGX_FFlush(output);
 		}
 
 		Cgi cgi;
 		try {
 			cgi = new CustomCgi(maxContentLength, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 		} catch(Throwable t) {
-			FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(c_int) t.msg.length, error);
+			fastcgi.FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(int) t.msg.length, error);
 			writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
 			return; //continue;
 		}
@@ -4190,36 +4207,46 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 			cgi.close();
 		} catch(Throwable t) {
 			// log it to the error stream
-			FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(c_int) t.msg.length, error);
+			fastcgi.FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(int) t.msg.length, error);
 			// handle it for the user, if we can
 			if(!handleException(cgi, t))
 				return; // continue;
 		}
 	}
 
-	auto lp = params.listeningPort;
-	auto host = params.listeningHost;
+	ushort lp;
+	string host;
+	if(params.listenSpec is null) {
+		lp = params.listeningPort;
+		host = params.listeningHost;
+	} else {
+		auto pls = ListeningConnectionManager.parseListenSpec(params.listenSpec);
+		if(pls.port.length != 1)
+			throw new Exception("more than one listenspec not supported for fastcgi");
+		lp = pls.port[0];
+		host = pls.host[0];
+	}
 
 	FCGX_Request request;
 	if(lp || !host.empty) {
 		// if a listening port was specified on the command line, we want to spawn ourself
 		// (needed for nginx without spawn-fcgi, e.g. on Windows)
-		FCGX_Init();
+		fastcgi.FCGX_Init();
 
 		int sock;
 
 		if(host.startsWith("unix:")) {
-			sock = FCGX_OpenSocket(toStringz(params.listeningHost["unix:".length .. $]), 12);
+			sock = fastcgi.FCGX_OpenSocket(toStringz(params.listeningHost["unix:".length .. $]), 12);
 		} else if(host.startsWith("abstract:")) {
-			sock = FCGX_OpenSocket(toStringz("\0" ~ params.listeningHost["abstract:".length .. $]), 12);
+			sock = fastcgi.FCGX_OpenSocket(toStringz("\0" ~ params.listeningHost["abstract:".length .. $]), 12);
 		} else {
-			sock = FCGX_OpenSocket(toStringz(params.listeningHost ~ ":" ~ to!string(lp)), 12);
+			sock = fastcgi.FCGX_OpenSocket(toStringz(params.listeningHost ~ ":" ~ to!string(lp)), 12);
 		}
 
 		if(sock < 0)
 			throw new Exception("Couldn't listen on the port");
-		FCGX_InitRequest(&request, sock, 0);
-		while(FCGX_Accept_r(&request) >= 0) {
+		fastcgi.FCGX_InitRequest(&request, sock, 0);
+		while(fastcgi.FCGX_Accept_r(&request) >= 0) {
 			input = request.inStream;
 			output = request.outStream;
 			error = request.errStream;
@@ -4229,7 +4256,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 	} else {
 		// otherwise, assume the httpd is doing it (the case for Apache, IIS, and Lighttpd)
 		// using the version with a global variable since we are separate processes anyway
-		while(FCGX_Accept(&input, &output, &error, &env) >= 0) {
+		while(fastcgi.FCGX_Accept(&input, &output, &error, &env) >= 0) {
 			doARequest();
 		}
 	}
@@ -5129,26 +5156,19 @@ void hackAroundLinkerError() {
 
 
 
-version(fastcgi) {
-	pragma(lib, "fcgi");
-
-	//static if(size_t.sizeof == 8) // 64 bit
-		//alias long c_int;
-	//else
-		alias int c_int;
-
+version(all /* fastcgi */) {
 	extern(C) {
 		struct FCGX_Stream {
 			ubyte* rdNext;
 			ubyte* wrNext;
 			ubyte* stop;
 			ubyte* stopUnget;
-			c_int isReader;
-			c_int isClosed;
-			c_int wasFCloseCalled;
-			c_int FCGI_errno;
+			int isReader;
+			int isClosed;
+			int wasFCloseCalled;
+			int FCGI_errno;
 			void* function(FCGX_Stream* stream) fillBuffProc;
-			void* function(FCGX_Stream* stream, c_int doClose) emptyBuffProc;
+			void* function(FCGX_Stream* stream, int doClose) emptyBuffProc;
 			void* data;
 		}
 
@@ -5169,22 +5189,66 @@ version(fastcgi) {
 			int flags;
 			int listen_sock;
 		}
-
-		int FCGX_InitRequest(FCGX_Request *request, int sock, int flags);
-		void FCGX_Init();
-
-		int FCGX_Accept_r(FCGX_Request *request);
-
-
 		alias char** FCGX_ParamArray;
+	}
 
-		c_int FCGX_Accept(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp);
-		c_int FCGX_GetChar(FCGX_Stream* stream);
-		c_int FCGX_PutStr(const ubyte* str, c_int n, FCGX_Stream* stream);
-		int FCGX_HasSeenEOF(FCGX_Stream* stream);
-		c_int FCGX_FFlush(FCGX_Stream *stream);
+	struct FcgiLib {
+		private void* fcgiLibrary;
 
-		int FCGX_OpenSocket(const char*, int);
+		extern(C):
+
+		int function(FCGX_Request *request, int sock, int flags) FCGX_InitRequest;
+		void function() FCGX_Init;
+
+		int function(FCGX_Request *request) FCGX_Accept_r;
+
+		int function(FCGX_Stream** stdin, FCGX_Stream** stdout, FCGX_Stream** stderr, FCGX_ParamArray* envp) FCGX_Accept;
+		int function(FCGX_Stream* stream) FCGX_GetChar;
+		int function(const ubyte* str, int n, FCGX_Stream* stream) FCGX_PutStr;
+		int function(FCGX_Stream* stream) FCGX_HasSeenEOF;
+		int function(FCGX_Stream *stream) FCGX_FFlush;
+
+		int function(const char*, int) FCGX_OpenSocket;
+	}
+
+	__gshared FcgiLib* fastcgi;
+
+	bool loadFastCgiLibrary() {
+		if(fastcgi !is null)
+			return fastcgi.fcgiLibrary !is null;
+
+		fastcgi = new FcgiLib;
+
+		import arsd.core;
+
+		version(Posix) {
+			import core.sys.posix.dlfcn;
+			fastcgi.fcgiLibrary = dlopen("libfcgi.so", RTLD_LAZY);
+			if(fastcgi.fcgiLibrary is null)
+				throw ArsdException!"dlopen"("fcgi");
+			alias GetProcAddress = dlsym;
+			alias FreeLibrary = dlclose;
+			alias GetLastError = errno;
+			alias SysApiException = ErrnoApiException;
+		} else version(Windows) {
+			fastcgi.fcgiLibrary = LoadLibraryW("fcgi.dll"w.ptr);
+			if(fastcgi.fcgiLibrary is null)
+				throw new WindowsApiException("LoadLibraryW fcgi", GetLastError());
+			alias SysApiException = WindowsApiException;
+		}
+
+		// slicing to exclude fcgiLibrary
+		foreach(memberName; __traits(allMembers, FcgiLib)[1 .. $]) {
+			auto fn = GetProcAddress(fastcgi.fcgiLibrary, memberName);
+			if(fn is null) {
+				FreeLibrary(fastcgi.fcgiLibrary);
+				fastcgi.fcgiLibrary = null;
+				throw new SysApiException("could not load fastcgi fn " ~ memberName, GetLastError);
+			}
+			__traits(getMember, fastcgi, memberName) = cast(typeof(__traits(getMember, fastcgi, memberName))) fn;
+		}
+
+		return true;
 	}
 }
 
@@ -5731,14 +5795,13 @@ class ListeningConnectionManager {
 		fhandler(s);
 	}
 
-
-	this(string[] listenSpec, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
-		fhandler = handler;
-		this(listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
-	}
-	this(string[] listenSpec, void delegate(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	static struct ParsedListenSpec {
 		string[] host;
 		ushort[] port;
+
+	}
+	static ParsedListenSpec parseListenSpec(string[] listenSpec) {
+		ParsedListenSpec pls;
 
 		foreach(spec; listenSpec) {
 			/+
@@ -5769,24 +5832,33 @@ class ListeningConnectionManager {
 			}
 
 			if(address_spec.startsWith("unix:") || address_spec.startsWith("abstract:")) {
-				host ~= address_spec;
-				port ~= 0;
+				pls.host ~= address_spec;
+				pls.port ~= 0;
 			} else {
 				auto idx = address_spec.lastIndexOf(":");
 				if(idx == -1) {
-					host ~= null;
+					pls.host ~= null;
 				} else {
 					auto as = address_spec[0 .. idx];
 					if(as.length >= 3 && as[0] == '[' && as[$-1] == ']')
 						as = as[1 .. $-1];
-					host ~= as;
+					pls.host ~= as;
 				}
-				port ~= address_spec[idx + 1 .. $].to!ushort;
+				pls.port ~= address_spec[idx + 1 .. $].to!ushort;
 			}
-
 		}
 
-		this(host, port, handler, dropPrivs, useFork, numberOfThreads);
+		return pls;
+	}
+
+	this(string[] listenSpec, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+		fhandler = handler;
+		this(listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
+	}
+	this(string[] listenSpec, void delegate(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+		auto pls = parseListenSpec(listenSpec);
+
+		this(pls.host, pls.port, handler, dropPrivs, useFork, numberOfThreads);
 	}
 
 	this(string host, ushort port, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
