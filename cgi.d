@@ -4147,7 +4147,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 	}
 
 	void writeFcgi(const(ubyte)[] data) {
-		FCGX_PutStr(data.ptr, data.length, output);
+		FCGX_PutStr(data.ptr, cast(c_int) data.length, output);
 	}
 
 	void doARequest() {
@@ -4175,7 +4175,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 		try {
 			cgi = new CustomCgi(maxContentLength, fcgienv, &getFcgiChunk, &writeFcgi, &flushFcgi);
 		} catch(Throwable t) {
-			FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+			FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(c_int) t.msg.length, error);
 			writeFcgi(cast(const(ubyte)[]) plainHttpError(true, "400 Bad Request", t));
 			return; //continue;
 		}
@@ -4190,7 +4190,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 			cgi.close();
 		} catch(Throwable t) {
 			// log it to the error stream
-			FCGX_PutStr(cast(ubyte*) t.msg.ptr, t.msg.length, error);
+			FCGX_PutStr(cast(ubyte*) t.msg.ptr, cast(c_int) t.msg.length, error);
 			// handle it for the user, if we can
 			if(!handleException(cgi, t))
 				return; // continue;
@@ -5132,9 +5132,9 @@ void hackAroundLinkerError() {
 version(fastcgi) {
 	pragma(lib, "fcgi");
 
-	static if(size_t.sizeof == 8) // 64 bit
-		alias long c_int;
-	else
+	//static if(size_t.sizeof == 8) // 64 bit
+		//alias long c_int;
+	//else
 		alias int c_int;
 
 	extern(C) {
