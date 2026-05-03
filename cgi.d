@@ -3750,7 +3750,7 @@ struct RequestServer {
 					writeln("To start a scgi server, use `thisprogram --listen scgi://localhost:PORT_NUMBER`");
 					writeln("To test a request on the command line, use `thisprogram REQUEST /path arg=value`");
 					writeln("Or copy this program to your web server's cgi-bin folder to run it that way.");
-					writeln("If you need FastCGI, recompile this program with -version=fastcgi");
+					writeln("If you need FastCGI, you can listen with fcgi:// but note it requires the C fcgi library available in your dynamic load path.");
 					writeln();
 					writeln("Learn more at https://opendlang.org/library/arsd.cgi.html#Command-line-interface");
 				}

@@ -14555,7 +14555,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	final const(char)[] wordSplitHelper(scope return const(char)[] ch) {
-		if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r")
+		if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r" || ch == "\"", || ch == ",")
 			return ch;
 		return null;
 	}
@@ -17906,80 +17906,8 @@ class FilePicker : Dialog {
 			+/
 		}
 
-		extern(C) static int comparator(scope const void* a, scope const void* b) {
-			auto sa = *cast(string*) a;
-			auto sb = *cast(string*) b;
-
-			/+
-				Goal here:
-
-				Dot first. This puts `foo.d` before `foo2.d`
-				Then numbers , natural sort order (so 9 comes before 10) for positive numbers
-				Then letters, in order Aa, Bb, Cc
-				Then other symbols in ascii order
-			+/
-			static int nextPiece(ref string whole) {
-				if(whole.length == 0)
-					return -1;
-
-				enum specialZoneSize = 1;
-				string originalString = whole;
-				bool fallback;
-
-				start_over:
-
-				char current = whole[0];
-				if(!fallback && current >= '0' && current <= '9') {
-					// if this overflows, it can mess up the sort, so it will fallback to string sort in that event
-					int accumulator;
-					do {
-						auto before = accumulator;
-						whole = whole[1 .. $];
-						accumulator *= 10;
-						accumulator += current - '0';
-						current = whole.length ? whole[0] : 0;
-						if(accumulator < before) {
-							fallback = true;
-							whole = originalString;
-							goto start_over;
-						}
-					} while (current >= '0' && current <= '9');
-
-					return accumulator + specialZoneSize + cast(int) char.max; // leave room for symbols
-				} else {
-					whole = whole[1 .. $];
-
-					if(current == '.')
-						return 0; // the special case to put it before numbers
-
-					// anything above should be < specialZoneSize
-
-					int letterZoneSize = 26 * 2;
-					int base = int.max - letterZoneSize - char.max; // leaves space at end for symbols too if we want them after chars
-
-					if(current >= 'A' && current <= 'Z')
-						return base + (current - 'A') * 2;
-					if(current >= 'a' && current <= 'z')
-						return base + (current - 'a') * 2 + 1;
-					// return base + letterZoneSize + current; // would put symbols after numbers and letters
-					return specialZoneSize + current; // puts symbols before numbers and letters, but after the special zone
-				}
-			}
-
-			while(sa.length || sb.length) {
-				auto pa = nextPiece(sa);
-				auto pb = nextPiece(sb);
-
-				auto diff = pa - pb;
-				if(diff)
-					return diff;
-			}
-
-			return 0;
-		}
-
-		nonPhobosSort(files, &comparator);
-		nonPhobosSort(dirs, &comparator);
+		filenameStringSort(files);
+		filenameStringSort(dirs);
 
 		listWidget.clear();
 		dirWidget.clear();

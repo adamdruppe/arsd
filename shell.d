@@ -1308,6 +1308,8 @@ class Shell {
 
 		CommandExecutor matchingExecutor;
 		executorLoop: foreach(executor; commandExecutors) {
+			if(executor is null)
+				continue;
 			final switch(executor.matches(command.argv[0])) {
 				case CommandExecutor.MatchesResult.no:
 					continue;
@@ -2021,6 +2023,34 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 					throw new Exception("write failed to do all"); // FIXME
 			}
 
+			void writeInColumns(scope const(char[])[] items) {
+				size_t maxLength;
+				foreach(item; items)
+					if(item.length > maxLength)
+						maxLength = item.length;
+
+				int terminalWidth = 80;
+				int numColumns = terminalWidth / (cast(int) maxLength + 2);
+				if(numColumns == 0)
+					numColumns = 1;
+				int numLines = (cast(int) items.length + (numColumns - 1)) / numColumns;
+
+				int lineNumber;
+				while(lineNumber < numLines) {
+					string line;
+					foreach(col; 0 .. numColumns) {
+						auto index = lineNumber + numLines * col;
+						if(index >= items.length)
+							break;
+						line ~= items[index];
+						foreach(spacer; 0 .. maxLength - items[index].length + 2)
+							line ~= " ";
+					}
+					lineNumber++;
+					writeln(line);
+				}
+			}
+
 			void foreachLine(HANDLE file, void delegate(scope const(char)[]) dg) {
 				char[] buffer = new char[](1024 * 32 - 512);
 				bool eof;
@@ -2131,15 +2161,35 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 		// FIXME: -R, -l, -h all useful to me. also --sort is nice. maybe --color
 		// FIXME: --color OR --color=auto and stuff can be in the cli. how do i handle that?
 		int ls(bool a, bool color, string[] args) {
+			bool isPiped = false;
+			string[] names;
 			void handler(string name, bool isDirectory) {
 				if(!a && name.length && name[0] == '.')
 					return;
-				writeln(name);
+				names ~= name ~ (isDirectory ? "/" : "");
 			}
-			foreach(arg; args)
+			void doit(string arg) {
 				getFiles(arg, &handler);
-			if(args.length == 0)
-				getFiles(".", &handler);
+				filenameStringSort(names);
+
+				if(args.length > 1)
+					writeln("\n" ~ arg ~ ":\n");
+
+				if(isPiped)
+					foreach(name; names)
+						writeln(name);
+				else
+					writeInColumns(names);
+
+				names = null;
+			}
+
+			if(args.length)
+				foreach(arg; args)
+					doit(arg);
+			else
+				doit(".");
+
 			return 0;
 		}
 

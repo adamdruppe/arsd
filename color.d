@@ -1633,13 +1633,6 @@ class TrueColorImageWithoutAlpha : MemoryImage {
 }
 +/
 
-
-alias extern(C) int function(scope const void*, scope const void*) @system Comparator;
-@trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
-	import core.stdc.stdlib;
-	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
-}
-
 /// Converts true color to an indexed image. It uses palette as the starting point, adding entries
 /// until maxColors as needed. If palette is null, it creates a whole new palette.
 ///

@@ -1707,6 +1707,105 @@ unittest {
 	assert(a > (a / 2).quotient);
 }
 
+// package
+alias extern(C) int function(scope const void*, scope const void*) @system Comparator;
+
+// package
+@trusted void nonPhobosSort(T)(T[] obj,  Comparator comparator) {
+	import core.stdc.stdlib;
+	qsort(obj.ptr, obj.length, typeof(obj[0]).sizeof, comparator);
+}
+
+/++
+	Sorts the list of names according to how I like to sort filenames.
+
+
+	Currently, it puts dots first, then numbers, in natural sort order (so 9 comes before 10, unless it overflows, in which case it falls back to string compare), then letters in order Aa, Bb, Cc, then everything else in utf-8 byte compare order.
+
+	I might change the specific details at any time.
+
+	History:
+		Moved from minigui internal to arsd.core public on April 24, 2026 (v13.0)
++/
+void filenameStringSort(string[] names) {
+	extern(C) static int comparator(scope const void* a, scope const void* b) {
+		auto sa = *cast(string*) a;
+		auto sb = *cast(string*) b;
+
+		/+
+			Goal here:
+
+			Dot first. This puts `foo.d` before `foo2.d`
+			Then numbers , natural sort order (so 9 comes before 10) for positive numbers
+			Then letters, in order Aa, Bb, Cc
+			Then other symbols in ascii order
+		+/
+		static int nextPiece(ref string whole) {
+			if(whole.length == 0)
+				return -1;
+
+			enum specialZoneSize = 1;
+			string originalString = whole;
+			bool fallback;
+
+			start_over:
+
+			char current = whole[0];
+			if(!fallback && current >= '0' && current <= '9') {
+				// if this overflows, it can mess up the sort, so it will fallback to string sort in that event
+				int accumulator;
+				do {
+					auto before = accumulator;
+					whole = whole[1 .. $];
+					accumulator *= 10;
+					accumulator += current - '0';
+					current = whole.length ? whole[0] : 0;
+					if(accumulator < before) {
+						fallback = true;
+						whole = originalString;
+						goto start_over;
+					}
+				} while (current >= '0' && current <= '9');
+
+				return accumulator + specialZoneSize + cast(int) char.max; // leave room for symbols
+			} else {
+				whole = whole[1 .. $];
+
+				if(current == '.')
+					return 0; // the special case to put it before numbers
+
+				// anything above should be < specialZoneSize
+
+				int letterZoneSize = 26 * 2;
+				int base = int.max - letterZoneSize - char.max; // leaves space at end for symbols too if we want them after chars
+
+				if(current >= 'A' && current <= 'Z')
+					return base + (current - 'A') * 2;
+				if(current >= 'a' && current <= 'z')
+					return base + (current - 'a') * 2 + 1;
+				// return base + letterZoneSize + current; // would put symbols after numbers and letters
+				return specialZoneSize + current; // puts symbols before numbers and letters, but after the special zone
+			}
+		}
+
+		while(sa.length || sb.length) {
+			auto pa = nextPiece(sa);
+			auto pb = nextPiece(sb);
+
+			auto diff = pa - pb;
+			if(diff)
+				return diff;
+		}
+
+		return 0;
+	}
+
+	nonPhobosSort(names, &comparator);
+}
+
+
+
+
 /++
 	This is a dummy type to indicate the end of normal arguments and the beginning of the file/line inferred args.  It is meant to ensure you don't accidentally send a string that is interpreted as a filename when it was meant to be a normal argument to the function and trigger the wrong overload.
 +/
