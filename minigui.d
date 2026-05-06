@@ -14555,7 +14555,7 @@ class TextDisplayHelper : Widget {
 	}
 
 	final const(char)[] wordSplitHelper(scope return const(char)[] ch) {
-		if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r" || ch == "\"", || ch == ",")
+		if(ch == " " || ch == "\t" || ch == "\n" || ch == "\r" || ch == "\"" || ch == ",")
 			return ch;
 		return null;
 	}
