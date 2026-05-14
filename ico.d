@@ -229,22 +229,31 @@ void loadIcoOrCurFromMemoryCallback(
 }
 
 /++
+	Params:
+		filename = the filename to write the content to. If null, it does not write the file and only returns the data array.
+		images = the images to put in the file. Should be a variety of sizes.
+
+	Returns:
+		The file contents.
+
 	History:
 		Added April 21, 2023 (dub v11.0)
+
+		Return type changed from `void` to `ubyte[]` and `null` filename allowed on May 14, 2026.
 +/
-void writeIco(string filename, MemoryImage[] images) {
-	writeIcoOrCur(filename, false, cast(int) images.length, (int idx) { return IcoCursor(images[idx]); });
+ubyte[] writeIco(string filename, MemoryImage[] images) {
+	return writeIcoOrCur(filename, false, cast(int) images.length, (int idx) { return IcoCursor(images[idx]); });
 }
 
 /// ditto
-void writeCur(string filename, IcoCursor[] images) {
-	writeIcoOrCur(filename, true, cast(int) images.length, (int idx) { return images[idx]; });
+ubyte[] writeCur(string filename, IcoCursor[] images) {
+	return writeIcoOrCur(filename, true, cast(int) images.length, (int idx) { return images[idx]; });
 }
 
 /++
 	Save implementation. Api subject to change.
 +/
-void writeIcoOrCur(string filename, bool isCursor, int count, scope IcoCursor delegate(int) getImageAndHotspots) {
+ubyte[] writeIcoOrCur(string filename, bool isCursor, int count, scope IcoCursor delegate(int) getImageAndHotspots) {
 	IcoHeader header;
 	header.reserved = 0;
 	header.imageType = isCursor ? 2 : 1;
@@ -319,6 +328,10 @@ void writeIcoOrCur(string filename, bool isCursor, int count, scope IcoCursor de
 
 	assert(pos == dataFilePos);
 
-	import std.file;
-	std.file.write(filename, data);
+	if(filename.length) {
+		import std.file;
+		std.file.write(filename, data);
+	}
+
+	return data;
 }
