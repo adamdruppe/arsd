@@ -5,10 +5,8 @@
 	Distributed under the Boost Software License, Version 1.0.
  +/
 /++
-	Golden ratio math library.
-
-	This library provides constants and mathematical functions for working with
-	[the golden ratio](<https://en.wikipedia.org/wiki/Golden_ratio>).
+	Math library providing constants and functions for working with
+	[the golden ratio](https://en.wikipedia.org/wiki/Golden_ratio).
 
 	$(RAW_HTML <math style="margin-left:2em">
 		<mrow>

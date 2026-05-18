@@ -822,7 +822,7 @@
 		},
 		{
 			"name": "gr",
-			"description": "Golden ratio math library.",
+			"description": "Math library providing constants and functions for working with the golden ratio.",
 			"sourceFiles": ["gr.d"],
 			"dflags-dmd": ["-mv=arsd.gr=$PACKAGE_DIR/gr.d"],
 			"dflags-ldc": ["--mv=arsd.gr=$PACKAGE_DIR/gr.d"],
