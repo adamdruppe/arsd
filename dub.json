@@ -819,6 +819,25 @@
 			"dflags-dmd": ["-mv=arsd.ini=$PACKAGE_DIR/ini.d"],
 			"dflags-ldc": ["--mv=arsd.ini=$PACKAGE_DIR/ini.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.ini=$PACKAGE_DIR/ini.d"]
+		},
+		{
+			"name": "gr",
+			"description": "Math library providing constants and functions for working with the golden ratio.",
+			"sourceFiles": ["gr.d"],
+			"dflags-dmd": ["-mv=arsd.gr=$PACKAGE_DIR/gr.d"],
+			"dflags-ldc": ["--mv=arsd.gr=$PACKAGE_DIR/gr.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.gr=$PACKAGE_DIR/gr.d"],
+			"configurations": [
+				{
+					"name": "library",
+					"targetType": "library"
+				},
+				{
+					"name": "calculator",
+					"targetType": "executable",
+					"versions": ["ArsdGrCalculatorMain"]
+				}
+			]
 		}
 	]
 }
