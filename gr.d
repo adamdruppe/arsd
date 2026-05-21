@@ -588,6 +588,8 @@ if (std.traits.isFloatingPoint!Float) {
 			return runB(userInput, io);
 		}
 
+		io.stderr.writeHelp(args[0]);
+		io.stderr.writeln("Exiting: Nothing to do.");
 		return 1;
 	}
 
@@ -655,8 +657,14 @@ if (std.traits.isFloatingPoint!Float) {
 		import std.conv : text;
 		import std.string : indexOf, isNumeric, toLower;
 
-		args = args[1 .. $];
 		auto userInput = UserInput();
+
+		if (args.length < 1) {
+			userInput.error = "No arguments provided.";
+			return userInput;
+		}
+
+		args = args[1 .. $];
 
 		bool skip = false;
 
