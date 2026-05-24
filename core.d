@@ -4492,6 +4492,36 @@ unittest {
 	assert(FilePath("/home/me/test/").makeAbsolute(FilePath("/home/me/test/")).path == "/home/me/test/");
 }
 
+/++
+	History:
+		Moved from private function inside minigui to arsd.core on May 24, 2026
++/
+version(HasFile)
+FileType getFileType(string name) {
+	version(Windows) {
+		auto ws = WCharzBuffer(name);
+		auto ret = GetFileAttributesW(ws.ptr);
+		if(ret == INVALID_FILE_ATTRIBUTES)
+			return FileType.error;
+		return ((ret & FILE_ATTRIBUTE_DIRECTORY) != 0) ? FileType.dir : FileType.other;
+	} else version(Posix) {
+		import core.sys.posix.sys.stat;
+		stat_t buf;
+		auto ret = stat((name ~ '\0').ptr, &buf);
+		if(ret == -1)
+			return FileType.error;
+		// FIXME: what about a symlink to a dir? S_IFLNK then readlink then i believe stat it again.
+		return ((buf.st_mode & S_IFMT) == S_IFDIR) ? FileType.dir : FileType.other;
+	} else assert(0, "Not implemented");
+}
+
+/// ditto
+enum FileType {
+	error,
+	dir,
+	other
+}
+
 version(HasFile)
 /++
 	History:

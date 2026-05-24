@@ -18242,30 +18242,6 @@ class FilePicker : Dialog {
 	}
 }
 
-private enum FileType {
-	error,
-	dir,
-	other
-}
-
-private FileType getFileType(string name) {
-	version(Windows) {
-		auto ws = WCharzBuffer(name);
-		auto ret = GetFileAttributesW(ws.ptr);
-		if(ret == INVALID_FILE_ATTRIBUTES)
-			return FileType.error;
-		return ((ret & FILE_ATTRIBUTE_DIRECTORY) != 0) ? FileType.dir : FileType.other;
-	} else version(Posix) {
-		import core.sys.posix.sys.stat;
-		stat_t buf;
-		auto ret = stat((name ~ '\0').ptr, &buf);
-		if(ret == -1)
-			return FileType.error;
-		// FIXME: what about a symlink to a dir? S_IFLNK then readlink then i believe stat it again.
-		return ((buf.st_mode & S_IFMT) == S_IFDIR) ? FileType.dir : FileType.other;
-	} else assert(0, "Not implemented");
-}
-
 /*
 http://msdn.microsoft.com/en-us/library/windows/desktop/bb775947%28v=vs.85%29.aspx#check_boxes
 http://msdn.microsoft.com/en-us/library/windows/desktop/ms633574%28v=vs.85%29.aspx
