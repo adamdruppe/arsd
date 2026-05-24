@@ -75,6 +75,7 @@ import core.thread.fiber;
 struct ShellContext {
 	// stuff you set to interface with OS data
 	string delegate(scope const(char)[] name) getEnvironmentVariable;
+	void delegate(scope const(char)[] name, scope const(char)[] value) setEnvironmentVariable;
 	string delegate(scope const(char)[] username) getUserHome; // for ~ expansion. if the username is null, it should look up the current user.
 
 	// something you inform it of
@@ -120,7 +121,7 @@ enum QuoteStyle {
 /++
 
 +/
-alias Globber = string[] delegate(ShellLexeme[] str, ShellContext context);
+alias Globber = string[] delegate(ShellLexeme[] str, ShellContext context, bool addSlashesToDirectories);
 
 private bool isVarChar(char next) {
 	return (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || next == '_' || (next >= '0' && next <= '9');
@@ -440,7 +441,7 @@ ShellLexeme[] lexShellCommandLine(string commandLine) {
 		final switch(state) {
 			case State.consumingWhitespace:
 				switch(ch) {
-					case ' ', '\t', '\n':
+					case ' ', '\t', '\n', '\r':
 						// the arg separators should all be collapsed to exactly one
 						if(ret.length && !(ret[$-1].quoteStyle == QuoteStyle.none && ret[$-1].l == " "))
 							ret ~= ShellLexeme(" ");
@@ -963,7 +964,7 @@ ShellCommand[] parseShellCommand(ShellLexeme[] lexemes, ShellContext context, Gl
 
 				currentCommand = newCommand;
 			} else {
-				currentCommand.argv ~= globber(arg, context);
+				currentCommand.argv ~= globber(arg, context, false);
 			}
 		}
 	}
@@ -1060,6 +1061,10 @@ class Shell {
 		return context.exitRequested;
 	}
 
+	int exitErrorLevel() {
+		return context.mostRecentCommandStatus;
+	}
+
 	this() {
 		setCommandExecutors([
 			// providing for, set, export, cd, etc
@@ -1071,6 +1076,7 @@ class Shell {
 		]);
 
 		context.getEnvironmentVariable = toDelegate(&getEnvironmentVariable);
+		context.setEnvironmentVariable = toDelegate(&setEnvironmentVariable);
 		context.getUserHome = toDelegate(&getUserHome);
 
 		context.scriptArgs = ["one 1", "two 2", "three 3"];
@@ -1096,7 +1102,7 @@ class Shell {
 	/++
 		Expands shell input with filename wildcards into a list of matching filenames or unmodified names in the shell's current context.
 	+/
-	protected string[] glob(ShellLexeme[] ls, ShellContext context) {
+	protected string[] glob(ShellLexeme[] ls, ShellContext context, bool addSlashesToDirectories) {
 		if(ls.length == 0)
 			return null;
 
@@ -1139,12 +1145,23 @@ class Shell {
 			if(needsGlob) {
 				string[] matchingFiles;
 
-				// FIXME: wrong dir if there's a slash in the pattern...
-				getFiles(".", (string name, bool isDirectory) {
-					if(name.length && name[0] == '.' && (r.length == 0 || r[0] != '.'))
-						return; // skip hidden unless specifically requested
-					if(name.matchesFilePattern(r, '\xff'))
-						matchingFiles ~= name;
+				string searchDirectory = ".";
+				auto fp = FilePath(r);
+				auto prefix = fp.directoryName;
+				if(searchDirectory != ".")
+					fp = fp.makeAbsolute(FilePath(searchDirectory));
+
+				auto lookIn = fp.directoryName;
+				if(lookIn is null)
+					lookIn = searchDirectory;
+
+				getFiles(lookIn, (string name, bool isDirectory) {
+					if(name.length && name[0] == '.') {
+						if(!(r.length > 0 && r[0] != '.'))
+							return; // skip hidden unless specifically requested
+					}
+					if(name.matchesFilePattern(fp.filename, '\xff'))
+						matchingFiles ~= (lookIn == "." ? "" : lookIn) ~ name ~ ((addSlashesToDirectories && isDirectory) ? "/" : "");
 
 				});
 
@@ -1162,8 +1179,8 @@ class Shell {
 		return ret;
 	}
 
-	private final string[] globberForwarder(ShellLexeme[] ls, ShellContext context) {
-		return glob(ls, context);
+	private final string[] globberForwarder(ShellLexeme[] ls, ShellContext context, bool addSlashesToDirectories) {
+		return glob(ls, context, addSlashesToDirectories);
 	}
 
 	/++
@@ -1871,19 +1888,39 @@ class ShellControlExecutor : Shell.CommandExecutor {
 				return 0;
 			},
 			/++ Assigns a variable to the shell environment for use in this execution context, but that will not be passed to child process' environment. +/
-			"let": (scc) {
+			"set": (scc) {
+				// FIXME: error check
 				scc.context.vars[scc.args[1]] = scc.args[2];
 				return 0;
 			},
+			"export": (scc) {
+				// can `export FOO` or do `export FOO=value`
+				if(scc.context.setEnvironmentVariable) {
+					foreach(arg; scc.args[1 .. $]) {
+						auto split = arg.indexOf("=");
+						if(split == -1) {
+							if(arg in scc.context.vars)
+								scc.context.setEnvironmentVariable(arg, scc.context.vars[arg]);
+							else
+								return 1;
+						} else {
+							scc.context.setEnvironmentVariable(arg[0 .. split], arg[split +1 .. $]);
+						}
+					}
+					return 0;
+				} else {
+					return 1;
+				}
+			},
 			"exit": (scc) {
+				import arsd.conv;
 				scc.context.exitRequested = true;
-				return 0;
+				return scc.args.length > 1 ? to!int(scc.args[1]) : 0;
 			},
 			// "pushd" / "popd" / "dirs"
 			// "time" - needs the process handle to get more info
 			// "which"
-			// "set"
-			// "export"
+			// "let" - allows arithmetic
 			// "source" -- run a script in the current environment
 			// "builtin" / "execute" ?
 			// "history"
@@ -2243,7 +2280,7 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 			foreach(file; files[0 .. $-1]) {
 				version(Windows) {
 					WCharzBuffer bfr = file;
-					if(!CopyFileW(bfr.ptr, dst.ptr))
+					if(!CopyFileW(bfr.ptr, dst.ptr, false /* file if exists */))
 						throw new WindowsApiException("CopyFileW", GetLastError());
 				} else version(Posix) {
 					throw new Exception("not implemented");
@@ -2366,6 +2403,8 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 				static if(__traits(getProtection, __traits(getMember, Commands, memberName)) == "public")
 					case memberName:
 						return MatchesResult.yes;
+			case "builtin":
+				return MatchesResult.yes;
 			default:
 				return MatchesResult.no;
 		}
@@ -2389,7 +2428,10 @@ class CoreutilFallbackExecutor : Shell.CommandExecutor {
 
 			import arsd.cli;
 			// FIXME: forward status through
-			runCli!Commands(["builtin"] ~ command.argv, CommandRunningContext(stdin, stdout, stderr));
+			if(command.argv[0] == "builtin")
+				runCli!Commands(command.argv, CommandRunningContext(stdin, stdout, stderr));
+			else
+				runCli!Commands(["builtin"] ~ command.argv, CommandRunningContext(stdin, stdout, stderr));
 		}
 
 		auto thread = new Thread(&runner);
@@ -2407,9 +2449,71 @@ class BuiltinShellCommand {
 
 /++
 	Constructs an instance of [arsd.terminal.LineGetter] appropriate for use in a repl for this shell.
+
+	This is templated so it need not actually import arsd.terminal unless used, but you MUST pass an arsd.terminal.Terminal
+	object to the template.
 +/
-auto constructLineGetter()() {
-	return null;
+auto constructLineGetter(Terminal)(Terminal* terminal, string historyFileName, Shell shell) {
+	import arsd.terminal;
+	static assert(is(arsd.terminal.Terminal == Terminal));
+
+	static class ShellLineGetter : LineGetter {
+		mixin LineGetterConstructors;
+
+		Shell shell;
+
+		override size_t tabCompleteStartPoint(in dchar[] candidate, in dchar[] afterCursor) {
+			import arsd.string;
+			foreach_reverse(idx, dchar c; candidate)
+				if(c == ' ')
+					return idx + 1;
+			return 0;
+		}
+
+		override protected string[] tabComplete(in dchar[] candidate, in dchar[] afterCursor) {
+			import arsd.core;
+
+			char[120] buffer;
+			auto candidateUtf8 = transcodeUtf(candidate, buffer[]).idup;
+
+			string[] list;
+
+			// FIXME: this thing will expand ~ to the full name, but then the terminal.d prefix checker will reject it!
+			//list = shell.globberForwarder(lexShellCommandLine(candidateUtf8 ~ "*"), shell.context, true);
+
+			// terminal.writeln(candidateUtf8, list);
+
+			// no we want it to show the expansion here, but the auto-selected expansion keeps the user input...
+
+			///+
+			string searchDirectory = ".";
+			auto fp = FilePath(cast(string) candidateUtf8);
+			auto prefix = fp.directoryName;
+			if(searchDirectory != ".")
+				fp = fp.makeAbsolute(FilePath(searchDirectory));
+
+			auto lookIn = fp.directoryName;
+			if(lookIn is null)
+				lookIn = searchDirectory;
+
+			try
+			getFiles(lookIn, (string name, bool isDirectory) {
+				list ~= cast(string) prefix ~ name ~ (isDirectory ? "/" : "");
+			});
+			catch(Exception e) {
+				// just carry on, not important if it fails
+				logSwallowedException(e);
+			}
+			//+/
+
+			filenameStringSort(list);
+			return list;
+		}
+	}
+
+	auto slg = new ShellLineGetter(terminal, historyFileName);
+	slg.shell = shell;
+	return slg;
 }
 
 /++

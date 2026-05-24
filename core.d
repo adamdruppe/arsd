@@ -4493,6 +4493,8 @@ unittest {
 }
 
 /++
+	I might change this to be like GetFileInformationByHandle and fstat instead.
+
 	History:
 		Moved from private function inside minigui to arsd.core on May 24, 2026
 +/
@@ -4521,6 +4523,36 @@ enum FileType {
 	dir,
 	other
 }
+
+/+
+	FindNextFileW returns the times, size, attributes
+	readdir returns just a type, no size, no mode, no times.
++/
+/+
+struct FileInformation {
+	SimplifiedUtcTimestamp creationTime; // not necessarily present
+	SimplifiedUtcTimestamp lastModificationTime;
+
+	long deviceId;
+	long fileId; // inode number on linux
+
+	long fileSize;
+
+	long attributes; // platform-specific, attributes bits on windows, mode bits on linux
+
+	int numberOfLinks;
+
+	// info about ownership is not given by the OS on Windows without additional calls, but stat does give user and group id
+	int owner;
+	int group;
+
+	// some parsed out info
+	FileType fileType;
+	bool isHidden;
+	bool isExecutable;
+	// bool isReadOnly; // not really reliable tbh just the windows checkbox would be usable
+}
++/
 
 version(HasFile)
 /++
@@ -11303,6 +11335,29 @@ string getEnvironmentVariable(scope const(char)[] name) {
 
 		return makeUtf8StringFromWindowsString(buffer[0 .. ret]);
 	} else static assert(0);
+}
+
+/++
+	As the C function it calls, this is not thread safe. Always overwrites existing values.
+
+	History:
+		Added May 23, 2026
++/
+void setEnvironmentVariable(scope const(char)[] name, scope const(char)[] value) {
+	version(Posix) {
+		import core.sys.posix.stdlib;
+		CharzBuffer namez = name;
+		CharzBuffer valuez = value;
+		if(setenv(namez.ptr, valuez.ptr, 1) != 0) {
+			throw new ErrnoApiException("setenv", errno);
+		}
+	} else version(Windows) {
+		WCharzBuffer namew = name;
+		WCharzBuffer valuew = value;
+		if(!SetEnvironmentVariable(namew.ptr, valuew.ptr)) {
+			throw new WindowsApiException("SetEnvironmentVariable", GetLastError());
+		}
+	}
 }
 
 /+
