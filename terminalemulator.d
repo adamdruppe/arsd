@@ -678,6 +678,14 @@ class TerminalEmulator {
 	// assuming Key is an enum with members just like the one in simpledisplay.d
 	// returns true if it was handled here
 	protected bool defaultKeyHandler(Key)(Key key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+		version(winpty) {
+			// winpty butchers things and requires 127 as backspace and 8 as ctrl+backspace (and it swaps it when sending to the windows console programs! wild)
+			if(key == Key.Backspace && ctrl && !shift && !alt && !windows) {
+				sendToApplication("\b");
+				return true;
+			}
+		}
+
 		enum bool KeyHasNamedAscii = is(typeof(Key.A));
 
 		static string magic() {
@@ -807,6 +815,12 @@ class TerminalEmulator {
 		import std.utf;
 		//if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
 		auto data = str[0 .. encode(str, c)];
+
+		version(winpty)
+		if(c == 8) {
+			sendToApplication(str[0 .. encode(str, 127)]);
+			c = 127;
+		}
 
 		// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
 		if(c != 127)
