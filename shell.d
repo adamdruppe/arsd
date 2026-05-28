@@ -2550,7 +2550,15 @@ void enableInteractiveShell() {
 		/* Save default terminal attributes for shell.  */
 		//tcgetattr (0, &shell_tmodes);
 	} else version(Windows) {
-		SetConsoleCtrlHandler(null, true);
+		extern(Windows) static BOOL Handler(DWORD type) {
+			if(type == 0) // ctrl+c
+				return true; // do nothing more
+			return false; // resume default processing chain
+		}
+		// don't want to set a null handler because that ignore
+		// thing is inherited by child processes. easier to just
+		// catch and ignore locally like this.
+		SetConsoleCtrlHandler(&Handler, true);
 	}
 }
 

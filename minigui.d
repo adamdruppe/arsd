@@ -4669,7 +4669,15 @@ class DataControllerWidget(T) : WidgetContainer {
 					updaters ~= updateWidgetFromData;
 				if(updateDataFromWidget)
 				w.addEventListener(EventType.change, (Event ev) {
-					updateDataFromWidget();
+					try {
+						updateDataFromWidget();
+						ev.target.setDynamicState(DynamicState.invalid, false);
+					} catch(Exception e) {
+						// FIXME: do something a little bit cuter here... highlight validation error
+						// FIXME: also make sure the automatic dialog on error handler is something
+						ev.target.setDynamicState(DynamicState.invalid, true);
+						parent.parentWindow.messageBox(e.msg);
+					}
 				});
 			}
 			/+
@@ -4864,6 +4872,9 @@ private static auto widgetFor(alias tt, P)(P* valptr, Widget parent, out void de
 				auto le = new LabeledLineEdit(displayName, parent);
 				updateWidgetFromData = () { le.content = toInternal!string(*valptr); };
 				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				le.addEventListener((FocusInEvent fe) {
+					le.selectAll();
+				});
 				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) : const double)) {
@@ -4874,12 +4885,18 @@ private static auto widgetFor(alias tt, P)(P* valptr, Widget parent, out void de
 					import std.conv;
 				updateWidgetFromData = () { le.content = to!string(*valptr); };
 				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				le.addEventListener((FocusInEvent fe) {
+					le.selectAll();
+				});
 				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) : const string)) {
 				auto le = new LabeledLineEdit(displayName, parent);
 				updateWidgetFromData = () { le.content = *valptr; };
 				updateDataFromWidget = () { *valptr = to!P(le.content); };
+				le.addEventListener((FocusInEvent fe) {
+					le.selectAll();
+				});
 				updateWidgetFromData();
 				return le;
 			} else static if(is(typeof(tt) == E[], E)) {
@@ -11406,14 +11423,23 @@ private void delegate() makeAutomaticHandler(alias fn, T)(Window window, T t) {
 				});
 			}
 			return () {
-				dialog(window, (S s) {
+				S initial;
+				import arsd.core;
+				static foreach(idx, ignore; Params) {
+					static if(idx >= firstDefaultParam!(fn))
+						initial.tupleof[idx] = defaultParam!(fn, idx)();
+				}
+				dialog(window, initial, (S s) {
 					try {
 						static if(is(typeof(t) Ret == return)) {
 							static if(is(Ret == void)) {
 								t(s.tupleof);
 							} else {
 								auto ret = t(s.tupleof);
-								import std.conv;
+								version(D_OpenD)
+									import arsd.conv;
+								else
+									import std.conv;
 								messageBox(to!string(ret), "Returned Value");
 							}
 						}
@@ -12627,6 +12653,8 @@ private void extractWindowsStyleLabel(scope const char[] label, out string thisL
 
 	History:
 		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
+
+		The FieldSet alias was added on May 25, 2026
 +/
 class Fieldset : Widget {
 	// FIXME: on Windows,it doesn't draw the background on the label
@@ -12717,6 +12745,9 @@ class Fieldset : Widget {
 		return 6 + cast(int) this.legend.length * 7;
 	}
 }
+
+/// ditto
+alias FieldSet = Fieldset;
 
 /++
 	$(IMG //arsdnet.net/minigui-screenshots/windows/Fieldset.png, A box saying "baby will" with three round buttons inside it for the options of "eat", "cry", and "sleep")
@@ -13379,6 +13410,8 @@ struct ImageLabel {
 
 	History:
 		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
+
+		The CheckBox alias was added May 25, 2026
 +/
 class Checkbox : MouseActivatedWidget {
 	version(win32_widgets) {
@@ -13513,6 +13546,9 @@ class Checkbox : MouseActivatedWidget {
 	mixin Emits!(ChangeEvent!bool);
 }
 
+/// ditto
+alias CheckBox = Checkbox;
+
 /// Adds empty space to a layout.
 class VerticalSpacer : Widget {
 	private int mh;
@@ -13573,6 +13609,8 @@ class HorizontalSpacer : Widget {
 
 	History:
 		The ampersand behavior was always the case on Windows, but it wasn't until June 15, 2021 when Linux was changed to match it and the documentation updated to reflect it.
+
+		The RadioButton and RadioBox aliases were added on May 25, 2026.
 +/
 class Radiobox : MouseActivatedWidget {
 
@@ -13661,6 +13699,11 @@ class Radiobox : MouseActivatedWidget {
 	/// Emits a change event with if it is checked. Note that when you select one in a group, that one will emit changed with value == true, and the previous one will emit changed with value == false right before. A button group may catch this and change the event.
 	mixin Emits!(ChangeEvent!bool);
 }
+
+/// ditto
+alias RadioBox = Radiobox;
+/// ditto
+alias RadioButton = Radiobox;
 
 
 /++
@@ -14256,7 +14299,8 @@ class TextDisplayHelper : Widget {
 	override void defaultEventHandler_blur(BlurEvent ev) {
 		super.defaultEventHandler_blur(ev);
 		if(l.wasMutated()) {
-			auto evt = new ChangeEvent!string(this, &this.content);
+			// event target changed May 27, 2026
+			auto evt = new ChangeEvent!string(this.smw.parent, &this.content);
 			evt.dispatch();
 			l.clearWasMutatedFlag();
 		}
@@ -15185,7 +15229,11 @@ abstract class EditableTextWidget : Widget {
 
 	static class Style : Widget.Style {
 		override WidgetBackground background() {
-			return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+			if(widget.dynamicState & DynamicState.invalid) {
+				return WidgetBackground(Color(0xff, 0xcc, 0xcc));
+			} else {
+				return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
+			}
 		}
 
 		override Color foregroundColor() {
@@ -15198,6 +15246,10 @@ abstract class EditableTextWidget : Widget {
 
 		override MouseCursor cursor() {
 			return GenericCursor.Text;
+		}
+
+		override bool variesWithState(ulong dynamicStateFlags) {
+			return super.variesWithState(dynamicStateFlags) || (dynamicStateFlags & (DynamicState.invalid));
 		}
 	}
 	mixin OverrideStyle!Style;

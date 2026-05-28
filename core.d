@@ -3012,6 +3012,38 @@ unittest {
 }
 
 /++
+	Given a function and a parameter index, returns a function that only takes that parameter and returns it.
+	If called with zero arguments, it returns the default value, if it exists. If not, you'll get a compiler error.
+
+	Note that it is a function because function parameters in D can have function calls, including side effects, as a default argument.
+
+	`firstDefaultParam` returns the index of the first `defaultParam` for the given function `fn` that can be called without an argument.
+
+	On older compilers, `firstDefaultParam` may always be parameters.length, since `defaultParam` requires a relatively new language feature
+	(`__traits(parameters)`, introduced in upstream D 2.099.0, released March 6, 2022).
+
+	History:
+		Added May 26, 2026
++/
+template defaultParam(alias fn, size_t idx) {
+	static if(is(typeof(fn) PT == __parameters)) {
+		auto defaultParam(PT[idx .. idx + 1]) {
+			return __traits(parameters)[0];
+		}
+	}
+}
+
+/// ditto
+size_t firstDefaultParam(alias fn)() {
+	static if(is(typeof(fn) PT == __parameters))
+	static foreach_reverse(enum idx; 0 .. PT.length) {
+		static if(!is(typeof(defaultParam!(fn, idx)())))
+			return idx + 1;
+	}
+	return 0;
+}
+
+/++
 	Declares a delegate property with several setters to allow for handlers that don't care about the arguments.
 
 	Throughout the arsd library, you will often see types of these to indicate that you can set listeners with or without arguments. If you care about the details of the callback event, you can set a delegate that declares them. And if you don't, you can set one that doesn't even declare them and it will be ignored.
