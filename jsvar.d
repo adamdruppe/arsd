@@ -1515,6 +1515,15 @@ struct var {
 		}
 	}
 
+	public ref var opIndex(int idx, string file = __FILE__, size_t line = __LINE__) {
+		return this.opIndex(cast(size_t) idx, file, line);
+	}
+
+	public ref var opIndexAssign(T)(T t, int idx, string file = __FILE__, size_t line = __LINE__) {
+		return this.opIndexAssign(t, cast(size_t) idx, file, line);
+	}
+
+
 	ref var _getOwnProperty(string name, string file = __FILE__, size_t line = __LINE__) {
 		if(_type == Type.Object) {
 			if(_payload._object !is null) {
