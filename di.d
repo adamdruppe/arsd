@@ -1,5 +1,5 @@
 /+
-	== oceandrift/di ==
+	== arsd.di (originally known as *oceandrift/di*)==
 	Copyright Elias Batek 2024.
 	Distributed under the Boost Software License, Version 1.0.
  +/
@@ -143,7 +143,7 @@
 	While the injection of a `DatabaseClient` into dependent services principally works like before,
 	the framework cannot instantiate a new one by itself.
 	Hence it is that an instance has to be registered with the framework in advance.
-	A user-created `DatabaseClient` can provided by passing it to [oceandrift.di.DI.register|register()].
+	A user-created `DatabaseClient` can provided by passing it to [arsd.di.DI.register|register()].
 
 	The framework will pick up on it later, when it constructs `LoginService`
 	or, failing that, if no custom instance has been registered beforehand,
@@ -182,7 +182,7 @@
 	and use it for all dependent objects.
 
 	When this behavior is not desired, it’s recommended to instantiate a new object in the constructor.
-	Check out [oceandrift.di.DI.makeNew|makeNew!(T)].
+	Check out [arsd.di.DI.makeNew|makeNew!(T)].
 
 	$(TIP
 		The DI framework can inject a reference to itself.
@@ -219,7 +219,7 @@
 	auto di = new DI();
 	---
  +/
-module oceandrift.di;
+module arsd.di;
 
 /++
 	### Extended version of the front-page example
@@ -963,7 +963,7 @@ enum _diConstructorUDA;
 	and assigns the passed value to the corresponding field.
  +/
 mixin template DIConstructor() {
-	import oceandrift.di : dependency, diConstructorString, _diConstructorUDA;
+	import arsd.di : dependency, diConstructorString, _diConstructorUDA;
 
 	mixin(diConstructorString!(typeof(this)));
 }
