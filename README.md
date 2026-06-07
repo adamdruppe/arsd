@@ -29,6 +29,7 @@ Future release, likely May 2026 or later.
 Pending changes:
     * arsd.jsvar's toJson function now includes `null` values by default. This is to make json use cases easier. You can get the old behavior back by setting the `var.includeExplicitNullsWhenConvertingToJson = false;` setting in your thread.
 	* arsd.gr, a math library for golden ratio constants and calculations, was added.
+	* arsd.di, the dependency injection (DI) framework originally developed as *oceandrift/di*, was added.
 
 Planned changes:
 

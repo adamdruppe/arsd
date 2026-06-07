@@ -838,6 +838,14 @@
 					"versions": ["ArsdGrCalculatorMain"]
 				}
 			]
+		},
+		{
+			"name": "di",
+			"description": "Lightweight Dependency Injection (DI) framework.",
+			"sourceFiles": ["di.d"],
+			"dflags-dmd": ["-mv=arsd.di=$PACKAGE_DIR/di.d"],
+			"dflags-ldc": ["--mv=arsd.di=$PACKAGE_DIR/di.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.di=$PACKAGE_DIR/di.d"]
 		}
 	]
 }
