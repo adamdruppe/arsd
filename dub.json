@@ -716,6 +716,20 @@
 			"dflags-gdc": ["-fmodule-file=arsd.pixmappaint=$PACKAGE_DIR/pixmappaint.d"]
 		},
 		{
+			"name": "pixmappaint-addon-gamut",
+			"description": "Add-on for pixmappaint that integrates AuburnSounds Gamut.",
+			"targetType": "library",
+			"sourceFiles": ["pixmappaint_addons/gamut.d"],
+			"dependencies": {
+				"arsd-official:core":"*",
+				"arsd-official:pixmappaint":"*",
+				"gamut":">=2.0.0 <4.0.0"
+			},
+			"dflags-dmd": ["-mv=arsd.pixmappaint_addons.gamut=$PACKAGE_DIR/pixmappaint_addons/gamut.d"],
+			"dflags-ldc": ["--mv=arsd.pixmappaint_addons.gamut=$PACKAGE_DIR/pixmappaint_addons/gamut.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.pixmappaint_addons.gamut=$PACKAGE_DIR/pixmappaint_addons/gamut.d"]
+		},
+		{
 			"name": "pixmaprecorder",
 			"description": "Video rendering extension for Pixmap Paint. Fancy wrapper for piping frame data to FFmpeg.",
 			"targetType": "library",
