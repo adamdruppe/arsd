@@ -18,7 +18,7 @@ import arsd.core;
 import arsd.pixmappaint;
 static import gamut;
 
-alias GamutImage = gamut.Image;
+private alias GamutImage = gamut.Image;
 
 /++
 	This means that something went wrong using the $(I Gamut) integration of Pixmap Paint.
