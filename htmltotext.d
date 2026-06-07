@@ -10,6 +10,7 @@ import arsd.color;
 import std.string;
 
 import std.uni : isWhite;
+import std.string : indexOf, startsWith, endsWith, strip;
 
 ///
 class HtmlConverter {

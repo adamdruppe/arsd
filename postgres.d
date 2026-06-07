@@ -59,10 +59,13 @@ class PostgreSql : Database {
 		this.connectionString = connectionString;
 		conn = PQconnectdb(toStringz(connectionString));
 		if(conn is null)
-			throw new DatabaseException("Unable to allocate PG connection object");
-		if(PQstatus(conn) != CONNECTION_OK)
-			throw new DatabaseException(error());
+			throw new DatabaseConnectionException("Unable to allocate PG connection object");
+		if(PQstatus(conn) != CONNECTION_OK) {
+			this.connectionOk = false;
+			throw new DatabaseConnectionException(error());
+		}
 		query("SET NAMES 'utf8'"); // D does everything with utf8
+		this.connectionOk = true;
 	}
 
 	string connectionString;
@@ -75,6 +78,11 @@ class PostgreSql : Database {
 		return "'" ~ escape(s.toISOExtString()) ~ "'::timestamptz";
 	}
 
+	private bool connectionOk;
+	override bool isAlive() {
+		return connectionOk;
+	}
+
 	/**
 		Prepared statement support
 
@@ -85,16 +93,17 @@ class PostgreSql : Database {
 	*/
 
 	ResultSet executePreparedStatement(T...)(string name, T args) {
-		char*[args.length] argsStrings;
+		const(char)*[args.length] argsStrings;
 
 		foreach(idx, arg; args) {
 			// FIXME: optimize to remove allocations here
+			import std.conv;
 			static if(!is(typeof(arg) == typeof(null)))
 				argsStrings[idx] = toStringz(to!string(arg));
 			// else make it null
 		}
 
-		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argStrings.ptr, 0, null, 0);
+		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argsStrings.ptr, null, null, 0);
 
 		int ress = PQresultStatus(res);
 		if(ress != PGRES_TUPLES_OK
@@ -130,12 +139,14 @@ class PostgreSql : Database {
 				PQfinish(conn);
 				conn = PQconnectdb(toStringz(connectionString));
 				if(conn is null)
-					throw new DatabaseException("Unable to allocate PG connection object");
-				if(PQstatus(conn) != CONNECTION_OK)
-					throw new DatabaseException(error());
+					throw new DatabaseConnectionException("Unable to allocate PG connection object");
+				if(PQstatus(conn) != CONNECTION_OK) {
+					this.connectionOk = false;
+					throw new DatabaseConnectionException(error());
+				}
 				goto retry;
 			}
-			throw new DatabaseException(error());
+			throw new SqlException(error());
 		}
 
 		return new PostgresResult(res);
@@ -178,13 +189,97 @@ class PostgreSql : Database {
 		PGconn* conn;
 }
 
+/+
+# when it changes from lowercase to upper case, call that a new word. or when it goes to/from anything else and underscore or dashes.
++/
+
+struct PreparedStatementDescription {
+	PreparedStatementResult[] result;
+}
+
+struct PreparedStatementResult {
+	string fieldName;
+	DatabaseDatum type;
+}
+
+PreparedStatementDescription describePrepared(PostgreSql db, string name) {
+	auto res = PQdescribePrepared(db.conn, name.toStringz);
+
+	PreparedStatementResult[] ret;
+
+	// PQnparams PQparamtype for params
+	auto numFields = PQnfields(res);
+	foreach(num; 0 .. numFields) {
+		auto typeId = PQftype(res, num);
+		DatabaseDatum dd;
+		dd.platformSpecificTag = typeId;
+		dd.storage = sampleForOid(typeId);
+		ret ~= PreparedStatementResult(
+			copyCString(PQfname(res, num)),
+			dd,
+		);
+	}
+
+	PQclear(res);
+
+	return PreparedStatementDescription(ret);
+}
+
+import arsd.core : LimitedVariant, PackedDateTime, SimplifiedUtcTimestamp;
+LimitedVariant sampleForOid(int platformSpecificTag) {
+	switch(platformSpecificTag) {
+		case BOOLOID:
+			return LimitedVariant(false);
+		case BYTEAOID:
+			return LimitedVariant(cast(const(ubyte)[]) null);
+		case TEXTOID:
+		case VARCHAROID:
+			return LimitedVariant("");
+		case INT4OID:
+			return LimitedVariant(0);
+		case INT8OID:
+			return LimitedVariant(0L);
+		case FLOAT4OID:
+			return LimitedVariant(0.0f);
+		case FLOAT8OID:
+			return LimitedVariant(0.0);
+		case TIMESTAMPOID:
+		case TIMESTAMPTZOID:
+			return LimitedVariant(SimplifiedUtcTimestamp(0));
+		case DATEOID:
+			PackedDateTime d;
+			d.hasDate = true;
+			return LimitedVariant(d); // might want a different type so contains shows the thing without checking hasDate and hasTime
+		case TIMETZOID: // possibly wrong... the tz isn't in my packed thing
+		case TIMEOID:
+			PackedDateTime d;
+			d.hasTime = true;
+			return LimitedVariant(d);
+		case INTERVALOID:
+			// months, days, and microseconds
+
+		case NUMERICOID: // aka decimal
+		default:
+			// when in doubt, assume it is just a string
+			return LimitedVariant("sample");
+	}
+}
+
+private string toLowerFast(string s) {
+	import std.ascii : isUpper;
+	foreach (c; s)
+		if (c >= 0x80 || isUpper(c))
+			return toLower(s);
+	return s;
+}
+
 ///
 class PostgresResult : ResultSet {
 	// name for associative array to result index
 	int getFieldIndex(string field) {
 		if(mapping is null)
 			makeFieldMapping();
-		field = field.toLower;
+		field = field.toLowerFast;
 		if(field in mapping)
 			return mapping[field];
 		else throw new Exception("no mapping " ~ field);
@@ -338,8 +433,11 @@ extern(C) {
 	void PQclear(PGresult*);
 
 	PGresult* PQprepare(PGconn*, const char* stmtName, const char* query, int nParams, const void* paramTypes);
+	int PQsendPrepare(PGconn*, const char*, const char*, int, const Oid*);
 
 	PGresult* PQexecPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+	int PQsendQueryPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+	int PQsendClosePrepared(PGconn* conn, const char* name);
 
 	int PQresultStatus(PGresult*); // FIXME check return value
 
@@ -352,8 +450,31 @@ extern(C) {
 	size_t PQescapeString (char *to, const char *from, size_t length);
 
 	enum int CONNECTION_OK = 0;
+
+	enum int PGRES_EMPTY_QUERY = 0;
 	enum int PGRES_COMMAND_OK = 1;
 	enum int PGRES_TUPLES_OK = 2;
+	enum int PGRES_COPY_OUT = 3;
+	enum int PGRES_COPY_IN = 4;
+	enum int PGRES_BAD_RESPONSE = 5;
+	enum int PGRES_NONFATAL_ERROR = 6;
+	enum int PGRES_FATAL_ERROR = 7;
+	enum int PGRES_COPY_BOTH = 8;
+	enum int PGRES_SINGLE_TUPLE = 9;
+	enum int PGRES_PIPELINE_SYNC = 10;
+	enum int PGRES_PIPELINE_ABORTED = 11;
+	// looks like chunks was added in pq version 17...
+
+	int PQsetSingleRowMode(PGconn* conn);
+
+	// https://www.postgresql.org/docs/current/libpq-notify.html
+
+	enum int PGRES_POLLING_FAILED = 0;
+	enum int PGRES_POLLING_READING = 1;
+	enum int PGRES_POLLING_WRITING = 2;
+	enum int PGRES_POLLING_OK = 3;
+	PGconn* PQconnectStart(const char* connInfo);
+	int PQconnectPoll(PGconn* conn);
 
 	int PQgetlength(const PGresult *res,
 			int row_number,
@@ -365,7 +486,22 @@ extern(C) {
 	int PQfformat(const PGresult *res, int column_number);
 
 	alias Oid = int;
+	enum BOOLOID = 16;
 	enum BYTEAOID = 17;
+	enum TEXTOID = 25;
+	enum INT4OID = 23; // integer
+	enum INT8OID = 20; // bigint
+	enum NUMERICOID = 1700;
+	enum FLOAT4OID = 700;
+	enum FLOAT8OID = 701;
+	enum VARCHAROID = 1043;
+	enum DATEOID = 1082;
+	enum TIMEOID = 1083;
+	enum TIMESTAMPOID = 1114;
+	enum TIMESTAMPTZOID = 1184;
+	enum INTERVALOID = 1186;
+	enum TIMETZOID = 1266;
+
 	Oid PQftype(const PGresult* res, int column_number);
 
 	char *PQescapeByteaConn(PGconn *conn,
@@ -377,6 +513,34 @@ extern(C) {
 
 	char* PQcmdTuples(PGresult *res);
 
+	int PQsendQuery(PGconn* conn, const char* command);
+	int PQsendQueryParams(PGconn* conn, const char* command, int params, const Oid* paramTypes, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
+
+	PGresult *PQdescribePrepared(PGconn *conn, const char *stmtName);
+	int PQsendDescribePrepared(PGconn *conn, const char *stmtName);
+
+	PGresult* PQgetResult(PGconn* conn); // call until it returns null
+
+	int PQenterPipelineMode(PGconn* conn); // returns 1 on success
+	int PQexitPipelineMode(PGconn* conn); // ditto
+	PGpipelineStatus PQpipelineStatus(const PGconn* conn);
+	enum PGpipelineStatus {
+		// FIXME: confirm values
+		PQ_PIPELINE_ON,
+		PQ_PIPELINE_OFF,
+		PQ_PIPELINE_ABORTED
+	}
+	int PQpipelineSync(PGconn* conn);
+	int PQsendPipelineSync(PGconn* conn);
+	int PQsendFlushRequest(PGconn* conn);
+
+	int PQconsumeInput(PGconn* conn);
+	int PQisBusy(PGconn* conn);
+
+	int PQsetnonblocking(PGconn* conn, int arg);
+	int PQflush(PGconn* conn); // if returns 1, wait for socket readiness
+
+	int PQsocket(const PGconn* conn); // returns a fd
 }
 
 /*

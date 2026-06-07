@@ -2531,7 +2531,6 @@ import core.stdc.stdarg;
 
 //version (Android):
 extern (System):
-@system:
 nothrow:
 @nogc:
 
@@ -2590,6 +2589,8 @@ enum JNI_EDETACHED = -2;
 enum JNI_EVERSION = -3;
 enum JNI_COMMIT = 1;
 enum JNI_ABORT = 2;
+
+@system:
 
 struct JNINativeMethod
 {

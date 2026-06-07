@@ -103,7 +103,9 @@
 		                                        // always have a size that is a
 		                                        // multiple of the internal
 		                                        // resolution.
-		// The gentle reader might have noticed that the integer scaling will result
+		                                        // → Also check out the
+		                                        // `intHybrid` scaling mode.
+		// The gentle reader might have noticed that integer scaling will result
 		// in a padding/border area around the image for most window sizes.
 		// How about changing its color?
 		cfg.renderer.background = ColorF(Pixel.white);
@@ -192,7 +194,12 @@ alias Pixmap = arsd.pixmappaint.Pixmap;
 alias WindowResizedCallback = void delegate(Size);
 
 // is the Timer class available on this platform?
-private enum hasTimer = is(Timer == class);
+private enum hasTimer = is(arsd.simpledisplay.Timer == class);
+
+// resolve symbol clash on “Timer” (arsd.core vs arsd.simpledisplay)
+static if (hasTimer) {
+	private alias Timer = arsd.simpledisplay.Timer;
+}
 
 // viewport math
 private @safe pure nothrow @nogc {
@@ -366,12 +373,6 @@ enum Scaling {
 }
 
 ///
-enum ScalingFilter {
-	nearest, /// nearest neighbor → blocky/pixel’ish
-	linear, /// (bi-)linear interpolation → smooth/blurry
-}
-
-///
 struct PresenterConfig {
 	Window window; ///
 	Renderer renderer; ///
@@ -390,7 +391,7 @@ struct PresenterConfig {
 		Scaling scaling = Scaling.keepAspectRatio;
 
 		/++
-			Filter
+			Scaling filter
 		 +/
 		ScalingFilter filter = ScalingFilter.nearest;
 
@@ -408,8 +409,26 @@ struct PresenterConfig {
 
 	///
 	static struct Window {
+		///
 		string title = "ARSD Pixmap Presenter";
+
+		///
 		Size size;
+
+		/++
+			Window corner style
+
+			$(NOTE
+				At the time of writing, this is only implemented on Windows.
+				It has no effect elsewhere for now but does no harm either.
+
+				Windows: Requires Windows 11 or later.
+			)
+
+			History:
+				Added September 10, 2024.
+		 +/
+		CornerStyle corners = CornerStyle.rectangular;
 	}
 }
 
@@ -492,8 +511,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 	private {
 		PresenterObjectsContainer* _poc;
 
-		bool _clear = true;
-
 		GLfloat[16] _vertices;
 		OpenGlShader _shader;
 		GLuint _vao;
@@ -512,6 +529,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 
 	public void setup(PresenterObjectsContainer* pro) {
 		_poc = pro;
+		_poc.window.suppressAutoOpenglViewport = true;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
 		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
@@ -528,16 +546,13 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		}
 
 		void redrawOpenGlScene() {
-			if (_clear) {
-				glClearColor(
-					_poc.config.renderer.background.r,
-					_poc.config.renderer.background.g,
-					_poc.config.renderer.background.b,
-					_poc.config.renderer.background.a
-				);
-				glClear(GL_COLOR_BUFFER_BIT);
-				_clear = false;
-			}
+			glClearColor(
+				_poc.config.renderer.background.r,
+				_poc.config.renderer.background.g,
+				_poc.config.renderer.background.b,
+				_poc.config.renderer.background.a
+			);
+			glClear(GL_COLOR_BUFFER_BIT);
 
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, _texture);
@@ -618,7 +633,7 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;
@@ -645,7 +660,6 @@ final class OpenGl3PixmapRenderer : PixmapRenderer {
 		glViewportPMP(viewport);
 
 		this.setupTexture();
-		_clear = true;
 	}
 
 	void redrawSchedule() {
@@ -685,8 +699,6 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 	private {
 		PresenterObjectsContainer* _poc;
-		bool _clear = true;
-
 		GLuint _texture = 0;
 	}
 
@@ -703,6 +715,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 	public void setup(PresenterObjectsContainer* poc) {
 		_poc = poc;
+		_poc.window.suppressAutoOpenglViewport = true;
 		_poc.window.visibleForTheFirstTime = &this.visibleForTheFirstTime;
 		_poc.window.redrawOpenGlScene = &this.redrawOpenGlScene;
 	}
@@ -729,7 +742,7 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 				break;
-			case linear:
+			case bilinear:
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 				break;
@@ -763,16 +776,13 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 		}
 
 		void redrawOpenGlScene() {
-			if (_clear) {
-				glClearColor(
-					_poc.config.renderer.background.r,
-					_poc.config.renderer.background.g,
-					_poc.config.renderer.background.b,
-					_poc.config.renderer.background.a,
-				);
-				glClear(GL_COLOR_BUFFER_BIT);
-				_clear = false;
-			}
+			glClearColor(
+				_poc.config.renderer.background.r,
+				_poc.config.renderer.background.g,
+				_poc.config.renderer.background.b,
+				_poc.config.renderer.background.a,
+			);
+			glClear(GL_COLOR_BUFFER_BIT);
 
 			glBindTexture(GL_TEXTURE_2D, _texture);
 			glEnable(GL_TEXTURE_2D);
@@ -815,8 +825,6 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 
 		this.setupTexture();
 		this.setupMatrix();
-
-		_clear = true;
 	}
 
 	public void redrawSchedule() {
@@ -827,6 +835,40 @@ final class OpenGl1PixmapRenderer : PixmapRenderer {
 		_poc.window.redrawOpenGlSceneNow();
 	}
 }
+
+/+
+/++
+	Purely software renderer
+ +/
+final class SoftwarePixmapRenderer : PixmapRenderer {
+
+	private {
+		PresenterObjectsContainer* _poc;
+	}
+
+	public WantsOpenGl wantsOpenGl() @safe pure nothrow @nogc {
+		return WantsOpenGl(0);
+	}
+
+	public void setup(PresenterObjectsContainer* container) {
+	}
+
+	public void reconfigure() {
+	}
+
+	/++
+		Schedules a redraw
+	 +/
+	public void redrawSchedule() {
+	}
+
+	/++
+		Triggers a redraw
+	 +/
+	public void redrawNow() {
+	}
+}
++/
 
 ///
 struct LoopCtrl {
@@ -890,7 +932,7 @@ final class PixmapPresenter {
 			_renderer = renderer;
 
 			// create software framebuffer
-			auto framebuffer = Pixmap(config.renderer.resolution);
+			auto framebuffer = Pixmap.makeNew(config.renderer.resolution);
 
 			// OpenGL?
 			auto openGlOptions = OpenGlOptions.no;
@@ -911,6 +953,7 @@ final class PixmapPresenter {
 			);
 
 			window.windowResized = &this.windowResized;
+			window.cornerStyle = config.window.corners;
 
 			// alloc objects
 			_poc = new PresenterObjectsContainer(

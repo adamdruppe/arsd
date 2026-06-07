@@ -200,7 +200,7 @@ class MySql : Database {
 		mysql = enforce!(DatabaseException)(
 			mysql_init(null),
 			"Couldn't init mysql");
-		enforce!(DatabaseException)(
+		enforce!(DatabaseConnectionException)(
 			mysql_real_connect(mysql, toCstring(host), toCstring(user), toCstring(pass), toCstring(db), port, null, 0),
 			error());
 
@@ -219,6 +219,9 @@ class MySql : Database {
 		query("START TRANSACTION");
 	}
 
+	override bool isAlive() {
+		return true;
+	}
 
 	string sysTimeToValue(SysTime s) {
 		return "cast('" ~ escape(s.toISOExtString()) ~ "' as datetime)";
@@ -383,7 +386,7 @@ class MySql : Database {
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 
-		enforce!(DatabaseException)(
+		enforce!(SqlException)(
 			!mysql_query(mysql, toCstring(sql)),
 		error() ~ " :::: " ~ sql);
 
@@ -1200,13 +1203,8 @@ void main() {
 
 
 /*
-Copyright: Adam D. Ruppe, 2009 - 2011
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+Copyright: Adam D. Ruppe, 2009 - 2024
+License:   GPL (erroneously started to be Boost in 2011)
 Authors: Adam D. Ruppe, with contributions from Nick Sabalausky
-
-        Copyright Adam D. Ruppe 2009 - 2011.
-Distributed under the Boost Software License, Version 1.0.
-   (See accompanying file LICENSE_1_0.txt or copy at
-        http://www.boost.org/LICENSE_1_0.txt)
 */
 

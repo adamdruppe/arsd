@@ -207,7 +207,7 @@ void initMinigui(Modules...)()
 
 	static foreach (alias Module; Modules)
 	{
-		pragma(msg, Module.stringof);
+		//pragma(msg, Module.stringof);
 		appendMiniguiModule!Module;
 	}
 }
@@ -215,19 +215,28 @@ void initMinigui(Modules...)()
 void appendMiniguiModule(alias Module, string prefix = null)()
 {
 	foreach(memberName; __traits(allMembers, Module)) static if(!__traits(isDeprecated, __traits(getMember, Module, memberName)))
+	static if(memberName != "seperator")
 	{
 		alias Member = ident!(__traits(getMember, Module, memberName));
 		static if(is(Member == class) && !isAbstractClass!Member && is(Member : Widget) && __traits(getProtection, Member) != "private")
 		{
 			widgetFactoryFunctions[prefix ~ memberName] = (Widget parent, Element element, out Widget widget)
 			{
-				static if(is(Member : Dialog))
+				static if(is(Member : MessageBox))
 				{
-					widget = new Member();
+					widget = new MessageBox("");
+				}
+				else static if(is(Member : Dialog))
+				{
+					widget = new Member(null, 0, 0); // FIXME
 				}
 				else static if(is(Member : Menu))
 				{
 					widget = new Menu(null, null);
+				}
+				else static if(is(Member : TooltipWindow))
+				{
+					widget = null;
 				}
 				else static if(is(Member : Window))
 				{
@@ -235,7 +244,9 @@ void appendMiniguiModule(alias Module, string prefix = null)()
 				}
 				else
 				{
-					string[string] args = element.attributes;
+					string[string] args;
+					foreach(k, v; element.attributes)
+						args[k] = v;
 
 					enum paramNames = ParameterIdentifierTuple!(__traits(getMember, Member, "__ctor"));
 					Parameters!(__traits(getMember, Member, "__ctor")) params;
@@ -258,6 +269,10 @@ void appendMiniguiModule(alias Module, string prefix = null)()
 								params[idx] = Color.fromString(*arg);
 							}
 							else static if(is(typeof(param) == TextLayouter))
+								params[idx] = null;
+							else static if(is(typeof(param) == class))
+								params[idx] = null;
+							else static if(is(typeof(param) == delegate))
 								params[idx] = null;
 							else
 								params[idx] = to!(typeof(param))(*arg);

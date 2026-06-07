@@ -51,6 +51,7 @@ module arsd.webtemplate;
 
 import arsd.script;
 import arsd.dom;
+import arsd.uri;
 
 public import arsd.jsvar : var;
 
@@ -128,12 +129,12 @@ public import arsd.jsvar : var;
 +/
 class WebTemplateRenderer {
 	private TemplateLoader loader;
-	private EmbeddedTagResult function(string content, string[string] attributes)[string] embeddedTagTranslators;
+	private EmbeddedTagResult function(string content, AttributesHolder attributes)[string] embeddedTagTranslators;
 
 	/++
 
 	+/
-	this(TemplateLoader loader = null, EmbeddedTagResult function(string content, string[string] attributes)[string] embeddedTagTranslators = null) {
+	this(TemplateLoader loader = null, EmbeddedTagResult function(string content, AttributesHolder attributes)[string] embeddedTagTranslators = null) {
 		if(loader is null)
 			loader = TemplateLoader.forDirectory("templates/");
 		this.loader = loader;
@@ -273,8 +274,8 @@ class WebTemplateRenderer {
 		};
 
 		context.encodeURIComponent = function string(var f) {
-			import std.uri;
-			return encodeComponent(f.get!string);
+			import arsd.core;
+			return encodeUriComponent(f.get!string);
 		};
 
 		context.formatDate = function string(string s) {

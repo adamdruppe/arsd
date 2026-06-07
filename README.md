@@ -22,13 +22,47 @@ This only lists changes that broke things and got a major version bump. I didn't
 
 Please note that I DO consider changes to build process to be a breaking change, but I do NOT consider symbol additions, changes to undocumented members, or the occasional non-fatal deprecation to be breaking changes. Undocumented members may be changed at any time, whereas additions and/or deprecations will be a minor version change.
 
+## 13.0
+
+Future release, likely May 2026 or later.
+
+Pending changes:
+    * arsd.jsvar's toJson function now includes `null` values by default. This is to make json use cases easier. You can get the old behavior back by setting the `var.includeExplicitNullsWhenConvertingToJson = false;` setting in your thread.
+	* arsd.gr, a math library for golden ratio constants and calculations, was added.
+
+Planned changes:
+
+    * Make arsd.http2 use arsd.core event loop by default (currently you still opt in with -version=use_arsd_core)
+    * Make arsd.terminal use the arsd.core event loop sometimes. This might not be a breaking change since it might be a new function and thus may come early.
+    * Make arsd.cgi integrate with the arsd.core event loop in some mode. Again, unlikely to be an actual break so may come early.
+
 ## 12.0
 
-Future release, likely May 2024 or later.
+Released: Planned for some time between January and May 2025
 
-Nothing is planned for it at this time.
+minigui's `defaultEventHandler_*` functions take more specific objects. So if you see errors like:
 
-arsd.pixmappresenter and arsd.pixmappaint were added.
+```
+Error: function `void arsd.minigui.EditableTextWidget.defaultEventHandler_focusin(Event event)` does not override any function, did you mean to override `void arsd.minigui.Widget.defaultEventHandler_focusin(arsd.minigui.FocusInEvent event)`?
+```
+
+Go to the file+line number from the error message and change `Event` to `FocusInEvent` (or whatever one it tells you in the "did you mean" part of the error) and recompile. No other changes should be necessary, however if you constructed your own `Event` object and dispatched it with the loosely typed `"focus"`, etc., strings, it may not trigger the default handlers anymore. To fix this, change any `new Event` to use the appropriate subclass, when available, like old `new Event("focus", widget);` changes to `new FocusEvent(widget)`. This only applies to ones that trigger default handlers present in `Widget` base class; your custom events still work the same way.
+
+The font functions in simpledisplay and textlayouter tend to use floats instead of ints. You may want to cast it, or use the `castFnumToCnum` function to convert to get the old code working again.
+
+arsd.pixmappresenter, arsd.pixmappaint and arsd.pixmaprecorder were added.
+
+arsd.ini was added.
+
+arsd.zip, arsd.xlsx, arsd.rtf, arsd.pptx, arsd.docx, all added.
+
+arsd.conv added.
+
+arsd.script's language now requires () around the if and while conditions. Its parser is still so bad, but this let me fix some other bugs without making it even worse.
+
+arsd.simpledisplay now uses the arsd.core event loop by default.
+
+Several files are allowed to import other files from the directory now, at least in opend. Using the -i switch is strongly recommended.
 
 ## 11.0
 

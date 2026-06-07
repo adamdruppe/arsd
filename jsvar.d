@@ -82,6 +82,8 @@
 +/
 module arsd.jsvar;
 
+import arsd.core;
+
 version=new_std_json;
 
 static import std.array;
@@ -545,14 +547,64 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 	assert(0);
 }
 
+// a plain `compiles(T(var))` check can be triggered by an implicit cast
+// which we don't want due to endless recursion so this more specific check
+// are better than that anyway
+private template hasVarConstructor(T) {
+	bool helper() {
+		static if(is(T == struct) || is(T == class))
+			static if(__traits(hasMember, T, "__ctor"))
+			foreach(overload; __traits(getOverloads, T, "__ctor"))
+				static if(is(typeof(overload) Params == __parameters))
+					static if(Params.length == 1)
+						static if(is(Params[0] == var))
+							return true;
+		return false;
+	}
+
+	enum bool hasVarConstructor = helper();
+}
+
+unittest {
+	assert(hasVarConstructor!string == false);
+
+	static struct A {
+		this(var a) {}
+	}
+
+	static struct B {
+		this(int a) {}
+	}
+
+	assert(hasVarConstructor!A == true);
+	assert(hasVarConstructor!B == false);
+}
+
 
 ///
 struct var {
+
+	/++
+		When calling var.toJson or var.toJsonValue, null members of objects are usually skipped entirely.  Setting this to true includes them, false excludes them.
+
+		Note this is global to a thread, not to a json object.
+
+		History:
+			Added December 6, 2025. Before, they were never included, so this being default `true` is a breaking change.
+	+/
+	static bool includeExplicitNullsWhenConvertingToJson = true;
+
+
+	@implicit
 	public this(T)(T t) {
 		static if(is(T == var))
 			this = t;
 		else
 			this.opAssign(t);
+	}
+
+	T opImplicitCast(T)() {
+		return this.get!T;
 	}
 
 	// used by the script interpreter... does a .dup on array, new on class if possible, otherwise copies members.
@@ -990,9 +1042,9 @@ struct var {
 			return this;
 		} else static if(__traits(compiles, T.fromJsVar(var.init))) {
 			return T.fromJsVar(this);
-		} else static if(__traits(compiles, T(this))) {
+		} else static if(hasVarConstructor!T && __traits(compiles, T(this))) {
 			return T(this);
-		} else static if(__traits(compiles, new T(this))) {
+		} else static if(hasVarConstructor!T && __traits(compiles, new T(this))) {
 			return new T(this);
 		} else static if(is(T == Nullable!N, N)) {
 			if(payloadType == Type.Object && this._payload._object is null)
@@ -1098,9 +1150,12 @@ struct var {
 			case Type.Floating:
 				static if(isFloatingPoint!T || isIntegral!T)
 					return to!T(this._payload._floating);
-				else static if(isSomeString!T)
-					return to!T(this._payload._floating);
-				else
+				else static if(isSomeString!T) {
+					// phobos this does insufficient precision, even money amounts truncated
+					//return to!T(this._payload._floating);
+					import arsd.conv;
+					return arsd.conv.to!T(this._payload._floating);
+				} else
 					return T.init;
 			case Type.String:
 				static if(__traits(compiles, to!T(this._payload._string))) {
@@ -1459,6 +1514,15 @@ struct var {
 			return *n;
 		}
 	}
+
+	public ref var opIndex(int idx, string file = __FILE__, size_t line = __LINE__) {
+		return this.opIndex(cast(size_t) idx, file, line);
+	}
+
+	public ref var opIndexAssign(T)(T t, int idx, string file = __FILE__, size_t line = __LINE__) {
+		return this.opIndexAssign(t, cast(size_t) idx, file, line);
+	}
+
 
 	ref var _getOwnProperty(string name, string file = __FILE__, size_t line = __LINE__) {
 		if(_type == Type.Object) {
@@ -1923,7 +1987,12 @@ class PrototypeObject {
 				continue;
 			if(v.payloadType == var.Type.Object) {
 				// I'd love to get the json value out but idk. FIXME
-				if(v._payload._object is null) continue;
+				if(v._payload._object is null) {
+					if(var.includeExplicitNullsWhenConvertingToJson) {
+						tmp[k] = null;
+					}
+					continue;
+				}
 				if(auto wno = cast(WrappedNativeObject) v._payload._object) {
 					auto obj = wno.getObject();
 					if(obj is null)

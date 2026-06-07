@@ -67,7 +67,7 @@ class Audio{
 			active = false;
 			return;
 		}
-		if(Mix_OpenAudio(22050, AUDIO_S16SYS, 2, 4096/2 /* the /2 is new */) != 0){
+		if(1) { // if(Mix_OpenAudio(22050, AUDIO_S16SYS, 2, 4096/2 /* the /2 is new */) != 0){
 			active = false; //throw new Error;
 			error = true;
 			audioIsLoaded = false;

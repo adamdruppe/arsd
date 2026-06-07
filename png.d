@@ -742,6 +742,8 @@ PNG* readPng(in ubyte[] data) {
 	auto p = new PNG;
 
 	p.length = cast(int) data.length;
+	if(p.length < 8)
+		throw new Exception("not a png, too short");
 	p.magic[0..8] = data[0..8];
 
 	if(p.magic != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -749,7 +751,7 @@ PNG* readPng(in ubyte[] data) {
 
 	size_t pos = 8;
 
-	while(pos < data.length) {
+	while(pos < data.length && data.length - pos >= 12) {
 		Chunk n;
 		n.size |= data[pos++] << 24;
 		n.size |= data[pos++] << 16;
@@ -771,6 +773,9 @@ PNG* readPng(in ubyte[] data) {
 		n.checksum |= data[pos++] << 0;
 
 		p.chunks ~= n;
+
+		if(n.type == "IEND")
+			break;
 	}
 
 	return p;
@@ -2106,11 +2111,11 @@ immutable(ubyte)[] unfilter(ubyte filterType, in ubyte[] data, in ubyte[] previo
 			return assumeUnique(arr);
 		case 3:
 			auto arr = data.dup;
-			if(previousLine.length)
 			foreach(i; 0 .. arr.length) {
-				auto prev = i < bpp ? 0 : arr[i - bpp];
-				arr[i] += cast(ubyte)
-					/*std.math.floor*/( cast(int) (prev + (previousLine.length ? previousLine[i] : 0)) / 2);
+				auto left = i < bpp ? 0 : arr[i - bpp];
+				auto above = previousLine.length ? previousLine[i] : 0;
+
+				arr[i] += cast(ubyte) ((left + above) / 2);
 			}
 
 			return assumeUnique(arr);

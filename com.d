@@ -196,11 +196,12 @@ shared static ~this() {
 }
 
 ///
-void initializeClassicCom() {
+void initializeClassicCom(bool multiThreaded = false) {
 	if(coInitializeCalled)
 		return;
 
-	ComCheck(CoInitialize(null), "COM initialization failed");
+	ComCheck(CoInitializeEx(null, multiThreaded ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED),
+		"COM initialization failed");
 
 	coInitializeCalled++;
 }
@@ -249,20 +250,7 @@ struct ComResult {
 	}
 
 	T getD(T)() {
-		switch(result.vt) {
-			case VARENUM.VT_I4: // int
-				static if(is(T : const long))
-					return result.intVal;
-				throw new Exception("cannot convert variant of type int to requested " ~ T.stringof);
-			case VARENUM.VT_BSTR:
-				static if(is(T : const string))
-					return makeUtf8StringFromWindowsString(result.bstrVal); // FIXME free?
-				throw new Exception("cannot convert variant of type string to requested " ~ T.stringof);
-			default:
-				return getFromVariant!T(result);
-
-			//throw new Exception("can't handle this type " ~ to!string(result.vt));
-		}
+		return getFromVariant!T(result);
 	}
 
 }
@@ -270,10 +258,12 @@ struct ComResult {
 struct ComProperty {
 	IDispatch innerComObject_;
 	DISPID dispid;
+	string name;
 
 	this(IDispatch a, DISPID c, string name) {
 		this.innerComObject_ = a;
 		this.dispid = c;
+		this.name = name;
 	}
 
 	T getD(T)() {
@@ -298,32 +288,8 @@ struct ComProperty {
 			&argError // arg error
 		);//, "Invoke");
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
-
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				throw new ComException(hr, "Property get failed " ~ to!string(argError));
-			}
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Property get")) {
+			throw e;
 		}
 
 		return ComResult(result);
@@ -358,41 +324,32 @@ struct ComProperty {
 			&argError // arg error
 		);//, "Invoke");
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
+		VariantClear(&vargs[0]);
 
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				throw new ComException(hr, "Property put failed " ~ to!string(argError));
-			}
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Property put")) {
+			throw e;
 		}
 
 		return rhs;
 	}
 
 	ComResult opCall(Args...)(Args args) {
+		return callWithNamedArgs!Args(null, args);
+	}
+
+	/// Call with named arguments
+	///
+	/// Note that all positional arguments are always followed by all named arguments.
+	///
+	/// So to call: `Com.f(10, 20, A: 30, B: 40)`, invoke this function as follows:
+	/// ---
+	/// Com.f().callWithNamedArgs(["A", "B"], 10, 20, 30, 40);
+	/// ---
+	/// Argument names are case-insensitive
+	ComResult callWithNamedArgs(Args...)(string[] argNames, Args args) {
 		DISPPARAMS disp_params;
 
-		static if(args.length) {
+		static if (args.length) {
 			VARIANT[args.length] vargs;
 			foreach(idx, arg; args) {
 				// lol it is put in backwards way to explain MSFT
@@ -401,6 +358,27 @@ struct ComProperty {
 
 			disp_params.rgvarg = vargs.ptr;
 			disp_params.cArgs = cast(int) args.length;
+
+			if (argNames.length > 0) {
+				wchar*[Args.length + 1] namesW;
+				// GetIDsOfNames wants Method name at index 0 followed by parameter names.
+				// Order of passing named args is up to us, but it's standard to also put them backwards,
+				// and we've already done so with values in `vargs`, so we continue this trend
+				// with dispatch IDs of names
+				import std.conv: to;
+				namesW[0] = (to!wstring(this.name) ~ "\0"w).dup.ptr;
+				foreach (i; 0 .. argNames.length) {
+					namesW[i + 1] = (to!wstring(argNames[$ - 1 - i]) ~ "\0"w).dup.ptr;
+				}
+				DISPID[Args.length + 1] dispIds;
+				innerComObject_.GetIDsOfNames(
+					&GUID_NULL, namesW.ptr, cast(uint) (1 + argNames.length), LOCALE_SYSTEM_DEFAULT, dispIds.ptr
+				).ComCheck("Unknown parameter name");
+
+				// Strip Member name at index 0
+				disp_params.cNamedArgs = cast(uint) argNames.length;
+				disp_params.rgdispidNamedArgs = &dispIds[1];
+			}
 		}
 
 		VARIANT result;
@@ -431,37 +409,52 @@ struct ComProperty {
 			);//, "Invoke");
 		}
 
-		import std.conv;
-		if(FAILED(hr)) {
-			if(hr == DISP_E_EXCEPTION) {
-				auto code = einfo.scode ? einfo.scode : einfo.wCode;
-				string source;
-				string description;
-				if(einfo.bstrSource) {
-					// this is really a wchar[] but it needs to be freed so....
-					source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-					SysFreeString(einfo.bstrSource);
-				}
-				if(einfo.bstrDescription) {
-					description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-					SysFreeString(einfo.bstrDescription);
-				}
-				if(einfo.bstrHelpFile) {
-					// FIXME: we could prolly use this too
-					SysFreeString(einfo.bstrHelpFile);
-					// and dwHelpContext
-				}
-
-				throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-			} else {
-				import std.conv;
-				throw new ComException(hr, "Call failed " ~ to!string(cast(void*) innerComObject_) ~ " " ~ to!string(dispid) ~ " " ~ to!string(argError));
+		static if(args.length) {
+			foreach (ref v; vargs[]) {
+				VariantClear(&v);
 			}
+		}
+
+		if (Exception e = exceptionFromComResult(hr, einfo, argError, "Call")) {
+			throw e;
 		}
 
 		return ComResult(result);
 	}
+}
+
+/// Returns: `null` on success, a D Exception created from `einfo` and `argError`
+/// in case the COM return `hr` signals failure
+private Exception exceptionFromComResult(HRESULT hr, ref EXCEPINFO einfo, uint argError, string action)
+{
+	import std.conv;
+	if(FAILED(hr)) {
+		if(hr == DISP_E_EXCEPTION) {
+			auto code = einfo.scode ? einfo.scode : einfo.wCode;
+			string source;
+			string description;
+			if(einfo.bstrSource) {
+				// this is really a wchar[] but it needs to be freed so....
+				source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
+				SysFreeString(einfo.bstrSource);
+			}
+			if(einfo.bstrDescription) {
+				description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
+				SysFreeString(einfo.bstrDescription);
+			}
+			if(einfo.bstrHelpFile) {
+				// FIXME: we could prolly use this too
+				SysFreeString(einfo.bstrHelpFile);
+				// and dwHelpContext
+			}
+
+			throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
+
+		} else {
+			throw new ComException(hr, action ~ " failed " ~ to!string(argError));
+		}
+	}
+	return null;
 }
 
 ///
@@ -546,32 +539,14 @@ struct ComClient(DVersion, ComVersion = IDispatch) {
 					&argError // arg error
 				);//, "Invoke");
 
-				import std.conv;
-				if(FAILED(hr)) {
-					if(hr == DISP_E_EXCEPTION) {
-						auto code = einfo.scode ? einfo.scode : einfo.wCode;
-						string source;
-						string description;
-						if(einfo.bstrSource) {
-							// this is really a wchar[] but it needs to be freed so....
-							source = einfo.bstrSource[0 .. SysStringLen(einfo.bstrSource)].to!string;
-							SysFreeString(einfo.bstrSource);
-						}
-						if(einfo.bstrDescription) {
-							description = einfo.bstrDescription[0 .. SysStringLen(einfo.bstrDescription)].to!string;
-							SysFreeString(einfo.bstrDescription);
-						}
-						if(einfo.bstrHelpFile) {
-							// FIXME: we could prolly use this too
-							SysFreeString(einfo.bstrHelpFile);
-							// and dwHelpContext
-						}
-
-						throw new ComException(code, description ~ " (from com source " ~ source ~ ")");
-
-					} else {
-						throw new ComException(hr, "Call failed " ~ memberName ~ " " ~ to!string(argError));
+				static if (args.length) {
+					foreach (ref v; vargs[]) {
+						VariantClear(&v);
 					}
+				}
+
+				if (Exception e = exceptionFromComResult(hr, einfo, argError, "Call")) {
+					throw e;
 				}
 
 				return getFromVariant!(typeof(return))(result);
@@ -601,26 +576,107 @@ VARIANT toComVariant(T)(T arg) {
 	static if(is(T : VARIANT)) {
 		ret = arg;
 	} else static if(is(T : ComClient!(Dynamic, IDispatch))) {
-		ret.vt = 9;
+		ret.vt = VARENUM.VT_DISPATCH;
 		ret.pdispVal = arg.innerComObject_;
 	} else static if(is(T : ComProperty)) {
 		ret = arg._fetchProperty();
+	} else static if (is(T : ComResult)) {
+		ret = arg.result;
+	} else static if(is(T : IDispatch)) {
+		ret.vt = VARENUM.VT_DISPATCH;
+		ret.pdispVal = arg;
 	} else static if(is(T : int)) {
-		ret.vt = 3;
+		ret.vt = VARENUM.VT_I4;
 		ret.intVal = arg;
 	} else static if(is(T : long)) {
-		ret.vt = 20;
-		ret.hVal = arg;
+		ret.vt = VARENUM.VT_I8;
+		ret.llVal = arg;
 	} else static if(is(T : double)) {
-		ret.vt = 5;
+		ret.vt = VARENUM.VT_R8;
 		ret.dblVal = arg;
 	} else static if(is(T : const(char)[])) {
-		ret.vt = 8;
+		ret.vt = VARENUM.VT_BSTR;
 		import std.utf;
 		ret.bstrVal = SysAllocString(toUTFz!(wchar*)(arg));
+	} else static if (is(T : E[], E)) {
+		auto sizes = ndArrayDimensions!uint(arg);
+		SAFEARRAYBOUND[sizes.length] saBound;
+		foreach (i; 0 .. sizes.length) {
+			saBound[i].lLbound = 0;
+			saBound[i].cElements = sizes[i];
+		}
+		enum vt = vtFromDType!E;
+		SAFEARRAY* sa = SafeArrayCreate(vt, saBound.length, saBound.ptr);
+		int[sizes.length] indices;
+		void fill(int dim, T)(T val) {
+			static if (dim >= indices.length) {
+				static if (vt == VARENUM.VT_BSTR) {
+					import std.utf;
+					SafeArrayPutElement(sa, indices.ptr, SysAllocString(toUTFz!(wchar*)(val)));
+				} else {
+					SafeArrayPutElement(sa, indices.ptr, &val);
+				}
+				return;
+			} else {
+				foreach (i; 0 .. val.length) {
+					indices[dim] = cast(int) i;
+					fill!(dim + 1)(val[i]);
+				}
+			}
+		}
+		fill!(0)(arg);
+		ret.vt = VARENUM.VT_ARRAY | vt;
+		ret.parray = sa;
 	} else static assert(0, "Unsupported type (yet) " ~ T.stringof);
 
 	return ret;
+}
+
+/// Returns: for any multi-dimensional array, a static array of `length` values for each dimension.
+/// Strings are not considered arrays because they have the VT_BSTR type instead of VT_ARRAY
+private auto ndArrayDimensions(I, T)(T arg) {
+	static if (!is(T : const(char)[]) && (is(T == E[], E) || is(T == E[n], E, int n))) {
+        alias A = typeof(ndArrayDimensions!I(arg[0]));
+        I[1 + A.length] res = 0;
+        if (arg.length != 0) {
+            auto s = ndArrayDimensions!I(arg[0]);
+            res[1 .. $] = s[];
+        }
+        res[0] = cast(I) arg.length;
+		return res;
+	} else {
+		I[0] res;
+		return res;
+	}
+}
+
+unittest {
+	auto x = new float[][][](2, 3, 5);
+	assert(ndArrayDimensions!uint(x) == [2, 3, 5]);
+    short[4][][5] y;
+    y[0].length = 3;
+    assert(ndArrayDimensions!uint(y) == [5, 3, 4]);
+}
+
+/// Get VARENUM tag for basic type T
+private template vtFromDType(T) {
+	static if (is(T == short)) {
+		enum vtFromDType = VARENUM.VT_I2;
+	} else static if(is(T == int)) {
+		enum vtFromDType = VARENUM.VT_I4;
+	} else static if (is(T == float)) {
+		enum vtFromDType = VARENUM.VT_R4;
+	} else static if (is(T == double)) {
+		enum vtFromDType = VARENUM.VT_R8;
+	} else static if(is(T == bool)) {
+		enum vtFromDType = VARENUM.VT_BOOL;
+	} else static if (is(T : const(char)[])) {
+		enum vtFromDType = VARENUM.VT_BSTR;
+	} else static if (is(T == E[], E)) {
+		enum vtFromDType = vtFromDType!E;
+	} else {
+		static assert(0, "don't know VARENUM for " ~ T.stringof);
+	}
 }
 
 /*
@@ -879,7 +935,7 @@ mixin template IDispatchImpl() {
 				} catch(Throwable e) {
 					// FIXME: fill in the exception info
 					if(except !is null) {
-						except.sCode = 1;
+						except.scode = 1;
 						import std.utf;
 						except.bstrDescription = SysAllocString(toUTFz!(wchar*)(e.toString()));
 						except.bstrSource = SysAllocString("amazing"w.ptr);
@@ -1103,7 +1159,7 @@ extern (D) void ObjectDestroyed()
 }
 
 
-char[] oleCharsToString(char[] buffer, OLECHAR* chars) {
+char[] oleCharsToString(char[] buffer, OLECHAR* chars) @system {
 	auto c = cast(wchar*) chars;
 	auto orig = c;
 
@@ -1414,7 +1470,7 @@ BOOL SetKeyAndValue(LPCSTR pszKey, LPCSTR pszSubkey, LPCSTR pszValue)
     return result;
 }
 
-void unicode2ansi(char *s)
+void unicode2ansi(char *s) @system
 {
     wchar *w;
 

@@ -24,6 +24,33 @@
 +/
 module arsd.textlayouter;
 
+// FIXME: elastic tabstops https://nick-gravgaard.com/elastic-tabstops/
+/+
+Each cell ends with a tab character. A column block is a run of uninterrupted vertically adjacent cells. A column block is as wide as the widest piece of text in the cells it contains or a minimum width (plus padding). Text outside column blocks is ignored.
++/
+// opening tabs work as indentation just like they do now, but wrt the algorithm are just considered one unit.
+// then groups of lines with more tabs than the opening ones are processed together but only if they all right next to each other
+
+// FIXME: soft word wrap w/ indentation preserved
+// FIXME: line number stuff?
+
+// want to support PS (new paragraph), LS (forced line break), FF (next page)
+// and GS = <table> RS = <tr> US = <td> FS = </table> maybe.
+// use \a bell for bookmarks in the text?
+
+// note: ctrl+c == ascii 3 and ctrl+d == ascii 4 == end of text
+
+
+// FIXME: maybe i need another overlay of block style not just text style. list, alignment, heading, paragraph spacing, etc. should it nest?
+
+// FIXME: copy/paste preserving style.
+
+
+// see: https://harfbuzz.github.io/a-simple-shaping-example.html
+
+// FIXME: unicode private use area could be delegated out but it might also be used by something else.
+// just really want an encoding scheme for replaced elements that punt it outside..
+
 import arsd.simpledisplay;
 
 /+
@@ -105,7 +132,11 @@ import arsd.simpledisplay;
 
 // You can do the caret by any time it gets drawn, you set the flag that it is on, then you can xor it to turn it off and keep track of that at top level.
 
+alias width_t = float;// short;
 
+
+// FIXME: might want to be able to swap out all styles at once and trigger whole relayout, as if a document theme changed wholesale, without changing the saved style handles
+// FIXME: line and paragrpah numbering options while drawing
 /++
 	Represents the style of a span of text.
 
@@ -118,6 +149,39 @@ interface TextStyle {
 		Must never return `null`.
 	+/
 	MeasurableFont font();
+
+	/++
+		History:
+			Added February 24, 2025
+	+/
+	//ParagraphMetrics paragraphMetrics();
+
+	// FIXME: list styles?
+	// FIXME: table styles?
+
+	/// ditto
+	static struct ParagraphMetrics {
+		/++
+			Extra spacing between each line, given in physical pixels.
+		+/
+		int lineSpacing;
+		/++
+			Spacing between each paragraph, given in physical pixels.
+		+/
+		int paragraphSpacing;
+		/++
+			Extra indentation on the first line of each paragraph, given in physical pixels.
+		+/
+		int paragraphIndentation;
+
+		// margin left and right?
+
+		/++
+			Note that TextAlignment.Left might be redefined to mean "Forward", meaning left if left-to-right, right if right-to-left,
+			but right now it ignores bidi anyway.
+		+/
+		TextAlignment alignment = TextAlignment.Left;
+	}
 
 	// FIXME: I might also want a duplicate function for saving state.
 
@@ -143,6 +207,13 @@ interface TextStyle {
 			return TerminalFontRepresentation.instance;
 		}
 
+		/++
+			The default returns reasonable values, you might want to call this to get the defaults,
+			then change some values and return the rest.
+		+/
+		ParagraphMetrics paragraphMetrics() {
+			return  ParagraphMetrics.init;
+		}
 	}
 }
 
@@ -158,13 +229,13 @@ class TerminalFontRepresentation : MeasurableFont {
 	}
 
 	bool isMonospace() { return true; }
-	int averageWidth() { return 1; }
-	int height() { return 1; }
+	fnum averageWidth() { return 1; }
+	fnum height() { return 1; }
 	/// since it is a grid this is a bit bizarre to translate.
-	int ascent() { return 1; }
-	int descent() { return 0; }
+	fnum ascent() { return 1; }
+	fnum descent() { return 0; }
 
-	int stringWidth(scope const(char)[] s, SimpleWindow window = null) {
+	fnum stringWidth(scope const(char)[] s, SimpleWindow window = null) {
 		int count;
 		foreach(dchar ch; s)
 			count++;
@@ -315,12 +386,14 @@ public struct Selection {
 	Selection setAnchor() {
 		impl.anchor = impl.position;
 		impl.focus = impl.position;
+		// layouter.notifySelectionChanged();
 		return this;
 	}
 
 	/// ditto
 	Selection setFocus() {
 		impl.focus = impl.position;
+		// layouter.notifySelectionChanged();
 		return this;
 	}
 
@@ -342,6 +415,15 @@ public struct Selection {
 		return this;
 	}
 
+	/++
+		Gets the current user coordinate, the point where they explicitly want the caret to be near.
+
+		History:
+			Added January 24, 2025
+	+/
+	Point getUserCoordinate() {
+		return impl.virtualFocusPosition;
+	}
 
 	/+ Moving the internal position +/
 
@@ -446,9 +528,127 @@ public struct Selection {
 		return this;
 	}
 
-	void find(scope const(char)[] text) {
+	/+
+	enum PlacementOfFind {
+		beginningOfHit,
+		endOfHit
 	}
 
+	enum IfNotFound {
+		changeNothing,
+		moveToEnd,
+		callDelegate
+	}
+
+	enum CaseSensitive {
+		yes,
+		no
+	}
+
+	void find(scope const(char)[] text, PlacementOfFind placeAt = PlacementOfFind.beginningOfHit, IfNotFound ifNotFound = IfNotFound.changeNothing) {
+	}
+	+/
+
+	/++
+		Does a custom search through the text.
+
+		Params:
+			predicate = a search filter. It passes you back a slice of your buffer filled with text at the current search position. You pass the slice of this buffer that matched your search, or `null` if there was no match here. You MUST return either null or a slice of the buffer that was passed to you. If you return an empty slice of of the buffer (buffer[0..0] for example), it cancels the search.
+
+			The window buffer will try to move one code unit at a time. It may straddle code point boundaries - you need to account for this in your predicate.
+
+			windowBuffer = a buffer to temporarily hold text for comparison. You should size this for the text you're trying to find
+
+			searchBackward = determines the direction of the search. If true, it searches from the start of current selection backward to the beginning of the document. If false, it searches from the end of current selection forward to the end of the document.
+		Returns:
+			an object representing the search results and letting you manipulate the selection based upon it
+
+	+/
+	FindResult find(
+		scope const(char)[] delegate(scope return const(char)[] buffer) predicate,
+		int windowBufferSize,
+		bool searchBackward,
+	) {
+		assert(windowBufferSize != 0, "you must pass a buffer of some size");
+
+		char[] windowBuffer = new char[](windowBufferSize); // FIXME i don't need to actually copy in the current impl
+
+		int currentSpot = impl.position;
+
+		const finalSpot = searchBackward ? currentSpot : cast(int) layouter.text.length;
+
+		if(searchBackward) {
+			currentSpot -= windowBuffer.length;
+			if(currentSpot < 0)
+				currentSpot = 0;
+		}
+
+		auto endingSpot = currentSpot + windowBuffer.length;
+		if(endingSpot > finalSpot)
+			endingSpot = finalSpot;
+
+		keep_searching:
+		windowBuffer[0 .. endingSpot - currentSpot] = layouter.text[currentSpot .. endingSpot];
+		auto result = predicate(windowBuffer[0 .. endingSpot - currentSpot]);
+		if(result !is null) {
+			// we're done, it was found
+			auto offsetStart = result is null ? currentSpot : cast(int) (result.ptr - windowBuffer.ptr);
+			assert(offsetStart >= 0 && offsetStart < windowBuffer.length);
+			return FindResult(this, currentSpot + offsetStart, result !is null, currentSpot + cast(int) (offsetStart + result.length));
+		} else if((searchBackward && currentSpot > 0) || (!searchBackward && endingSpot < finalSpot)) {
+			// not found, keep searching
+			if(searchBackward) {
+				currentSpot--;
+				endingSpot--;
+			} else {
+				currentSpot++;
+				endingSpot++;
+			}
+			goto keep_searching;
+		} else {
+			// not found, at end of search
+			return FindResult(this, currentSpot, false, currentSpot /* zero length result */);
+		}
+
+		assert(0);
+	}
+
+	/// ditto
+	static struct FindResult {
+		private Selection selection;
+		private int position;
+		private bool found;
+		private int endPosition;
+
+		///
+		bool wasFound() {
+			return found;
+		}
+
+		///
+		Selection moveTo() {
+			selection.impl.position = position;
+			return selection;
+		}
+
+		///
+		Selection moveToEnd() {
+			selection.impl.position = endPosition;
+			return selection;
+		}
+
+		///
+		void selectHit() {
+			selection.impl.position = position;
+			selection.setAnchor();
+			selection.impl.position = endPosition;
+			selection.setFocus();
+		}
+	}
+
+
+
+	/+
 	/+ +
 		Searches by regex.
 
@@ -459,6 +659,7 @@ public struct Selection {
 	void find(RegEx)(RegEx re) {
 
 	}
+	+/
 
 	/+ Manipulating the data in the selection +/
 
@@ -790,7 +991,7 @@ public struct Selection {
 					// need to find the exact thing in here
 
 					auto hit = segment.textBeginOffset;
-					auto ul = segment.upperLeft;
+					MeasurableFont.fnum ulx = segment.upperLeft.x;
 
 					bool found;
 					auto txt = layouter.text[segment.textBeginOffset .. segment.textEndOffset];
@@ -800,11 +1001,11 @@ public struct Selection {
 
 						hit = segment.textBeginOffset + cast(int) idx;
 
-						auto distanceToLeft = ul.x - idealX;
+						auto distanceToLeft = ulx - idealX;
 						if(distanceToLeft < 0) distanceToLeft = -distanceToLeft;
 						if(distanceToLeft < bestHitDistance) {
 							bestHit = hit;
-							bestHitDistance = distanceToLeft;
+							bestHitDistance = castFnumToCnum(distanceToLeft);
 						} else {
 							// getting further away = no help
 							break;
@@ -812,13 +1013,13 @@ public struct Selection {
 
 						/*
 						// FIXME: I probably want something slightly different
-						if(ul.x >= idealX) {
+						if(ulx >= idealX) {
 							found = true;
 							break;
 						}
 						*/
 
-						ul.x += width;
+						ulx += width;
 						codepoint++;
 					}
 
@@ -861,6 +1062,26 @@ public struct Selection {
 		if(impl.position == layouter.text.length)
 			impl.position -- ; // never select the eof marker
 	}
+}
+
+unittest {
+	auto l = new TextLayouter(new class TextStyle {
+		mixin Defaults;
+	});
+
+	l.appendText("this is a test string again");
+	auto s = l.selection();
+	auto result = s.find(b => (b == "a") ? b : null, 1, false);
+	assert(result.wasFound);
+	assert(result.position == 8);
+	assert(result.endPosition == 9);
+	result.selectHit();
+	assert(s.getContentString() == "a");
+	result.moveToEnd();
+	result = s.find(b => (b == "a") ? b : null, 1, false); // should find next
+	assert(result.wasFound);
+	assert(result.position == 22);
+	assert(result.endPosition == 23);
 }
 
 private struct SelectionImpl {
@@ -942,6 +1163,21 @@ class TextLayouter {
 		assert(last == text.length); // and all chars in the array must be covered by a style block
 	}
 
+	/+
+	private void notifySelectionChanged() {
+		if(onSelectionChanged !is null)
+			onSelectionChanged(this);
+	}
+
+	/++
+		A delegate called when the current selection is changed through api or user action.
+
+		History:
+			Added July 10, 2024
+	+/
+	void delegate(TextLayouter l) onSelectionChanged;
+	+/
+
 	/++
 		Gets the object representing the given selection.
 
@@ -1017,8 +1253,11 @@ class TextLayouter {
 		int length;
 
 		int styleInformationIndex;
+
+		bool isSpecialStyle;
 	}
 
+	/+
 	void resetSelection(int selectionId) {
 
 	}
@@ -1032,6 +1271,7 @@ class TextLayouter {
 	void duplicateSelection(int receivingSelectionId, int sourceSelectionId) {
 
 	}
+	+/
 
 	private int findContainingSegment(int textOffset) {
 
@@ -1056,6 +1296,8 @@ class TextLayouter {
 		Starts from the given selection and moves in the direction to find next.
 
 		Returns true if found.
+
+		NOT IMPLEMENTED use a selection instead
 	+/
 	FindResult find(int selectionId, in const(char)[] text, bool direction, bool wraparound) {
 		return FindResult.NotFound;
@@ -1099,9 +1341,11 @@ class TextLayouter {
 
 
 	/++
-		Appends text at the end, without disturbing user selection.
+		Appends text at the end, without disturbing user selection. If style is not specified, it reuses the most recent style. If it is, it switches to that style.
+
+		If you put `isSpecialStyle` to `true`, the style will only apply to this text specifically and user edits will not inherit it.
 	+/
-	public void appendText(scope const(char)[] text, StyleHandle style = StyleHandle.init) {
+	public void appendText(scope const(char)[] text, StyleHandle style = StyleHandle.init, bool isSpecialStyle = false) {
 		wasMutated_ = true;
 		auto before = this.text;
 		this.text.length += text.length;
@@ -1115,8 +1359,15 @@ class TextLayouter {
 			// otherwise, insert a new block for it
 			styles[$-1].length -= 1; // it no longer covers the zero terminator
 
-			// but this does, hence the +1
-			styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length + 1, style.index);
+			if(isSpecialStyle) {
+				auto oldIndex = styles[$-1].styleInformationIndex;
+				styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length, style.index, true);
+				// cover the zero terminator back in the old style
+				styles ~= StyleBlock(cast(int) this.text.length - 1, 1, oldIndex, false);
+			} else {
+				// but this does, hence the +1
+				styles ~= StyleBlock(cast(int) before.length - 1, cast(int) text.length + 1, style.index, false);
+			}
 		}
 
 		invalidateLayout(cast(int) before.length - 1 /* zero terminator */, this.text.length, cast(int) text.length);
@@ -1128,6 +1379,8 @@ class TextLayouter {
 		FIXME: have a getTextInSelection
 
 		FIXME: have some kind of index stuff so you can select some text found in here (think regex search)
+
+		This function might be cut in a future version in favor of [getDrawableText]
 	+/
 	void getText(scope void delegate(scope const(char)[] segment, TextStyle style) handler) {
 		handler(text[0 .. $-1], null); // cut off the null terminator
@@ -1143,6 +1396,8 @@ class TextLayouter {
 		});
 		return s;
 	}
+
+	alias getContentString = getTextString;
 
 	public static struct DrawingInformation {
 		Rectangle boundingBox;
@@ -1167,29 +1422,35 @@ class TextLayouter {
 
 		int codepointCounter = 0;
 		auto bb = segment.boundingBox;
+		MeasurableFont.fnum widthSum = 0;
 		foreach(thing, dchar cp; text[segment.textBeginOffset .. segment.textEndOffset]) {
 			auto w = segmentsWidths[segmentIndex][codepointCounter];
 
 			if(thing + segment.textBeginOffset == idx) {
-				bb.right = bb.left + w;
+				bb.left = castFnumToCnum(widthSum);
+				bb.right = cast(typeof(bb.right))(bb.left + w);
 				return bb;
 			}
 
-			bb.left += w;
+			widthSum += w;
 
 			codepointCounter++;
 		}
+
+		bb.left = castFnumToCnum(widthSum);
 
 		bb.right = bb.left + 1;
 
 		return bb;
 	}
 
+	/+
 	void getTextAtPosition(Point p) {
 		relayoutIfNecessary();
 		// return the text in that segment, the style info attached, and if that specific point is part of a selection (can be used to tell if it should be a drag operation)
 		// then might want dropTextAt(Point p)
 	}
+	+/
 
 	/++
 		Gets the text that you need to draw, guaranteeing each call to your delegate will:
@@ -1208,7 +1469,7 @@ class TextLayouter {
 
 		The segment may include all forms of whitespace, including newlines, tab characters, etc. Generally, a tab character will be in its own segment and \n will appear at the end of a segment. You will probably want to `stripRight` each segment depending on your drawing functions.
 	+/
-	void getDrawableText(scope bool delegate(scope const(char)[] segment, TextStyle style, DrawingInformation information, CaretInformation[] carets...) dg, Rectangle box = Rectangle.init) {
+	public void getDrawableText(scope bool delegate(scope const(char)[] segment, TextStyle style, DrawingInformation information, CaretInformation[] carets...) dg, Rectangle box = Rectangle.init) {
 		relayoutIfNecessary();
 		getInternalSegments(delegate bool(size_t segmentIndex, scope ref Segment segment) {
 			if(segment.textBeginOffset == -1)
@@ -1242,11 +1503,15 @@ class TextLayouter {
 
 						auto bb = boundingBoxOfGlyph(segmentIndex, selection.focus);
 
-						bb.top += glyphStyle.font.ascent;
-						bb.bottom -= glyphStyle.font.descent;
+						// the y is added elsewhere already. i think.
+						bb.left += segment.upperLeft.x;
+						bb.right += segment.upperLeft.x;
 
-						bb.top -= insertionStyle.font.ascent;
-						bb.bottom += insertionStyle.font.descent;
+						bb.top += castFnumToCnum(glyphStyle.font.ascent);
+						bb.bottom -= castFnumToCnum(glyphStyle.font.descent);
+
+						bb.top -= castFnumToCnum(insertionStyle.font.ascent);
+						bb.bottom += castFnumToCnum(insertionStyle.font.descent);
 
 						caretInformation[cic++] = CaretInformation(cast(int) si, bb);
 					}
@@ -1256,7 +1521,7 @@ class TextLayouter {
 			// the rest of this might need splitting based on selections
 
 			DrawingInformation di;
-			di.boundingBox = Rectangle(segment.upperLeft, Size(segment.width, segment.height));
+			di.boundingBox = Rectangle(segment.upperLeft, Size(castFnumToCnum(segment.width), segment.height));
 			di.selections = 0;
 
 			// di.initialBaseline = Point(x, y); // FIXME
@@ -1284,21 +1549,21 @@ class TextLayouter {
 
 					Rectangle bbOriginal = di.boundingBox;
 
-					int segmentWidth;
+					MeasurableFont.fnum segmentWidth = 0;
 
 					foreach(width; segmentsWidths[segmentIndex][codepointStart .. codepointEnd]) {
 						segmentWidth += width;
 					}
 
 					auto diFragment = di;
-					diFragment.boundingBox.right = diFragment.boundingBox.left + segmentWidth;
+					diFragment.boundingBox.right = castFnumToCnum(diFragment.boundingBox.left + segmentWidth);
 
 					// FIXME: adjust the rest of di for this
 					// FIXME: the caretInformation arguably should be truncated for those not in this particular sub-segment
 					exit = !dg(txt[start .. end], style, diFragment, caretInformation[0 .. cic]);
 
-					di.initialBaseline.x += segmentWidth;
-					di.boundingBox.left += segmentWidth;
+					di.initialBaseline.x += castFnumToCnum(segmentWidth);
+					di.boundingBox.left += castFnumToCnum(segmentWidth);
 
 					lastSelPos = end;
 					lastSelCodepoint = codepointEnd;
@@ -1329,7 +1594,7 @@ class TextLayouter {
 
 	// returns any segments that may lie inside the bounding box. if the box's size is 0, it is unbounded and goes through all segments
 	// may return more than is necessary; it uses the box as a hint to speed the search, not as the strict bounds it returns.
-	void getInternalSegments(scope bool delegate(size_t idx, scope ref Segment segment) dg, Rectangle box = Rectangle.init) {
+	protected void getInternalSegments(scope bool delegate(size_t idx, scope ref Segment segment) dg, Rectangle box = Rectangle.init) {
 		relayoutIfNecessary();
 
 		if(box.right == box.left)
@@ -1395,7 +1660,7 @@ class TextLayouter {
 
 		// the layout function calculates these
 		Segment[] segments;
-		short[][] segmentsWidths;
+		width_t[][] segmentsWidths;
 	}
 
 	/++
@@ -1415,6 +1680,7 @@ class TextLayouter {
 		return ts;
 	}
 
+	// most of these are unimplemented...
 	bool editable;
 	int wordWrapLength = 0;
 	int delegate(int x) tabStop = null;
@@ -1459,7 +1725,7 @@ class TextLayouter {
 		int styleInformationIndex;
 
 		// calculated values after iterating through the segment
-		int width; // short
+		MeasurableFont.fnum width = 0; // short
 		int height; // short
 
 		Point upperLeft;
@@ -1473,7 +1739,7 @@ class TextLayouter {
 		*/
 
 		Rectangle boundingBox() {
-			return Rectangle(upperLeft, Size(width, height));
+			return Rectangle(upperLeft, Size(castFnumToCnum(width), height));
 		}
 	}
 
@@ -1499,12 +1765,14 @@ class TextLayouter {
 		user the result of this action.
 	+/
 
-	// FIXME: the public one might be like segmentOfClick so you can get the style info out (which might hold hyperlink data)
-
 	/+
 		Returns the nearest offset in the text for the given point.
 
 		it should return if it was inside the segment bounding box tho
+
+		might make this private
+
+		FIXME: the public one might be like segmentOfClick so you can get the style info out (which might hold hyperlink data)
 	+/
 	int offsetOfClick(Point p) {
 		int idx = cast(int) text.length - 1;
@@ -1518,9 +1786,9 @@ class TextLayouter {
 			idx = segment.textBeginOffset;
 			// FIXME: this all assumes ltr
 
-			auto boundingBox = Rectangle(segment.upperLeft, Size(segment.width, segment.height));
+			auto boundingBox = Rectangle(segment.upperLeft, Size(castFnumToCnum(segment.width), segment.height));
 			if(boundingBox.contains(p)) {
-				int x = segment.upperLeft.x;
+				MeasurableFont.fnum x = segment.upperLeft.x;
 				int codePointIndex = 0;
 
 				int bestHit = int.max;
@@ -1530,7 +1798,7 @@ class TextLayouter {
 					const width = segmentsWidths[segmentIndex][codePointIndex];
 					idx = segment.textBeginOffset + cast(int) i; // can't just idx++ since it needs utf-8 stride
 
-					auto distanceToLeft = p.x - x;
+					auto distanceToLeft = castFnumToCnum(p.x - x);
 					if(distanceToLeft < 0) distanceToLeft = -distanceToLeft;
 
 					//auto distanceToRight = p.x - (x + width);
@@ -1600,6 +1868,25 @@ class TextLayouter {
 		return idx;
 	}
 
+	/++
+
+		History:
+			Added September 13, 2024
+	+/
+	const(TextStyle) styleAtPoint(Point p) {
+		TextStyle s;
+		getInternalSegments(delegate bool(size_t segmentIndex, scope ref Segment segment) {
+			if(segment.boundingBox.contains(p)) {
+				s = stylePalette[segment.styleInformationIndex];
+				return false;
+			}
+
+			return true;
+		}, Rectangle(p, Size(1, 1)));
+
+		return s;
+	}
+
 	private StyleHandle getInsertionStyleAt(int offset) {
 		assert(offset >= 0 && offset < text.length);
 		/+
@@ -1614,18 +1901,30 @@ class TextLayouter {
 			offset--; // use the previous one
 		}
 
-		return getStyleAt(offset);
+		return getStyleAt(offset, false);
 	}
 
-	private StyleHandle getStyleAt(int offset) {
+	private StyleHandle getStyleAt(int offset, bool allowSpecialStyle = true) {
 		// FIXME: binary search
-		foreach(style; styles) {
-			if(offset >= style.offset && offset < (style.offset + style.length))
+		foreach(idx, style; styles) {
+			if(offset >= style.offset && offset < (style.offset + style.length)) {
+				if(style.isSpecialStyle && !allowSpecialStyle) {
+					// we need to find the next style that is not special...
+					foreach(s2; styles[idx + 1 .. $])
+						if(!s2.isSpecialStyle)
+							return StyleHandle(s2.styleInformationIndex);
+				}
 				return StyleHandle(style.styleInformationIndex);
+			}
 		}
 		assert(0);
 	}
 
+	/++
+		Returns a bitmask of the selections active at any given offset.
+
+		May not be stable.
+	+/
 	ulong selectionsAt(int offset) {
 		ulong result;
 		ulong bit = 1;
@@ -1652,7 +1951,7 @@ class TextLayouter {
 	private int justificationWidth_;
 
 	/++
-
+		Not implemented.
 	+/
 	public void justificationWidth(int width) {
 		if(width != justificationWidth_) {
@@ -1661,11 +1960,31 @@ class TextLayouter {
 		}
 	}
 
+	/++
+		Can override this to define if a char is a word splitter for word wrapping.
+	+/
 	protected bool isWordwrapPoint(dchar c) {
+		// FIXME: assume private use characters are split points
 		if(c == ' ')
 			return true;
 		return false;
 	}
+
+	/+
+	/++
+
+	+/
+	protected ReplacedCharacter privateUseCharacterInfo(dchar c) {
+		return ReplacedCharacter.init;
+	}
+
+	/// ditto
+	static struct ReplacedCharacter {
+		bool overrideFont; /// if false, it uses the font like any other character, if true, it uses info from this struct
+		int width; /// in device pixels
+		int height; /// in device pixels
+	}
+	+/
 
 	private bool invalidateLayout_;
 	private int invalidStart = int.max;
@@ -1809,18 +2128,30 @@ class TextLayouter {
 		Segment segment;
 
 		Segment previousOldSavedSegment;
-		short[] previousOldSavedWidths;
+		width_t[] previousOldSavedWidths;
 		TextStyle currentStyle = null;
 		int currentStyleIndex = 0;
 		MeasurableFont font;
-		ubyte[128] glyphWidths;
+		bool glyphCacheValid;
+		version(OSX)
+			float[128] glyphWidths;
+		else
+			ubyte[128] glyphWidths;
 		void loadNewFont(MeasurableFont what) {
 			font = what;
 
 			// caching the ascii widths locally can give a boost to ~ 20% of the speed of this function
+			glyphCacheValid = true;
 			foreach(char c; 32 .. 128) {
 				auto w = font.stringWidth((&c)[0 .. 1]);
-				glyphWidths[c] = cast(ubyte) w; // FIXME: what if it doesn't fit?
+				if(w >= 256) {
+					glyphCacheValid = false;
+					break;
+				}
+				version(OSX)
+					glyphWidths[c] = w;
+				else
+					glyphWidths[c] = cast(ubyte) w; // FIXME: what if it doesn't fit?
 			}
 		}
 
@@ -1849,7 +2180,7 @@ class TextLayouter {
 
 		assert(offsetToNextStyle >= 0);
 
-		short[] widths;
+		width_t[] widths;
 
 		size_t segmentBegan = invalidStart;
 		void finishSegment(size_t idx) {
@@ -1878,8 +2209,8 @@ class TextLayouter {
 		}
 
 		// FIXME: when we start in an invalidated thing this is not necessarily right, it should be calculated above
-		int biggestDescent = font.descent;
-		int lineHeight = font.height;
+		auto biggestDescent = font.descent;
+		auto lineHeight = font.height;
 
 		bool finishLine(size_t idx, MeasurableFont outerFont) {
 			if(segment.textBeginOffset == idx)
@@ -1891,7 +2222,7 @@ class TextLayouter {
 			auto thisLineY = currentCorner.y;
 
 			auto thisLineHeight = lineHeight;
-			currentCorner.y += lineHeight;
+			currentCorner.y += castFnumToCnum(lineHeight);
 			currentCorner.x = 0;
 
 			finishSegment(idx); // i use currentCorner in there! so this must be after that
@@ -1911,8 +2242,8 @@ class TextLayouter {
 
 				auto baseline = thisLineHeight - biggestDescent;
 
-				seg.upperLeft.y += baseline - font.ascent;
-				seg.height = thisLineHeight - (baseline - font.ascent);
+				seg.upperLeft.y += castFnumToCnum(baseline - font.ascent);
+				seg.height = castFnumToCnum(thisLineHeight - (baseline - font.ascent));
 			}
 
 			// now need to check if we can finish relayout early
@@ -2060,7 +2391,10 @@ class TextLayouter {
 
 
 
-			int thisWidth = 0;
+			MeasurableFont.fnum thisWidth = 0;
+
+			// FIXME: delegate private-use area to their own segments
+			// FIXME: line separator, paragraph separator, form feed
 
 			switch(ch) {
 				case 0:
@@ -2085,10 +2419,11 @@ class TextLayouter {
 					// a tab should be its own segment with no text
 					// per se
 
-					thisWidth = 48;
+					enum tabStop = 48;
+					thisWidth = 16 + tabStop - currentCorner.x % tabStop;
 
 					segment.width += thisWidth;
-					currentCorner.x += thisWidth;
+					currentCorner.x += castFnumToCnum(thisWidth);
 
 					endSegment = true;
 					goto advance;
@@ -2108,14 +2443,14 @@ class TextLayouter {
 							thisWidth = width;
 						}
 					} else {
-						if(text[idx] < 128)
+						if(glyphCacheValid && text[idx] < 128)
 							thisWidth = glyphWidths[text[idx]];
 						else
 							thisWidth = font.stringWidth(text[idx .. idx + stride(text[idx])]);
 					}
 
 					segment.width += thisWidth;
-					currentCorner.x += thisWidth;
+					currentCorner.x += castFnumToCnum(thisWidth);
 
 					version(try_kerning_hack) {
 						lastWidth = thisWidth;
@@ -2137,13 +2472,20 @@ class TextLayouter {
 
 			advance:
 			if(segment.textBeginOffset != -1) {
-				widths ~= cast(short) thisWidth;
+				widths ~= cast(width_t) thisWidth;
 			}
 		}
 
-		finishLine(text.length, font);
+		auto finished = finishLine(text.length, font);
+		/+
+		if(!finished)
+			currentCorner.y += lineHeight;
+		import arsd.core; writeln(finished);
+		+/
 
 		_height = currentCorner.y;
+
+		// import arsd.core;writeln(_height);
 
 		assert(segments.length);
 

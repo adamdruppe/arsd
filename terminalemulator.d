@@ -1,8 +1,25 @@
-/**
+/++
+	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
+
+	You'll have to subclass TerminalEmulator and implement the abstract functions as well as write a drawing function for it.
+
+	See minigui_addons/terminal_emulator_widget in arsd repo or nestedterminalemulator.d or main.d in my terminal-emulator repo for how I did it.
+
+	History:
+		Written September/October 2013ish. Moved to arsd 2020-03-26.
++/
+module arsd.terminalemulator;
+
+/+
+	FIXME
+	terminal optimization:
+        first invalidated + last invalidated to slice the array
+        when looking for things that need redrawing.
+
 	FIXME: writing a line in color then a line in ordinary does something
 	wrong.
 
-	 # huh if i do underline then change color it undoes the underline
+	 huh if i do underline then change color it undoes the underline
 
 	FIXME: make shift+enter send something special to the application
 		and shift+space, etc.
@@ -19,19 +36,7 @@
 
 	FIXME: the save stack stuff should do cursor style too
 
-	This is an extendible unix terminal emulator and some helper functions to help actually implement one.
 
-	You'll have to subclass TerminalEmulator and implement the abstract functions as well as write a drawing function for it.
-
-	See nestedterminalemulator.d or main.d for how I did it.
-*/
-module arsd.terminalemulator;
-
-/+
-	FIXME
-	terminal optimization:
-        first invalidated + last invalidated to slice the array
-        when looking for things that need redrawing.
 +/
 
 import arsd.color;
@@ -106,6 +111,13 @@ struct ScopeBuffer(T, size_t maxSize, bool allowGrowth = false) {
 	size_t length;
 	bool isNull = true;
 	T[] opSlice() { return isNull ? null : buffer[0 .. length]; }
+
+	static if(is(T == char))
+	void appendIntAsString(int n) {
+		import std.conv;
+		this ~= to!string(n);
+	}
+
 	void opOpAssign(string op : "~")(in T rhs) {
 		if(buffer is null) buffer = bufferInternal[];
 		isNull = false;
@@ -322,6 +334,7 @@ class TerminalEmulator {
 		if(termY >= screenHeight)
 			termY = screenHeight - 1;
 
+		/+
 		version(Windows) {
 			// I'm swapping these because my laptop doesn't have a middle button,
 			// and putty swaps them too by default so whatevs.
@@ -330,6 +343,7 @@ class TerminalEmulator {
 			else if(button == MouseButton.middle)
 				button = MouseButton.right;
 		}
+		+/
 
 		int baseEventCode() {
 			int b;
@@ -354,6 +368,9 @@ class TerminalEmulator {
 				b |= 16;
 			if(alt) // sending alt as meta
 				b |= 8;
+
+			if(!sgrMouseMode)
+				b |= 32; // it just always does this
 
 			return b;
 		}
@@ -406,14 +423,9 @@ class TerminalEmulator {
 			dragging = false;
 			if(mouseButtonReleaseTracking) {
 				int b = baseEventCode;
-				b |= 3; // always send none / button released
-				ScopeBuffer!(char, 16) buffer;
-				buffer ~= "\033[M";
-				buffer ~= cast(char) (b | 32);
-				addMouseCoordinates(buffer, termX, termY);
-				//buffer ~= cast(char) (termX+1 + 32);
-				//buffer ~= cast(char) (termY+1 + 32);
-				sendToApplication(buffer[]);
+				if(!sgrMouseMode)
+					b |= 3; // always send none / button released
+				sendMouseEvent(b, termX, termY, true);
 			}
 		}
 
@@ -423,13 +435,7 @@ class TerminalEmulator {
 				lastDragX = termX;
 				if(mouseMotionTracking || (mouseButtonMotionTracking && button)) {
 					int b = baseEventCode;
-					ScopeBuffer!(char, 16) buffer;
-					buffer ~= "\033[M";
-					buffer ~= cast(char) ((b | 32) + 32);
-					addMouseCoordinates(buffer, termX, termY);
-					//buffer ~= cast(char) (termX+1 + 32);
-					//buffer ~= cast(char) (termY+1 + 32);
-					sendToApplication(buffer[]);
+					sendMouseEvent(b + 32, termX, termY);
 				}
 
 				if(dragging) {
@@ -506,18 +512,9 @@ class TerminalEmulator {
 
 				int b = baseEventCode;
 
-				int x = termX;
-				int y = termY;
-				x++; y++; // applications expect it to be one-based
-
-				ScopeBuffer!(char, 16) buffer;
-				buffer ~= "\033[M";
-				buffer ~= cast(char) (b | 32);
-				addMouseCoordinates(buffer, termX, termY);
-				//buffer ~= cast(char) (x + 32);
-				//buffer ~= cast(char) (y + 32);
-
-				sendToApplication(buffer[]);
+				sendMouseEvent(b, termX, termY);
+					//buffer ~= cast(char) (x + 32);
+					//buffer ~= cast(char) (y + 32);
 			} else {
 				do_default_behavior:
 				if(button == MouseButton.middle) {
@@ -618,24 +615,42 @@ class TerminalEmulator {
 		return false;
 	}
 
-	private void addMouseCoordinates(ref ScopeBuffer!(char, 16) buffer, int x, int y) {
-		// 1-based stuff and 32 is the base value
-		x += 1 + 32;
-		y += 1 + 32;
+	private void sendMouseEvent(int b, int x, int y, bool isRelease = false) {
 
-		if(utf8MouseMode) {
-			import std.utf;
-			char[4] str;
+		ScopeBuffer!(char, 16) buffer;
 
-			foreach(char ch; str[0 .. encode(str, x)])
-				buffer ~= ch;
-
-			foreach(char ch; str[0 .. encode(str, y)])
-				buffer ~= ch;
+		if(sgrMouseMode) {
+			buffer ~= "\033[<";
+			buffer.appendIntAsString(b);
+			buffer ~= ";";
+			buffer.appendIntAsString(x + 1);
+			buffer ~= ";";
+			buffer.appendIntAsString(y + 1);
+			buffer ~= isRelease ? "m" : "M";
 		} else {
-			buffer ~= cast(char) x;
-			buffer ~= cast(char) y;
+			buffer ~= "\033[M";
+			buffer ~= cast(char) b;
+
+			// 1-based stuff and 32 is the base value
+			x += 1 + 32;
+			y += 1 + 32;
+
+			if(utf8MouseMode) {
+				import std.utf;
+				char[4] str;
+
+				foreach(char ch; str[0 .. encode(str, x)])
+					buffer ~= ch;
+
+				foreach(char ch; str[0 .. encode(str, y)])
+					buffer ~= ch;
+			} else {
+				buffer ~= cast(char) x;
+				buffer ~= cast(char) y;
+			}
 		}
+
+		sendToApplication(buffer[]);
 	}
 
 	protected void returnToNormalScreen() {
@@ -663,6 +678,14 @@ class TerminalEmulator {
 	// assuming Key is an enum with members just like the one in simpledisplay.d
 	// returns true if it was handled here
 	protected bool defaultKeyHandler(Key)(Key key, bool shift = false, bool alt = false, bool ctrl = false, bool windows = false) {
+		version(winpty) {
+			// winpty butchers things and requires 127 as backspace and 8 as ctrl+backspace (and it swaps it when sending to the windows console programs! wild)
+			if(key == Key.Backspace && ctrl && !shift && !alt && !windows) {
+				sendToApplication("\b");
+				return true;
+			}
+		}
+
 		enum bool KeyHasNamedAscii = is(typeof(Key.A));
 
 		static string magic() {
@@ -792,6 +815,12 @@ class TerminalEmulator {
 		import std.utf;
 		//if(c == '\n') c = '\r'; // terminal seem to expect enter to send 13 instead of 10
 		auto data = str[0 .. encode(str, c)];
+
+		version(winpty)
+		if(c == 8) {
+			sendToApplication(str[0 .. encode(str, 127)]);
+			c = 127;
+		}
 
 		// on X11, the delete key can send a 127 character too, but that shouldn't be sent to the terminal since xterm shoots \033[3~ instead, which we handle in the KeyEvent handler.
 		if(c != 127)
@@ -1978,6 +2007,7 @@ class TerminalEmulator {
 		bool mouseButtonTracking;
 		private bool _mouseMotionTracking;
 		bool utf8MouseMode;
+		bool sgrMouseMode;
 		bool mouseButtonReleaseTracking;
 		bool mouseButtonMotionTracking;
 		bool selectiveMouseTracking;
@@ -3218,7 +3248,10 @@ SGR (1006)
           The highlight tracking responses are also modified to an SGR-
           like format, using the same SGR-style scheme and button-encod-
           ings.
+
+	  Note that M is used for motion; m is only release
 								*/
+									sgrMouseMode = true;
 								break;
 								case 1014:
 									// ARSD extension: it is 1002 but selective, only
@@ -3295,6 +3328,7 @@ URXVT (1015)
 							break;
 							case 1006:
 								// turn off sgr mouse
+								sgrMouseMode = false;
 							break;
 							case 1015:
 								// turn off urxvt mouse
@@ -3539,7 +3573,7 @@ version(use_libssh2) {
 			throw new Exception("fingerprint");
 
 		import std.string : toStringz;
-		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, username.ptr, username.length, toStringz(keyFile ~ ".pub"), toStringz(keyFile), null))
+		if(auto err = libssh2_userauth_publickey_fromfile_ex(session, username.ptr, cast(int) username.length, toStringz(keyFile ~ ".pub"), toStringz(keyFile), null))
 			throw new Exception("auth");
 
 
@@ -3639,6 +3673,12 @@ version(Posix) {
 			core.sys.posix.unistd.execv(argv[0], argv);
 		} else {
 			childrenAlive = 1;
+			import arsd.core;
+			auto ep = new ExternalProcess(pid);
+			ep.oncomplete = (ep) {
+				childrenAlive = 0;
+				ICoreEventLoop.exitApplication();
+			};
 			masterFunc(master);
 		}
 	}
@@ -4182,7 +4222,9 @@ mixin template PtySupport(alias resizeHelper) {
 	} else version(Posix) {
 		void readyToRead(int fd) {
 			import core.sys.posix.unistd;
-			ubyte[4096] buffer;
+			static ubyte[] buffer;
+			if(buffer is null)
+				buffer = new ubyte[](1024 * 32);
 
 			// the count is to limit how long we spend in this loop
 			// when it runs out, it goes back to the main event loop
@@ -4199,7 +4241,7 @@ mixin template PtySupport(alias resizeHelper) {
 			// it'd save bandwidth
 
 			while(--cnt) {
-				auto len = read(fd, buffer.ptr, 4096);
+				auto len = read(fd, buffer.ptr, buffer.length);
 				if(len < 0) {
 					import core.stdc.errno;
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -4537,6 +4579,11 @@ mixin template SdpyDraw() {
 			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
 			if(!this.font.isNull && !this.font.isMonospace)
 				this.font.unload(); // non-monospace fonts are unusable here. This should never happen anyway though as Courier New comes with Windows
+		} else version(OSX) {
+			this.font = new OperatingSystemFont("Courier New", size, FontWeight.medium);
+			if(!this.font.isNull && !this.font.isMonospace)
+				throw new Exception("non monospace");
+				//this.font.unload();
 		}
 
 		if(font.isNull) {
@@ -4544,8 +4591,9 @@ mixin template SdpyDraw() {
 			fontWidth = size / 2;
 			fontHeight = size;
 		} else {
-			fontWidth = font.averageWidth;
-			fontHeight = font.height;
+			fontWidth = cast(int) font.averageWidth;
+			fontHeight = cast(int) font.height;
+			// import std.stdio; writeln(fontWidth, " x ", fontHeight);
 		}
 	}
 

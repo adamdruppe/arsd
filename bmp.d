@@ -112,6 +112,9 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 			throw new Exception("didn't get expected int value " /*~ to!string(got)*/, __FILE__, line);
 	}
 
+	uint offsetToBits;
+	int offsetToBitsAfterHeader;
+
 	if(lookForFileHeader) {
 		require1('B');
 		require1('M');
@@ -120,7 +123,7 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 		require2(0); // reserved
 		require2(0); 	// reserved
 
-		auto offsetToBits = read4();
+		offsetToBits = read4();
 		version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("pixel data offset: 0x%08x\n", cast(uint)offsetToBits); }
 	}
 
@@ -128,6 +131,9 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 	if (sizeOfBitmapInfoHeader < 12) throw new Exception("invalid bitmap header size");
 
 	version(arsd_debug_bitmap_loader) { import core.stdc.stdio; printf("size of bitmap info header: %d\n", cast(uint)sizeOfBitmapInfoHeader); }
+
+	if(offsetToBits > sizeOfBitmapInfoHeader + 14 /* 14 is the size size of file header */)
+		offsetToBitsAfterHeader = offsetToBits - sizeOfBitmapInfoHeader - 14;
 
 	int width, height, rdheight;
 
@@ -421,9 +427,14 @@ MemoryImage readBmpIndirect(scope void delegate(void*, size_t) fread, bool lookF
 
 		return img;
 	} else {
-		if (compression != 0) throw new Exception("invalid bitmap compression");
+		if (compression != 0 && compression != 3) throw new Exception("unsupported bitmap compression");
 		// true color image
 		auto img = new TrueColorImage(width, height);
+
+		foreach(counter; 0 .. offsetToBitsAfterHeader) {
+			// so tbh I don't know what this actually is, but we can know to skip it at least
+			read1();
+		}
 
 		// no palette, so straight into the data
 		int offsetStart = width * height * 4;

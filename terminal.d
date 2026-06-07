@@ -2,6 +2,8 @@
 // for VT on Windows P s = 1 8 → Report the size of the text area in characters as CSI 8 ; height ; width t
 // could be used to have the TE volunteer the size
 
+// echo -e '\033]11;?\007'; sleep 1 # gets the default background color
+
 // FIXME: have some flags or formal api to set color to vtsequences even on pipe etc on demand.
 
 
@@ -145,7 +147,16 @@ unittest {
 	$(H3 Single Key)
 
 	This shows how to get one single character press using
-	the [RealTimeConsoleInput] structure.
+	the [RealTimeConsoleInput] structure. The return value
+	is normally a character, but can also be a member of
+	[KeyboardEvent.Key] for certain keys on the keyboard such
+	as arrow keys.
+
+	For more advanced cases, you might consider looping on
+	[RealTimeConsoleInput.nextEvent] which gives you full events
+	including paste events, mouse activity, resizes, and more.
+
+	See_Also: [KeyboardEvent], [KeyboardEvent.Key], [kbhit]
 +/
 unittest {
 	import arsd.terminal;
@@ -157,6 +168,34 @@ unittest {
 		terminal.writeln("Press any key to continue...");
 		auto ch = input.getch();
 		terminal.writeln("You pressed ", ch);
+	}
+
+	version(demos) main; // exclude from docs
+}
+
+/// ditto
+unittest {
+	import arsd.terminal;
+
+	void main() {
+		auto terminal = Terminal(ConsoleOutputType.linear);
+		auto rtti = RealTimeConsoleInput(&terminal, ConsoleInputFlags.raw);
+		loop: while(true) {
+			switch(rtti.getch()) {
+				case 'q': // other characters work as chars in the switch
+					break loop;
+				case KeyboardEvent.Key.F1: // also f-keys via that enum
+					terminal.writeln("You pressed F1!");
+				break;
+				case KeyboardEvent.Key.LeftArrow: // arrow keys, etc.
+					terminal.writeln("left");
+				break;
+				case KeyboardEvent.Key.RightArrow:
+					terminal.writeln("right");
+				break;
+				default: {}
+			}
+		}
 	}
 
 	version(demos) main; // exclude from docs
@@ -231,6 +270,8 @@ unittest {
 __gshared void delegate() nothrow @nogc sigIntExtension;
 
 static import arsd.core;
+
+public import arsd.core : dchar_invalid;
 
 import core.stdc.stdio;
 
@@ -350,6 +391,18 @@ version(Posix) {
 	import core.stdc.stdio;
 
 	import core.sys.posix.sys.ioctl;
+}
+version(CRuntime_Musl) {
+	// Druntime currently doesn't have bindings for termios on Musl.
+	// We define our own bindings whenever the import fails.
+	// When druntime catches up, this block can slowly be removed,
+	// although for backward compatibility we might want to keep it.
+	static if (!__traits(compiles, { import core.sys.posix.termios : tcgetattr; })) {
+		extern (C) {
+			int tcgetattr (int, termios *);
+			int tcsetattr (int, int, const termios *);
+		}
+	}
 }
 
 version(VtEscapeCodes) {
@@ -559,7 +612,7 @@ enum ConsoleOutputType {
 	cellular = 1, /// or do you want access to the terminal screen as a grid of characters?
 	//truncatedCellular = 3, /// cellular, but instead of wrapping output to the next line automatically, it will truncate at the edges
 
-	minimalProcessing = 255, /// do the least possible work, skips most construction and desturction tasks. Only use if you know what you're doing here
+	minimalProcessing = 255, /// do the least possible work, skips most construction and destruction tasks, does not query terminal in any way in favor of making assumptions about it. Only use if you know what you're doing here
 }
 
 alias ConsoleOutputMode = ConsoleOutputType;
@@ -707,20 +760,34 @@ struct Terminal {
 		} else static assert(0);
 	}
 
+	private bool outputtingToATty() {
+		version(Posix)
+			return (fdOut != 1 || stdoutIsTerminal);
+		else
+			return stdoutIsTerminal;
+	}
+
+	private bool inputtingFromATty() {
+		version(Posix)
+			return (fdIn != 0 || stdinIsTerminal);
+		else
+			return stdinIsTerminal;
+	}
+
 	version(Posix) {
 		private int fdOut;
 		private int fdIn;
-		private int[] delegate() getSizeOverride;
 		void delegate(in void[]) _writeDelegate; // used to override the unix write() system call, set it magically
 	}
+	private int[] delegate() getSizeOverride;
 
 	bool terminalInFamily(string[] terms...) {
 		version(Win32Console) if(UseWin32Console)
 			return false;
 
 		// we're not writing to a terminal at all!
-		if(!usingDirectEmulator)
-		if(!stdoutIsTerminal || !stdinIsTerminal)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
+		if(!outputtingToATty || !inputtingFromATty)
 			return false;
 
 		import std.process;
@@ -728,7 +795,7 @@ struct Terminal {
 		version(TerminalDirectToEmulator)
 			auto term = "xterm";
 		else
-			auto term = environment.get("TERM");
+			auto term = type == ConsoleOutputType.minimalProcessing ? "xterm" : environment.get("TERM");
 
 		foreach(t; terms)
 			if(indexOf(term, t) != -1)
@@ -900,7 +967,7 @@ struct Terminal {
 
 	// Looks up a termcap item and tries to execute it. Returns false on failure
 	bool doTermcap(T...)(string key, T t) {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing && !outputtingToATty)
 			return false;
 
 		import std.conv;
@@ -1041,6 +1108,7 @@ struct Terminal {
 	private bool tcapsRequested;
 
 	uint tcaps() const {
+		if(type != ConsoleOutputType.minimalProcessing)
 		if(!tcapsRequested) {
 			Terminal* mutable = cast(Terminal*) &this;
 			version(Posix)
@@ -1315,6 +1383,7 @@ struct Terminal {
 			this.usingDirectEmulator = false;
 
 		if(usingDirectEmulator) {
+			initNoColor();
 			version(Win32Console)
 				UseWin32Console = false;
 			UseVtSequences = true;
@@ -1412,6 +1481,7 @@ struct Terminal {
 
 	version(Win32Console)
 	void windowsInitialize(ConsoleOutputType type) {
+		initNoColor();
 		_initialized = true;
 		if(UseVtSequences) {
 			hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -1447,13 +1517,14 @@ struct Terminal {
 
 	version(Posix)
 	private void posixInitialize(ConsoleOutputType type, int fdIn = 0, int fdOut = 1, int[] delegate() getSizeOverride = null) {
+		initNoColor();
 		this.fdIn = fdIn;
 		this.fdOut = fdOut;
 		this.getSizeOverride = getSizeOverride;
 		this.type = type;
 
 		if(type == ConsoleOutputType.minimalProcessing) {
-			readTermcap();
+			readTermcap("xterm");
 			_suppressDestruction = true;
 			return;
 		}
@@ -1468,6 +1539,7 @@ struct Terminal {
 			goCellular();
 		}
 
+		if(type != ConsoleOutputType.minimalProcessing)
 		if(terminalInFamily("xterm", "rxvt", "screen", "tmux")) {
 			writeStringRaw("\033[22;0t"); // save window title on a stack (support seems spotty, but it doesn't hurt to have it)
 		}
@@ -1475,7 +1547,7 @@ struct Terminal {
 	}
 
 	private void goCellular() {
-		if(!usingDirectEmulator && !Terminal.stdoutIsTerminal)
+		if(!usingDirectEmulator && !Terminal.outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("Cannot go to cellular mode with redirected output");
 
 		if(UseVtSequences) {
@@ -1511,6 +1583,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			clear();
 		}
+
+		cursorPositionDirty = false;
 	}
 
 	private void goLinear() {
@@ -1684,6 +1758,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		_currentForegroundRGB = foreground;
 		_currentBackgroundRGB = background;
 
+		if(noColor)
+			return false;
+
 		if(UseVtSequences) {
 			// FIXME: if the terminal reliably does support 24 bit color, use it
 			// instead of the round off. But idk how to detect that yet...
@@ -1735,9 +1812,33 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		return false;
 	}
 
+	/++
+		True if no color is requested. Set if `NO_COLOR` env var is set by the Terminal constructor, then left alone by the library after that.
+		You can turn it back on if, for example, the user specifically requested it with a command line argument.
+
+		Please note, if not outputting to a tty, it never sends color. This may change in future versions.
+
+		See_Also:
+			[color], [setTrueColor] both will be no-ops if this is `true`.
+
+		Standards:
+			https://no-color.org/
+
+		History:
+			Added January 29, 2026
+	+/
+	bool noColor;
+
+	private void initNoColor() {
+		import std.process;
+		noColor = environment.get("NO_COLOR", "").length > 0;
+	}
+
 	/// Changes the current color. See enum [Color] for the values and note colors can be [arsd.docs.general_concepts#bitmasks|bitwise-or] combined with [Bright].
 	void color(int foreground, int background, ForceOption force = ForceOption.automatic, bool reverseVideo = false) {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(noColor)
+			return;
+		if(!usingDirectEmulator && !outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			return;
 		if(force != ForceOption.neverSend) {
 			if(UseVtSequences) {
@@ -1967,7 +2068,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 	/// Returns the terminal to normal output colors
 	void reset() {
-		if(!usingDirectEmulator && stdoutIsTerminal) {
+		if(!usingDirectEmulator && outputtingToATty && type != ConsoleOutputType.minimalProcessing) {
 			if(UseVtSequences)
 				writeStringRaw("\033[0m");
 			else version(Win32Console) if(UseWin32Console) {
@@ -1986,6 +2087,19 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	// FIXME: add moveRelative
+
+	/++
+		If you need precise cursorX and cursorY locations, setting this to `true` will cause
+		the library to ask the terminal instead of trusting its own internal counter. This causes
+		a significant performance degradation, but ensures you have accurate recording when using
+		East Asian characters, emoji, and other output that may not be predicted correctly by
+		terminal.d, or may not be supported across terminal emulators.
+
+		History:
+			Added December 18, 2025. It was on by default for a while between 2022 and 2025,
+			but is now off until you opt in.
+	+/
+	public bool cursorPositionPrecise = false;
 
 	/++
 		The current cached x and y positions of the output cursor. 0 == leftmost column for x and topmost row for y.
@@ -2200,7 +2314,10 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	private int[] getSizeInternal() {
-		if(!usingDirectEmulator && !stdoutIsTerminal)
+		if(getSizeOverride)
+			return getSizeOverride();
+
+		if(!usingDirectEmulator && !outputtingToATty && type != ConsoleOutputType.minimalProcessing)
 			throw new Exception("unable to get size of non-terminal");
 		version(Windows) {
 			CONSOLE_SCREEN_BUFFER_INFO info;
@@ -2213,11 +2330,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			return [cols, rows];
 		} else {
-			if(getSizeOverride is null) {
-				winsize w;
-				ioctl(0, TIOCGWINSZ, &w);
-				return [w.ws_col, w.ws_row];
-			} else return getSizeOverride();
+			winsize w;
+			ioctl(1, TIOCGWINSZ, &w);
+			return [w.ws_col, w.ws_row];
 		}
 	}
 
@@ -2305,7 +2420,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	+/
         void writePrintableString(const(char)[] s, ForceOption force = ForceOption.automatic) {
 		writePrintableString_(s, force);
-		cursorPositionDirty = true;
+		if(cursorPositionPrecise)
+			cursorPositionDirty = true;
         }
 
 	void writePrintableString_(const(char)[] s, ForceOption force = ForceOption.automatic) {
@@ -2315,6 +2431,34 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 		if(s.length == 0)
 			return;
 
+		if(type == ConsoleOutputType.minimalProcessing) {
+			// need to still try to track a little, even if we can't
+			// talk to the terminal in minimal processing mode
+			auto height = this.height;
+			foreach(dchar ch; s) {
+				switch(ch) {
+					case '\n':
+						_cursorX = 0;
+						_cursorY++;
+					break;
+					case '\t':
+						int diff = 8 - (_cursorX % 8);
+						if(diff == 0)
+							diff = 8;
+						_cursorX += diff;
+					break;
+					default:
+						_cursorX++;
+				}
+
+				if(_wrapAround && _cursorX > width) {
+					_cursorX = 0;
+					_cursorY++;
+				}
+				if(_cursorY == height)
+					_cursorY--;
+			}
+		}
 
 		version(TerminalDirectToEmulator) {
 			// this breaks up extremely long output a little as an aid to the
@@ -2463,7 +2607,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		Params:
 			prompt = the prompt to give the user. For example, `"Your name: "`.
-			echoChar = the character to show back to the user as they type. The default value of `dchar.init` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
+			echoChar = the character to show back to the user as they type. The default value of `dchar_invalid` shows the user their own input back normally. Passing `0` here will disable echo entirely, like a Unix password prompt. Or you might also try `'*'` to do a password prompt that shows the number of characters input to the user.
 			prefilledData = the initial data to populate the edit buffer
 
 		History:
@@ -2477,9 +2621,9 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 			On November 7, 2023 (dub v11.3), this function started returning stdin.readln in the event that the instance is not connected to a terminal.
 	+/
-	string getline(string prompt = null, dchar echoChar = dchar.init, string prefilledData = null) {
-		if(!usingDirectEmulator)
-		if(!stdoutIsTerminal || !stdinIsTerminal) {
+	string getline(string prompt = null, dchar echoChar = dchar_invalid, string prefilledData = null) {
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
+		if(!outputtingToATty || !inputtingFromATty) {
 			import std.stdio;
 			import std.string;
 			return readln().chomp;
@@ -2502,6 +2646,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 
 		lineGetter.prompt = prompt;
 		if(prefilledData) {
+			lineGetter.clear();
 			lineGetter.addString(prefilledData);
 			lineGetter.maintainBuffer = true;
 		}
@@ -2520,7 +2665,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 	}
 
 	/// ditto
-	string getline(string prompt, string prefilledData, dchar echoChar = dchar.init) {
+	string getline(string prompt, string prefilledData, dchar echoChar = dchar_invalid) {
 		return getline(prompt, echoChar, prefilledData);
 	}
 
@@ -2532,6 +2677,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			Added January 8, 2023
 	+/
 	void updateCursorPosition() {
+		if(type == ConsoleOutputType.minimalProcessing)
+			return;
 		auto terminal = &this;
 
 		terminal.flush();
@@ -2560,8 +2707,8 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
                }
 	}
 	private void updateCursorPosition_impl() {
-		if(!usingDirectEmulator)
-		if(!stdinIsTerminal || !stdoutIsTerminal)
+		if(!usingDirectEmulator && type != ConsoleOutputType.minimalProcessing)
+		if(!inputtingFromATty || !outputtingToATty)
 			throw new Exception("cannot update cursor position on non-terminal");
 		auto terminal = &this;
 		version(Win32Console) {
@@ -2614,14 +2761,17 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 					throw new Exception("terminal reply timed out");
 				auto len = read(terminal.fdIn, buffer.ptr, buffer.length);
 				if(len == -1) {
-					if(errno == EINTR)
+					if(errno == EINTR) {
+						tries++;
 						goto try_again;
+					}
 					if(errno == EAGAIN || errno == EWOULDBLOCK) {
 						import core.thread;
 						Thread.sleep(10.msecs);
 						tries++;
 						goto try_again;
 					}
+					throw new Exception("Other error in read cursor position");
 				} else if(len == 0) {
 					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 				}
@@ -2763,7 +2913,7 @@ struct RealTimeConsoleInput {
 
 			It was in Terminal briefly during an undocumented period, but it had to be moved here to have the context needed to send the real time paste event.
 	+/
-	void requestPasteFromClipboard() {
+	void requestPasteFromClipboard() @system {
 		version(Win32Console) {
 			HWND hwndOwner = null;
 			if(OpenClipboard(hwndOwner) == 0)
@@ -3215,11 +3365,13 @@ struct RealTimeConsoleInput {
 		function is really only meant to be used in conjunction with getch. Typically,
 		you should use a full-fledged event loop if you want all kinds of input. kbhit+getch
 		are just for simple keyboard driven applications.
+
+		See_Also: [KeyboardEvent], [KeyboardEvent.Key], [kbhit]
 	*/
 	bool kbhit() {
 		auto got = getch(true);
 
-		if(got == dchar.init)
+		if(got == dchar_invalid)
 			return false;
 
 		getchBuffer = got;
@@ -3300,35 +3452,35 @@ struct RealTimeConsoleInput {
 		}
 	}
 
-	private dchar getchBuffer;
+	private dchar getchBuffer = dchar_invalid;
 
 	/// Get one key press from the terminal, discarding other
-	/// events in the process. Returns dchar.init upon receiving end-of-file.
+	/// events in the process. Returns dchar_invalid upon receiving end-of-file.
 	///
 	/// Be aware that this may return non-character key events, like F1, F2, arrow keys, etc., as private use Unicode characters. Check them against KeyboardEvent.Key if you like.
 	dchar getch(bool nonblocking = false) {
-		if(getchBuffer != dchar.init) {
+		if(getchBuffer != dchar_invalid) {
 			auto a = getchBuffer;
-			getchBuffer = dchar.init;
+			getchBuffer = dchar_invalid;
 			return a;
 		}
 
 		if(nonblocking && !anyInput_internal())
-			return dchar.init;
+			return dchar_invalid;
 
-		auto event = nextEvent();
+		auto event = nextEvent(nonblocking);
 		while(event.type != InputEvent.Type.KeyboardEvent || event.keyboardEvent.pressed == false) {
 			if(event.type == InputEvent.Type.UserInterruptionEvent)
 				throw new UserInterruptionException();
 			if(event.type == InputEvent.Type.HangupEvent)
 				throw new HangupException();
 			if(event.type == InputEvent.Type.EndOfFileEvent)
-				return dchar.init;
+				return dchar_invalid;
 
 			if(nonblocking && !anyInput_internal())
-				return dchar.init;
+				return dchar_invalid;
 
-			event = nextEvent();
+			event = nextEvent(nonblocking);
 		}
 		return event.keyboardEvent.which;
 	}
@@ -3471,7 +3623,7 @@ struct RealTimeConsoleInput {
 	/// Experimental: It is also possible to integrate this into
 	/// a generic event loop, currently under -version=with_eventloop and it will
 	/// require the module arsd.eventloop (Linux only at this point)
-	InputEvent nextEvent() {
+	InputEvent nextEvent(bool nonblocking=false) {
 		terminal.flush();
 
 		wait_for_more:
@@ -3526,7 +3678,11 @@ struct RealTimeConsoleInput {
 
 		auto more = readNextEvents();
 		if(!more.length)
+		{
+			if(nonblocking && !anyInput_internal())
+				return InputEvent.init;
 			goto wait_for_more; // i used to do a loop (readNextEvents can read something, but it might be discarded by the input filter) but now it goto's above because readNextEvents might be interrupted by a SIGWINCH aka size event so we want to check that at least
+		}
 
 		assert(more.length);
 
@@ -3672,6 +3828,14 @@ struct RealTimeConsoleInput {
 
 							// old style event then follows as the fallback
 							e.character = cast(dchar) cast(wchar) '\n';
+							newEvents ~= InputEvent(e, terminal);
+						} else if(ev.UnicodeChar == 127) {
+							// this is windows-ese for ctrl+backspace
+							ke.which = cast(dchar) cast(wchar) '\b';
+							newEvents ~= InputEvent(ke, terminal);
+
+							// old style event then follows as the fallback
+							e.character = cast(dchar) cast(wchar) '\b';
 							newEvents ~= InputEvent(e, terminal);
 						} else if(ev.wVirtualKeyCode == 0x1b) {
 							ke.which = cast(KeyboardEvent.Key) (ev.wVirtualKeyCode + 0xF0000);
@@ -4229,7 +4393,10 @@ struct RealTimeConsoleInput {
 				return keyPressAndRelease(NonCharacterKeyEvent.Key.escape) ~ readNextEventsHelper(c);
 			} else {
 				// exceedingly quick esc followed by char is also what many terminals do for alt
-				return charPressAndRelease(nextChar(c), cast(uint)ModifierState.alt);
+				auto next = nextChar(c);
+				if(next == 127) // some terminals send 127 on the backspace. Let's normalize that.
+					next = '\b';
+				return charPressAndRelease(next, cast(uint)ModifierState.alt);
 			}
 		} else {
 			// FIXME: what if it is neither? we should check the termcap
@@ -5563,7 +5730,10 @@ class LineGetter {
 					terminal.doTermcap("te");
 				}
 			}
-			version(Posix) {
+			version(iOS)
+			{
+				return null;
+			} else version(Posix) {
 				import std.stdio;
 				// need to go to the parent terminal jic we're in an embedded terminal with redirection
 				terminal.write(" !! Editor may be in parent terminal !!");
@@ -6105,7 +6275,7 @@ class LineGetter {
 
 		Possible values are:
 
-			`dchar.init` = normal; user can see their input.
+			`dchar_invalid` = normal; user can see their input.
 
 			`'\0'` = nothing; the cursor does not visually move as they edit. Similar to Unix style password prompts.
 
@@ -6113,8 +6283,10 @@ class LineGetter {
 
 		History:
 			Added October 11, 2021 (dub v10.4)
+
+			OpenD changed `dchar.init` from an invalid char to `0` in September 2025. If you explicitly assigned `dchar.init`, I strongly recommend changing that to `dchar_invalid` for maximum compatibility.
 	+/
-	dchar echoChar = dchar.init;
+	dchar echoChar = dchar_invalid;
 
 	protected static struct Drawer {
 		LineGetter lg;
@@ -6163,7 +6335,7 @@ class LineGetter {
 
 			if(lg.echoChar == '\0')
 				return;
-			else if(lg.echoChar !is dchar.init)
+			else if(lg.echoChar !is dchar_invalid)
 				ch = lg.echoChar;
 
 			auto l = encode(buffer, ch);
@@ -6456,16 +6628,11 @@ class LineGetter {
 	void startGettingLine() {
 		// reset from any previous call first
 		if(!maintainBuffer) {
-			cursorPosition = 0;
-			horizontalScrollPosition = 0;
-			verticalScrollPosition = 0;
-			justHitTab = false;
+			clear();
 			currentHistoryViewPosition = 0;
-			if(line.length) {
-				line = line[0 .. 0];
-				line.assumeSafeAppend();
-			}
 		}
+
+		justHitTab = false;
 
 		maintainBuffer = false;
 
@@ -6712,6 +6879,22 @@ class LineGetter {
 	}
 
 	/++
+		Clears the buffer.
+
+		History:
+			Added June 18, 2025 (dub v12.1)
+	+/
+	void clear() {
+		cursorPosition = 0;
+		horizontalScrollPosition = 0;
+		verticalScrollPosition = 0;
+		if(line.length) {
+			line = line[0 .. 0];
+			line.assumeSafeAppend();
+		}
+	}
+
+	/++
 		Cancels an in-progress history search immediately, discarding the result, returning
 		to the normal prompt.
 
@@ -6855,10 +7038,11 @@ class LineGetter {
 							}
 						}
 					break;
+					case 127:
 					case '\b':
 						justHitTab = false;
 						// i use control for delete word, but gnu uses alt. so this allows both
-						if(ev.modifierState & (ModifierState.control | ModifierState.alt)) {
+						if(ch != 127 && (ev.modifierState & (ModifierState.control | ModifierState.alt))) {
 							lineChanged = true;
 							killWord();
 							justKilled = true;
@@ -6890,10 +7074,7 @@ class LineGetter {
 						if(multiLineMode)
 							multiLineMode = false;
 						else {
-							cursorPosition = 0;
-							horizontalScrollPosition = 0;
-							line = line[0 .. 0];
-							line.assumeSafeAppend();
+							clear();
 						}
 						redraw();
 					break;
@@ -7564,8 +7745,10 @@ mixin template LineGetterConstructors() {
 	}
 }
 
-/// This is a line getter that customizes the tab completion to
-/// fill in file names separated by spaces, like a command line thing.
+/++
+	This is a line getter that customizes the tab completion to
+	fill in file names separated by spaces, like a command line thing.
++/
 class FileLineGetter : LineGetter {
 	mixin LineGetterConstructors;
 
@@ -7579,13 +7762,33 @@ class FileLineGetter : LineGetter {
 	}
 
 	override protected string[] tabComplete(in dchar[] candidate, in dchar[] afterCursor) {
-		import std.file, std.conv, std.algorithm, std.string;
+		import arsd.core;
+
+		char[120] buffer;
+		auto candidateUtf8 = transcodeUtf(candidate, buffer[]);
+
+		auto fp = FilePath(cast(string) candidateUtf8);
+		auto prefix = fp.directoryName;
+		if(searchDirectory != ".")
+			fp = fp.makeAbsolute(FilePath(searchDirectory));
+
+		auto lookIn = fp.directoryName;
+		if(lookIn is null)
+			lookIn = searchDirectory;
 
 		string[] list;
-		foreach(string name; dirEntries(searchDirectory, SpanMode.breadth)) {
+		try
+		getFiles(lookIn, (string name, bool isDirectory) {
+			/+
 			// both with and without the (searchDirectory ~ "/")
 			list ~= name[searchDirectory.length + 1 .. $];
 			list ~= name[0 .. $];
+			+/
+			list ~= cast(string) prefix ~ name ~ (isDirectory ? "/" : "");
+		});
+		catch(Exception e) {
+			// just carry on, not important if it fails
+			logSwallowedException(e);
 		}
 
 		return list;
@@ -7823,6 +8026,27 @@ struct ScrollbackBuffer {
 		scrollbackPosition_ = scrollTopPosition(width, height);
 	}
 
+	/++
+		If you add [LineComponent]s, you can give them a `markId` argument. This will let you scroll back to that location.
+
+		History:
+			Added December 17, 2025
+	+/
+	void scrollToMark(int markId, int offset = 0) {
+		/+
+		private int[int] marks;
+		if(markId !in marks)
+			return; // throw new Exception("unknown mark");
+		scrollbackPosition_ = marks[markId] + offset;
+		if(scrollbackPosition_ < 0)
+			scrollbackPosition_ = 0;
+		+/
+
+		scrollbackPosition_ = scrollTopPosition(width, height, markId) + offset;
+		if(scrollbackPosition_ < 0)
+			scrollbackPosition_ = 0;
+	}
+
 
 	/++
 		You can construct these to get more control over specifics including
@@ -7842,23 +8066,26 @@ struct ScrollbackBuffer {
 			RGB backgroundRgb;
 		}
 		private bool delegate() onclick; // return true if you need to redraw
+		private int markId; // added Dec 17, 2025
 
 		// 16 color ctor
-		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null) {
+		this(string text, int color = Color.DEFAULT, int background = Color.DEFAULT, bool delegate() onclick = null, int markId = 0) {
 			this.text = text;
 			this.color = color;
 			this.background = background;
 			this.onclick = onclick;
 			this.isRgb = false;
+			this.markId = markId;
 		}
 
 		// true color ctor
-		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null) {
+		this(string text, RGB colorRgb, RGB backgroundRgb = RGB(0, 0, 0), bool delegate() onclick = null, int markId = 0) {
 			this.text = text;
 			this.colorRgb = colorRgb;
 			this.backgroundRgb = backgroundRgb;
 			this.onclick = onclick;
 			this.isRgb = true;
+			this.markId = markId;
 		}
 	}
 
@@ -7964,7 +8191,7 @@ struct ScrollbackBuffer {
 
 		Please note that this is O(n) with the length of the scrollback buffer.
 	+/
-	int scrollTopPosition(int width, int height) {
+	int scrollTopPosition(int width, int height, int markId = -1) {
 		int lineCount;
 
 		foreach_reverse(line; lines) {
@@ -7982,6 +8209,8 @@ struct ScrollbackBuffer {
 					else
 						written++;
 				}
+				if(markId >= 0 && component.markId == markId)
+					break;
 			}
 			lineCount++;
 		}
@@ -7999,6 +8228,11 @@ struct ScrollbackBuffer {
 	void drawInto(Terminal* terminal, in int x = 0, in int y = 0, int width = 0, int height = 0) {
 		if(lines.length == 0)
 			return;
+
+		auto old = terminal.cursorPositionPrecise;
+		terminal.cursorPositionPrecise = false;
+		scope(exit)
+			terminal.cursorPositionPrecise = old;
 
 		if(width == 0)
 			width = terminal.width;
@@ -9164,6 +9398,9 @@ version(TerminalDirectToEmulator) {
 
 	private class TerminalEmulatorInsideWidget : TerminalEmulator {
 
+		import arsd.core : EnableSynchronization;
+		mixin EnableSynchronization;
+
 		private ScrollbackBuffer sbb() { return scrollbackBuffer; }
 
 		void resized(int w, int h) {
@@ -9346,7 +9583,7 @@ version(TerminalDirectToEmulator) {
 						fontSize = widget.scaleWithDpi(fontSize);
 					} else {
 						auto xft = getXftDpi();
-						if(xft is float.init)
+						if(xft is float.nan)
 							xft = 96;
 						// the xft passed as assumed means it will figure that's what the size
 						// is based on (which it is, inside xft) preventing the double scale problem
@@ -9363,8 +9600,8 @@ version(TerminalDirectToEmulator) {
 				if(this.font.isNull) {
 					// carry on, it will try a default later
 				} else if(this.font.isMonospace) {
-					this.fontWidth = font.averageWidth;
-					this.fontHeight = font.height;
+					this.fontWidth = castFnumToCnum(font.averageWidth);
+					this.fontHeight = castFnumToCnum(font.height);
 				} else {
 					this.font.unload(); // can't really use a non-monospace font, so just going to unload it so the default font loads again
 				}
@@ -9579,6 +9816,14 @@ auto SdpyIntegratedKeys(SimpleWindow)(SimpleWindow window) {
 		static import sdpy = arsd.simpledisplay;
 		Terminal* terminal;
 		RealTimeConsoleInput* rtti;
+
+		// FIXME hack to work around bug in opend compiler (i think)
+		version(D_OpenD)
+			alias mutableRefInit = imported!"core.attribute".mutableRefInit;
+		else
+			enum mutableRefInit;
+
+		@mutableRefInit
 		typeof(RealTimeConsoleInput.init.integrateWithSimpleDisplayEventLoop(null)) listener;
 		this(sdpy.SimpleWindow window) {
 			terminal = new Terminal(ConsoleOutputType.linear);

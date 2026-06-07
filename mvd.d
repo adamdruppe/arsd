@@ -23,6 +23,12 @@
 	All non-class/interface types should be compatible among overloads.
 	Otherwise you are liable to get compile errors. (Or it might work,
 	that's up to the compiler's discretion.)
+
+	History:
+		As of January 1, 2026, it will statically reject overloads that
+		are impossible to match with the arguments, instead of only throwing
+		at runtime. It may still throw at runtime if objects, in theory, could
+		match but none actually do.
 +/
 module arsd.mvd;
 
@@ -42,6 +48,29 @@ template CommonReturnOfOverloads(alias fn) {
 /// See details on the [arsd.mvd] page.
 CommonReturnOfOverloads!fn mvd(alias fn, T...)(T args) {
 	return mvdObj!fn(null, args);
+}
+
+private bool isSameOrBaseOf(LookingFor, LookingAt)() {
+	static if(is(LookingFor == LookingAt))
+		return true;
+	else static if(is(LookingAt Bases == super)) {
+		foreach(base; Bases)
+			if(isSameOrBaseOf!(LookingFor, base))
+				return true;
+	}
+	return false;
+}
+
+private bool canMaybeEverCastTo(PassedArg, CastingTo)() {
+	// same type is fine, implicit cast to parent is fine
+	if(isSameOrBaseOf!(PassedArg, CastingTo))
+		return true;
+	// or if a dynamic cast might succeed, that's also ok
+	if(isSameOrBaseOf!(CastingTo, PassedArg))
+		return false;
+
+	// otherwise the cast operator won't work
+	return false;
 }
 
 CommonReturnOfOverloads!fn mvdObj(alias fn, This, T...)(This this_, T args) {
@@ -71,6 +100,9 @@ CommonReturnOfOverloads!fn mvdObj(alias fn, This, T...)(This this_, T args) {
 		int score = 0;
 		foreach(idx, parg; pargs) {
 			alias t = typeof(parg);
+
+			static assert(canMaybeEverCastTo!(T[idx], t), "No common base class between types needed " ~ t.stringof ~ " and passed " ~ T[idx].stringof ~ "; no overload could possibly match.");
+
 			static if(is(t == interface) || is(t == class)) {
 				t value = cast(t) args[idx];
 				// HACK: cast to Object* so we can set the value even if it's an immutable class

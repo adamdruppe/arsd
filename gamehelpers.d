@@ -104,9 +104,15 @@ void rotateAboutPoint(
 
 	The opposite direction btw can be gotten with `pt * -1`.
 
-	History: Added May 3, 2020
+	History:
+		Added May 3, 2020
+
+		The `Direction` alias was added November 29, 2025
 +/
 enum Dir { N = Point(0, -1), S = Point(0, 1), W = Point(-1, 0), E = Point(1, 0) }
+
+/// ditto
+alias Direction = Dir;
 
 /++
 	The four directions as a static array so you can assign to a local variable

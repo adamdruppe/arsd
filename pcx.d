@@ -478,7 +478,7 @@ void writeNum(T, string es="LE", ST) (auto ref ST st, T n) if (isGoodEndianness!
   } else {
     import core.stdc.string : memcpy;
     ubyte[T.sizeof] b = void;
-    memcpy(b.ptr, &v, T.sizeof);
+    memcpy(b.ptr, &n, T.sizeof);
     mixin(reverseBytesMixin);
     st.rawWriteExact(b[]);
   }

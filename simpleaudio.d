@@ -66,7 +66,9 @@ enum BUFFER_SIZE_FRAMES = 1024;//512;//2048;
 enum BUFFER_SIZE_SHORT = BUFFER_SIZE_FRAMES * 2;
 
 /// A reasonable default volume for an individual sample. It doesn't need to be large; in fact it needs to not be large so mixing doesn't clip too much.
-enum DEFAULT_VOLUME = 20;
+enum DEFAULT_VOLUME = 10;
+
+private enum PI = 3.14159265358979323;
 
 version(Demo_simpleaudio)
 void main() {
@@ -367,13 +369,13 @@ class DummySample : SampleController {
 	void pause() {}
 	void resume() {}
 	void stop() {}
-	float position() { return float.init; }
+	float position() { return float.nan; }
 	bool finished() { return true; }
 	bool paused() { return true; }
 
-	float duration() { return float.init; }
+	float duration() { return float.nan; }
 	float volume() { return 1.0; }
-	float volume(float v) { return float.init; }
+	float volume(float v) { return float.nan; }
 
 	float playbackSpeed() { return 1.0; }
 	void playbackSpeed(float v) { }
@@ -381,7 +383,10 @@ class DummySample : SampleController {
 	void seek(float where) {}
 }
 
-private final class SampleControlFlags : SampleController {
+final class SampleControlFlags : SampleController {
+	import arsd.core : EnableSynchronization;
+	mixin EnableSynchronization;
+
 	void pause() { paused_ = true; }
 	void resume() { paused_ = false; }
 	void stop() { paused_ = false; stopped = true; }
@@ -397,18 +402,18 @@ private final class SampleControlFlags : SampleController {
 	void seek(float where) { synchronized(this) {if(where < 0) where = 0; requestedSeek = where;} }
 
 	float currentPosition = 0.0;
-	float requestedSeek = float.init;
+	float requestedSeek = float.nan;
 
-	float detectedDuration;
+	float detectedDuration = float.nan;
 	float duration() { return detectedDuration; }
 
 	// FIXME: these aren't implemented
 	float volume() { return 1.0; }
-	float volume(float v) { return float.init; }
+	float volume(float v) { return float.nan; }
 
 	float playbackSpeed_ = 1.0;
 
-	float requestedPlaybackSpeed;
+	float requestedPlaybackSpeed = float.nan;
 
 	float playbackSpeed() { return playbackSpeed_; }
 	void playbackSpeed(float v) { requestedPlaybackSpeed = v; }
@@ -420,18 +425,18 @@ private final class SampleControlFlags : SampleController {
 	) {
 		// should I synchronize it after all?
 		synchronized(this) {
-			if(this.requestedSeek !is float.init) {
+			if(this.requestedSeek !is float.nan) {
 				if(executeSeek !is null && executeSeek(this.requestedSeek)) {
 					this.currentPosition = this.requestedSeek;
 				}
 
-				this.requestedSeek = float.init;
+				this.requestedSeek = float.nan;
 			}
-			if(this.requestedPlaybackSpeed !is float.init) {
+			if(this.requestedPlaybackSpeed !is float.nan) {
 				if(executePlaybackSpeed !is null && executePlaybackSpeed(this.playbackSpeed_)) {
 					this.playbackSpeed_ = this.requestedPlaybackSpeed;
 				}
-				this.requestedPlaybackSpeed = float.init;
+				this.requestedPlaybackSpeed = float.nan;
 			}
 		}
 
@@ -927,7 +932,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase / (1 + cast(float) x / (cast(float) SampleRate / attack));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -944,7 +949,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.balance = balance;
 		s.f = delegate short(int x) {
 			auto currentFrequency = cast(float) freqBase * (1 + cast(float) x / (cast(float) SampleRate / attack));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -959,7 +964,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 		s.duration = dur * SampleRate / 1000;
 		s.f = delegate short(int x) {
 			auto currentFrequency = 500.0 / (1 + cast(float) x / (cast(float) SampleRate / 8));
-			import std.math;
+			import core.stdc.math;
 			auto freq = 2 * PI /  (cast(float) SampleRate / currentFrequency);
 			return cast(short) (sin(cast(float) freq * cast(float) x) * short.max * volume / 100);
 		};
@@ -981,8 +986,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			The seek method is not yet implemented.
 	+/
 	SampleController playEmulatedOpl3Midi()(string filename, bool loop = false) {
-		import std.file;
-		auto bytes = cast(immutable(ubyte)[]) std.file.read(filename);
+		import arsd.core;
+		auto bytes = cast(immutable(ubyte)[]) readBinaryFile(filename); // cast(immutable(ubyte)[]) std.file.read(filename);
 
 		return playEmulatedOpl3Midi(bytes);
 	}
@@ -1479,19 +1484,107 @@ final class AudioPcmOutThreadImplementation : Thread {
 		History:
 			Added October 29, 2022 (dub v10.10)
 
+			Didn't actually work until November 29, 2025.
+
 		Examples:
 			---
 			AudioOutputThread ao = AudioOutputThread(true);
-			with(ao.synth) ao.playSynth(beep, boop, blip);
+			with(ao.synth) {
+				squareWave(frequency: 600, duration: 200);
+				sync;
+				silence(duration: 200);
+				sync;
+				squareWave(frequency: 100, duration: 200);
+
+				startPlaying;
 			---
 	+/
 	static struct SynthBuilder {
 		private this(AudioPcmOutThreadImplementation ao) {
 			this.ao = ao;
+			this.buffer = staticBuffer[];
 		}
-		private AudioPcmOutThreadImplementation ao;
-
 		// prolly want a tree of things that can be simultaneous sounds or sequential sounds
+
+		private AudioPcmOutThreadImplementation ao;
+		private AudioPcmOutThreadImplementation.Sample[8] staticBuffer;
+		private AudioPcmOutThreadImplementation.Sample[] buffer;
+		private int bufferPos;
+
+		private int currentSyncPoint;
+		private int currentDelay;
+
+		/++
+
+			History:
+				Added November 29, 2025
+		+/
+		SampleController startPlaying() {
+			sync();
+			return ao.addOverlappedSamples(buffer[0 .. bufferPos]);
+		}
+
+		/++
+			Hacky way to test this, keeping the main thread alive until the synth finishes playing.
+
+			History:
+				Added November 29, 2025
+		+/
+		void sleepUntilComplete() {
+			Thread.sleep((currentDelay * 1000 / ao.SampleRate).msecs);
+		}
+
+		/++
+
+			History:
+				Added November 29, 2025
+		+/
+		void sync() {
+			int max;
+			foreach(sample; buffer[currentSyncPoint .. bufferPos]) {
+				auto d = sample.delay + sample.duration - currentDelay;
+				if(d > max)
+					max = d;
+			}
+
+			currentSyncPoint = bufferPos;
+			currentDelay += max;
+		}
+
+		/++
+			The units here are mostly milliseconds and hertz.
+
+			History:
+				Added November 29, 2025
+		+/
+		ref SynthBuilder opDispatch(string op)(int delay = 0, int frequency = 600, int duration = 250, int volume = DEFAULT_VOLUME, int balance = 50, int attack = 0, int decay = 0, int sustainLevel = 100, int release = 0) {
+			AudioPcmOutThreadImplementation.Sample sample;
+			if(ao is null)
+				return this;
+
+			sample.operation = __traits(getMember, AudioPcmOutThreadImplementation.Sample.Operation, op);
+			sample.delay = currentDelay + delay * ao.SampleRate / 1000;
+			sample.frequency = ao.SampleRate / frequency;
+			sample.duration = duration * ao.SampleRate / 1000;
+			sample.volume = volume;
+			sample.balance = balance;
+
+			sample.attack = attack * ao.SampleRate / 1000;
+			sample.decay = decay * ao.SampleRate / 1000;
+			sample.sustainLevel = sustainLevel;
+			sample.release = release * ao.SampleRate / 1000;
+
+			this.addSample(sample);
+
+			return this;
+		}
+
+		private void addSample(AudioPcmOutThreadImplementation.Sample sample) {
+			if(bufferPos == buffer.length) {
+				buffer.length = buffer.length * 2;
+			}
+			buffer[bufferPos++] = sample;
+		}
 	}
 
 	/// ditto
@@ -1506,7 +1599,8 @@ final class AudioPcmOutThreadImplementation : Thread {
 			triangleWave = 2,
 			sawtoothWave = 3,
 			sineWave = 4,
-			customFunction = 5
+			customFunction = 5,
+			silence = 6,
 		}
 
 		/+
@@ -1519,213 +1613,300 @@ final class AudioPcmOutThreadImplementation : Thread {
 		+/
 
 		int operation;
+		int delay; /* in samples */
 		int frequency; /* in samples */
 		int duration; /* in samples */
 		int volume = DEFAULT_VOLUME; /* between 1 and 100. You should generally shoot for something lowish, like 20. */
-		int delay; /* in samples */
 		int balance = 50; /* between 0 and 100 */
 
-		/+
 		// volume envelope
-		int attack;
-		int decay;
-		int sustainLevel;
-		int release;
+		int attack; /* in samples */
+		int decay; /* in samples */
+		int sustainLevel = 100; // in percentage of the current volume. sustain time is duration - attack - decay - release.
+		// while in sustain, it can add some vibrato to the amplitude
+		//int volumeVibratoRange = 0; // amplitude of difference, in volume percentage points
+		//int volumeVibratoSpeed = 0; // frequency of difference, in samples per period
+		int release; /* in samples */
 
+		/+
 		// change in frequency
 		int frequencyAttack;
 
-		int vibratoRange; // change of frequency as it sustains
-		int vibratoSpeed; // how fast it cycles through the vibratoRange
+		int vibratoRange; // change of frequency as it sustains. set to zero for no vibrato
+		int vibratoSpeed; // how fast it cycles through the vibratoRange; a sine wave frequency.
+
+		// frequencySustain is always `duration - (frequencyAttack + frequencyRelease)`, floor of zero.
+
+		int frequencyRelease;
 		+/
 
-		int x;
 		short delegate(int x) f;
+
+		// internal info
+		private {
+			int x; // only for custom function
+
+			bool left;
+			short val;
+			int leftMultiplier;
+			int rightMultiplier;
+			int frequencyCounter;
+			int ticker;
+
+			int volumeNow() const {
+				auto maxVolume = short.max * volume * 100 / 100 / 100;
+				auto minVolume = 0;
+				auto getTo = short.max * volume * sustainLevel / 100 / 100;
+				if(attack) {
+					auto t = ticker;
+
+					if(t <= attack) {
+						return maxVolume * t / attack;
+					}
+				}
+				if(decay) {
+					auto t = ticker - attack;
+
+					if(t <= decay) {
+						return (maxVolume - getTo) * (decay-t) / decay + getTo;
+					}
+				}
+				if(release) {
+					//auto t = ticker - decay - attack;
+					// note that duration has been mutated by now
+					if(duration <= release) {
+						return getTo * duration / release;
+					}
+				}
+
+				return getTo; // the sustain
+			}
+		}
 	}
 
-	// FIXME: go ahead and make this return a SampleController too
-	final void addSample(Sample[] samples...) {
-		if(samples.length == 0)
-			return;
+	/++
+		These will destructively edit the passed array, using its memory for running status information in the audio thread. Once you pass it, you must abandon it.
+	+/
+	final SampleController addSample(Sample[] samples...) {
+		long place;
+		foreach(ref sample; samples) {
+			auto oldPlace = place;
+			place += sample.delay + sample.duration;
+			sample.delay += oldPlace;
+		}
 
-		Sample currentSample = samples[0];
-		samples = samples[1 .. $];
+		return addOverlappedSamples(samples);
+	}
+
+	/// ditto
+	final SampleController addOverlappedSamples(Sample[] samples...) {
+		if(samples.length == 0)
+			return null;
+
 		if(samples.length)
 			samples = samples.dup; // ensure it isn't in stack memory that might get smashed when the delegate is passed to the other thread
 
-		int frequencyCounter;
-		short val = cast(short) (cast(int) short.max * currentSample.volume / 100);
-
 		enum divisor = 50;
-		int leftMultiplier  = 50 + (50 - currentSample.balance);
-		int rightMultiplier = 50 + (currentSample.balance - 50);
-		bool left = true;
+
+		int timer;
+		int max;
+		foreach(ref sample; samples) {
+			sample.left = true;
+			sample.val = 1;
+			sample.leftMultiplier  = 50 + (50 - sample.balance);
+			sample.rightMultiplier = 50 + (sample.balance - 50);
+
+			auto end = sample.delay + sample.duration;
+			if(end > max)
+				max = end;
+		}
+
+		auto scf = new SampleControlFlags;
+		scf.detectedDuration = cast(float) max / SampleRate;
+
+		max *= 2; // cuz of stereo
 
 		addChannel(
 			delegate bool (short[] buffer) {
-				newsample:
-				if(currentSample.duration) {
-					size_t i = 0;
-					if(currentSample.delay) {
-						if(buffer.length <= currentSample.delay * 2) {
-							// whole buffer consumed by delay
-							buffer[] = 0;
-							currentSample.delay -= buffer.length / 2;
-						} else {
-							i = currentSample.delay * 2;
-							buffer[0 .. i] = 0;
-							currentSample.delay = 0;
-						}
-					}
-					if(currentSample.delay > 0)
-						return true;
 
-					size_t sampleFinish;
-					if(currentSample.duration * 2 <= buffer.length) {
-						sampleFinish = currentSample.duration * 2;
-						currentSample.duration = 0;
-					} else {
-						sampleFinish = buffer.length;
-						currentSample.duration -= buffer.length / 2;
-					}
+				buffer[] = 0;
 
-					switch(currentSample.operation) {
-						case 0: // square wave
-							for(; i < sampleFinish; i++) {
-								buffer[i] = cast(short)((val * (left ? leftMultiplier : rightMultiplier)) / divisor);
-								left = !left;
-								// left and right do the same thing so we only count
-								// every other sample
-								if(i & 1) {
-									if(frequencyCounter)
-										frequencyCounter--;
-									if(frequencyCounter == 0) {
-										// are you kidding me dmd? random casts suck
-										val = cast(short) -cast(int)(val);
-										frequencyCounter = currentSample.frequency / 2;
-									}
-								}
-							}
-						break;
-						case 1: // noise
-							for(; i < sampleFinish; i++) {
-								import std.random;
-								buffer[i] = cast(short)((left ? leftMultiplier : rightMultiplier) * uniform(cast(short) -cast(int)val, val) / divisor);
-								left = !left;
-							}
-						break;
-						/+
-						case 2: // triangle wave
-
-		short[] tone;
-		tone.length = 22050 * len / 1000;
-
-		short valmax = cast(short) (cast(int) volume * short.max / 100);
-		int wavelength = 22050 / freq;
-		wavelength /= 2;
-		int da = valmax / wavelength;
-		int val = 0;
-
-		for(int a = 0; a < tone.length; a++){
-			tone[a] = cast(short) val;
-			val+= da;
-			if(da > 0 && val >= valmax)
-				da *= -1;
-			if(da < 0 && val <= -valmax)
-				da *= -1;
-		}
-
-		data ~= tone;
-
-
-							for(; i < sampleFinish; i++) {
-								buffer[i] = val;
-								// left and right do the same thing so we only count
-								// every other sample
-								if(i & 1) {
-									if(frequencyCounter)
-										frequencyCounter--;
-									if(frequencyCounter == 0) {
-										val = 0;
-										frequencyCounter = currentSample.frequency / 2;
-									}
-								}
-							}
-
-						break;
-						case 3: // sawtooth wave
-		short[] tone;
-		tone.length = 22050 * len / 1000;
-
-		int valmax = volume * short.max / 100;
-		int wavelength = 22050 / freq;
-		int da = valmax / wavelength;
-		short val = 0;
-
-		for(int a = 0; a < tone.length; a++){
-			tone[a] = val;
-			val+= da;
-			if(val >= valmax)
-				val = 0;
-		}
-
-		data ~= tone;
-						case 4: // sine wave
-		short[] tone;
-		tone.length = 22050 * len / 1000;
-
-		int valmax = volume * short.max / 100;
-		int val = 0;
-
-		float i = 2*PI / (22050/freq);
-
-		float f = 0;
-		for(int a = 0; a < tone.length; a++){
-			tone[a] = cast(short) (valmax * sin(f));
-			f += i;
-			if(f>= 2*PI)
-				f -= 2*PI;
-		}
-
-		data ~= tone;
-
-						+/
-						case 5: // custom function
-							val = currentSample.f(currentSample.x);
-							for(; i < sampleFinish; i++) {
-								buffer[i] = cast(short)(val * (left ? leftMultiplier : rightMultiplier) / divisor);
-								left = !left;
-								if(i & 1) {
-									currentSample.x++;
-									val = currentSample.f(currentSample.x);
-								}
-							}
-						break;
-						default: // unknown; use silence
-							currentSample.duration = 0;
-					}
-
-					if(i < buffer.length)
-						buffer[i .. $] = 0;
-
-					return currentSample.duration > 0 || samples.length;
-				} else if(samples.length) {
-					currentSample = samples[0];
-					samples = samples[1 .. $];
-
-					frequencyCounter = 0;
-					val = cast(short) (cast(int) short.max * currentSample.volume / 100);
-
-					leftMultiplier  = 50 + (50 - currentSample.balance);
-					rightMultiplier = 50 + (currentSample.balance - 50);
-					left = true;
-
-					goto newsample;
-				} else {
+				if(scf.stopped) {
+					scf.finished_ = true;
 					return false;
 				}
+
+				if(scf.paused_)
+					return true;
+
+				foreach(ref currentSample; samples) with(currentSample) {
+					int timerChange;
+					if(currentSample.duration) {
+						size_t i = 0;
+						if(currentSample.delay) {
+							if(buffer.length <= currentSample.delay * 2) {
+								// whole buffer consumed by delay
+								currentSample.delay -= buffer.length / 2;
+							} else {
+								i = currentSample.delay * 2;
+								currentSample.delay = 0;
+							}
+						}
+						if(currentSample.delay > 0) {
+							continue;
+						}
+
+						size_t sampleFinish;
+						if(currentSample.duration * 2 <= buffer.length) {
+							sampleFinish = currentSample.duration * 2;
+							timerChange = currentSample.duration;
+							currentSample.duration = 0;
+						} else {
+							sampleFinish = buffer.length;
+							currentSample.duration -= buffer.length / 2;
+							timerChange = cast(int) buffer.length / 2;
+						}
+
+						switch(currentSample.operation) {
+							case 0: // square wave
+								for(; i < sampleFinish; i++) {
+									buffer[i] += cast(short)(
+										(val < 0 ? -1 : 1) *
+										volumeNow() *
+										(left ? leftMultiplier : rightMultiplier) / divisor);
+									left = !left;
+									// left and right do the same thing so we only count
+									// every other sample
+									if(i & 1) {
+										if(frequencyCounter)
+											frequencyCounter--;
+										if(frequencyCounter == 0) {
+											// are you kidding me dmd? random casts suck
+											val = cast(short) -val;
+											frequencyCounter = currentSample.frequency / 2;
+										}
+									}
+								}
+							break;
+							case 1: // noise
+								for(; i < sampleFinish; i++) {
+									import std.random;
+									if(volumeNow != 0)
+										buffer[i] += cast(short)((left ? leftMultiplier : rightMultiplier) * uniform(cast(short) -volumeNow, volumeNow) / divisor);
+									left = !left;
+								}
+							break;
+							/+
+							case 2: // triangle wave
+
+			short[] tone;
+			tone.length = 22050 * len / 1000;
+
+			short valmax = cast(short) (cast(int) volume * short.max / 100);
+			int wavelength = 22050 / freq;
+			wavelength /= 2;
+			int da = valmax / wavelength;
+			int val = 0;
+
+			for(int a = 0; a < tone.length; a++){
+				tone[a] = cast(short) val;
+				val+= da;
+				if(da > 0 && val >= valmax)
+					da *= -1;
+				if(da < 0 && val <= -valmax)
+					da *= -1;
+			}
+
+			data ~= tone;
+
+
+								for(; i < sampleFinish; i++) {
+									buffer[i] += val;
+									// left and right do the same thing so we only count
+									// every other sample
+									if(i & 1) {
+										if(frequencyCounter)
+											frequencyCounter--;
+										if(frequencyCounter == 0) {
+											val = 0;
+											frequencyCounter = currentSample.frequency / 2;
+										}
+									}
+								}
+
+							break;
+							case 3: // sawtooth wave
+			short[] tone;
+			tone.length = 22050 * len / 1000;
+
+			int valmax = volume * short.max / 100;
+			int wavelength = 22050 / freq;
+			int da = valmax / wavelength;
+			short val = 0;
+
+			for(int a = 0; a < tone.length; a++){
+				tone[a] = val;
+				val+= da;
+				if(val >= valmax)
+					val = 0;
+			}
+
+			data ~= tone;
+							case 4: // sine wave
+			short[] tone;
+			tone.length = 22050 * len / 1000;
+
+			int valmax = volume * short.max / 100;
+			int val = 0;
+
+			float i = 2*PI / (22050/freq);
+
+			float f = 0;
+			for(int a = 0; a < tone.length; a++){
+				tone[a] = cast(short) (valmax * sin(f));
+				f += i;
+				if(f>= 2*PI)
+					f -= 2*PI;
+			}
+
+			data ~= tone;
+
+							+/
+							case 5: // custom function
+								val = currentSample.f(currentSample.x);
+								for(; i < sampleFinish; i++) {
+									buffer[i] += cast(short)(val * (left ? leftMultiplier : rightMultiplier) / divisor);
+									left = !left;
+									if(i & 1) {
+										currentSample.x++;
+										val = currentSample.f(currentSample.x);
+									}
+								}
+							break;
+							case 6: // silence
+								// buffer[i .. sampleFinish] += 0;
+								i = sampleFinish;
+							break;
+							default: // unknown; use silence
+								currentSample.duration = 0;
+						}
+
+						// if(i < buffer.length) buffer[i .. $] += 0;
+					}
+
+					currentSample.ticker += timerChange;
+				}
+
+				timer += buffer.length;
+				if(timer >= max)
+					scf.finished_ = true;
+				scf.currentPosition = cast(float) timer / max;
+
+				return timer < max;
 			}
 		);
+
+		return scf;
 	}
 
 	/++
@@ -1777,7 +1958,10 @@ final class AudioPcmOutThreadImplementation : Thread {
 	public void unsuspend() {
 		suspended_ = false;
 		suspendWanted = false;
-		event.set();
+		static if(__traits(hasMember, event, "setIfInitialized"))
+			event.setIfInitialized();
+		else
+			event.set();
 	}
 
 	/// ditto
@@ -1806,8 +1990,17 @@ final class AudioPcmOutThreadImplementation : Thread {
 		return join(rethrow);
 	}
 
-
 	private void run() {
+		try {
+			runInsideTryCatch();
+		} catch(Throwable t) {
+			import arsd.core;
+			writelnStderr("audio thread crashed: ", t.toString);
+			throw t;
+		}
+	}
+
+	private void runInsideTryCatch() {
 		version(linux) {
 			// this thread has no business intercepting signals from the main thread,
 			// so gonna block a couple of them
@@ -2052,7 +2245,7 @@ struct AudioInput {
 	}
 
 	/// First, set [receiveData], then call this.
-	void record() {
+	void record() @system /* FIXME https://issues.dlang.org/show_bug.cgi?id=24782 */ {
 		assert(receiveData !is null);
 		recording = true;
 
@@ -2203,7 +2396,7 @@ struct AudioOutput {
 	shared(bool) playing = false; // considered to be volatile
 
 	/// Starts playing, loops until stop is called
-	void play() {
+	void play() @system /* FIXME https://issues.dlang.org/show_bug.cgi?id=24782 */ {
 		if(handle is null)
 			open();
 
@@ -4199,7 +4392,7 @@ version(with_resampler) {
 	/*8, 24, 40, 56, 80, 104, 128, 160, 200, 256, 320*/
 	double computeFunc (float x, immutable FuncDef* func) {
 	  version(Posix) import core.stdc.math : lrintf;
-	  import std.math : floor;
+	  import core.stdc.math;
 	  //double[4] interp;
 	  float y = x*func.oversample;
 	  version(Posix) {
@@ -4228,7 +4421,7 @@ version(with_resampler) {
 	  } else {
 	    static T fabs(T) (T n) pure { static if (__VERSION__ > 2067) pragma(inline, true); return (n < 0 ? -n : n); }
 	  }
-	  import std.math : sin, PI;
+	  import core.stdc.math;
 	  version(LittleEndian) {
 	    temp_float txx = void;
 	    txx.f = x;
