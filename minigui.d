@@ -15241,7 +15241,7 @@ abstract class EditableTextWidget : Widget {
 	static class Style : Widget.Style {
 		override WidgetBackground background() {
 			if(widget.dynamicState & DynamicState.invalid) {
-				return WidgetBackground(Color(0xff, 0xcc, 0xcc));
+				return WidgetBackground(WidgetPainter.visualTheme.widgetInvalidColor);
 			} else {
 				return WidgetBackground(WidgetPainter.visualTheme.widgetBackgroundColor);
 			}
@@ -19003,6 +19003,7 @@ abstract class BaseVisualTheme {
 	+/
 	abstract Color windowBackgroundColor();
 	abstract Color widgetBackgroundColor();
+	abstract Color widgetInvalidColor();
 	abstract Color foregroundColor();
 	abstract Color lightAccentColor();
 	abstract Color darkAccentColor();
@@ -19110,6 +19111,7 @@ abstract class VisualTheme(CRTP) : BaseVisualTheme {
 mixin template Beautiful95Theme() {
 	override Color windowBackgroundColor() { return Color(212, 212, 212); }
 	override Color widgetBackgroundColor() { return Color.white; }
+	override Color widgetInvalidColor() { return Color(0xff, 0xcc, 0xcc); }
 	override Color foregroundColor() { return Color.black; }
 	override Color darkAccentColor() { return Color(172, 172, 172); }
 	override Color lightAccentColor() { return Color(223, 223, 223); }
