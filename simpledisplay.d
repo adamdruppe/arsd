@@ -9578,6 +9578,17 @@ class OperatingSystemFont : MeasurableFont {
 		isMonospace_ = (tm.tmPitchAndFamily & TMPF_FIXED_PITCH) == 0;
 	}
 
+	// this should be called once and only one, immediately after loading, to adjust the font info. this may change.
+	void scaleFontInfoWithDpi(int dpi) {
+		version(Windows) {
+			width_ = width_ * dpi / 96;
+			height_ = height_ * dpi / 96;
+			ascent_ = ascent_ * dpi / 96;
+			descent_ = descent_ * dpi / 96;
+		}
+		// other platforms intentionally left blank at this time
+	}
+
 
 	/++
 		`name` is a font name, but it can also be a more complicated string parsed in an OS-specific way.

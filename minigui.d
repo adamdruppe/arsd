@@ -19124,15 +19124,18 @@ mixin template Beautiful95Theme() {
 mixin template DefaultLightTheme() {
 	override Color windowBackgroundColor() { return Color(232, 232, 232); }
 	override Color widgetBackgroundColor() { return Color.white; }
+	override Color widgetInvalidColor() { return Color(0xff, 0xcc, 0xcc); }
 	override Color foregroundColor() { return Color.black; }
 	override Color darkAccentColor() { return Color(172, 172, 172); }
 	override Color lightAccentColor() { return Color(223, 223, 223); }
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(0, 0, 128); }
 	override OperatingSystemFont defaultFont(int dpi) {
-		version(Windows)
-			return new OperatingSystemFont("Segoe UI");
-		else static if(UsingSimpledisplayCocoa) {
+		version(Windows) {
+			auto f = new OperatingSystemFont("Segoe UI", 12);
+			f.scaleFontInfoWithDpi(dpi);
+			return f;
+		} else static if(UsingSimpledisplayCocoa) {
 			return (new OperatingSystemFont()).loadDefault;
 		} else {
 			// FIXME: undo xft's scaling so we don't end up double scaled
@@ -19145,15 +19148,18 @@ mixin template DefaultLightTheme() {
 mixin template DefaultDarkTheme() {
 	override Color windowBackgroundColor() { return Color(64, 64, 64); }
 	override Color widgetBackgroundColor() { return Color.black; }
+	override Color widgetInvalidColor() { return Color(0xff, 0xcc, 0xcc); }
 	override Color foregroundColor() { return Color.white; }
 	override Color darkAccentColor() { return Color(20, 20, 20); }
 	override Color lightAccentColor() { return Color(80, 80, 80); }
 	override Color selectionForegroundColor() { return Color.white; }
 	override Color selectionBackgroundColor() { return Color(128, 0, 128); }
 	override OperatingSystemFont defaultFont(int dpi) {
-		version(Windows)
-			return new OperatingSystemFont("Segoe UI", 12);
-		else static if(UsingSimpledisplayCocoa) {
+		version(Windows) {
+			auto f = new OperatingSystemFont("Segoe UI", 12);
+			f.scaleFontInfoWithDpi(dpi);
+			return f;
+		} else static if(UsingSimpledisplayCocoa) {
 			return (new OperatingSystemFont()).loadDefault;
 		} else {
 			return new OperatingSystemFont("DejaVu Sans", 9 * dpi / 96);
