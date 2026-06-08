@@ -39,6 +39,42 @@ auto showColorDialog(Window owner, Color current, void delegate(Color choice) on
 	} else static assert(0);
 }
 
+class ColorPickerButton : CustomButton {
+	this(string label, Widget parent) {
+		super(label, parent);
+
+		this.addEventListener("triggered", () {
+			this.parentWindow.showColorDialog(currentValue, &currentValue);
+		});
+
+		assert(this.needsOwnerDraw);
+	}
+
+	private Color _currentValue;
+
+	Color currentValue() {
+		return _currentValue;
+	}
+
+	void currentValue(Color c) {
+		_currentValue = c;
+		redraw();
+	}
+
+	//static if(!UsingWin32Widgets)
+	override Rectangle paintContent(WidgetPainter painter, const Rectangle bounds) {
+		painter.fillColor = currentValue;
+		painter.outlineColor = currentValue;
+		painter.drawRectangle(bounds);
+		painter.outlineColor = makeTextColor(currentValue);
+		painter.drawText(bounds.upperLeft, this.label, bounds.lowerRight, TextAlignment.Center | TextAlignment.VerticalCenter);
+		return bounds;
+	}
+
+	override int heightStretchiness() { return 0; }
+	override int widthStretchiness() { return 0; }
+}
+
 /*
 	Hue / Saturation picker
 	Lightness Picker

@@ -4862,6 +4862,13 @@ private static auto widgetFor(alias tt, P)(P* valptr, Widget parent, out void de
 				};
 				updateWidgetFromData();
 				return dds;
+			} else static if(is(typeof(tt) == Color)) {
+				import arsd.minigui_addons.color_dialog;
+				auto w = new ColorPickerButton(displayName, parent);
+				updateWidgetFromData = () { w.currentValue = *valptr; };
+				updateDataFromWidget = () { *valptr = w.currentValue; };
+				updateWidgetFromData();
+				return w;
 			} else static if(is(typeof(tt) == bool)) {
 				auto box = new Checkbox(displayName, parent);
 				updateWidgetFromData = () { box.isChecked = *valptr; };
