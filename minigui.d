@@ -11640,13 +11640,17 @@ class MainWindow : Window {
 
 	Note that you can call this function multiple times and it will add the items in order to the given items.
 
+		History:
+			The overload that takes a class or interface was changed to return the passed object on May 31, 2026.
+			This lets you pass an anonymous class object and retain a reference for calling the methods programmatically if you want.
 	+/
 	void setMenuAndToolbarFromAnnotatedCode(T)(ref T t) if(!is(T == class) && !is(T == interface)) {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
 	}
 	/// ditto
-	void setMenuAndToolbarFromAnnotatedCode(T)(T t) if(is(T == class) || is(T == interface)) {
+	T setMenuAndToolbarFromAnnotatedCode(T)(T t) if(is(T == class) || is(T == interface)) {
 		setMenuAndToolbarFromAnnotatedCode_internal(t);
+		return t;
 	}
 	void setMenuAndToolbarFromAnnotatedCode_internal(T)(ref T t) {
 		auto menuBar = this.menuBar is null ? new MenuBar() : this.menuBar;
