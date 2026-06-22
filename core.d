@@ -6216,7 +6216,7 @@ class Timer {
 
 	/++
 	+/
-	void changeTime(int intervalInMilliseconds, bool repeats) {
+	void changeTime(int intervalInMilliseconds, bool repeats = true) {
 		this.intervalInMilliseconds = intervalInMilliseconds;
 		this.repeats = repeats;
 		changeTimeInternal(intervalInMilliseconds, repeats);
