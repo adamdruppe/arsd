@@ -5424,6 +5424,7 @@ class BufferedInputRange {
 					} else {
 						// gonna treat a timeout here as a close
 						sourceClosed = true;
+						source.close();
 						return;
 					}
 				}
