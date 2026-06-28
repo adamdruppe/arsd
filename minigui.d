@@ -1359,11 +1359,11 @@ class Widget : ReflectableProperties {
 			return WidgetBackground(widget.backgroundColor_);
 		}
 
-		private static OperatingSystemFont fontCached_;
+		private static OperatingSystemFont[TypeInfo] fontCached_;
 		private OperatingSystemFont fontCached() {
-			if(fontCached_ is null)
-				fontCached_ = font();
-			return fontCached_;
+			if(typeid(this) !in fontCached_)
+				fontCached_[typeid(this)] = font();
+			return fontCached_[typeid(this)];
 		}
 
 		/++
@@ -12245,8 +12245,10 @@ class MenuBar : Widget {
 		version(win32_widgets) {
 			AppendMenuW(handle, MF_STRING | MF_POPUP, cast(UINT) item.handle, toWstringzInternal(item.label));
 		} else version(custom_widgets) {
-			mbItem.defaultEventHandlers["mousedown"] = (Widget e, Event ev) {
-				item.popup(mbItem);
+			mbItem.defaultEventHandlers["mousedown"] = (Widget e, Event evb) {
+				auto ev = cast(MouseDownEvent) evb;
+				if(ev.button == MouseButton.left)
+					item.popup(mbItem);
 			};
 		} else static assert(false);
 
