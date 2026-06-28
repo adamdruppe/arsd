@@ -13,12 +13,14 @@
 	Args go to:
 		bool: --name or --name=true|false
 		string/int/float/enum: --name=arg or --name arg
-		int[]: --name=arg,arg,arg or --name=arg --name=arg that you can repeat
+		int[]: --name=arg --name=arg that you can repeat. comma separated things like `--name=1,2,3` is NOT supported, use shell expansion like `--name={1,2,3}` instead (if on Windows, use deesh lol)
 		string[] : remainder; the name is ignored, these are any args not already consumed by args
 		FilePath and FilePath[]: not yet supported
 
 		`--` always stops populating names and puts the remaining in the final string[] args param (if there is one)
 		`--help` always
+
+		You can use `@Cli(...)` to modify some things like name and requrement etc.
 
 	Bugs:
 		no positional arg support at all
@@ -83,6 +85,26 @@ unittest {
 	assert(main(["unittest", "func", "--a", "5"]) == 0);
 	assert(main(["unittest", "other"]) == 0);
 	assert(main(["unittest", "other", "--flag"]) == 1);
+}
+
+///
+unittest {
+	static // exclude from docs
+	void func(string[] a, int[] b, string[] otherArgs) {
+		assert(a == ["5"]);
+		assert(b == [1, 2]);
+		assert(otherArgs.length == 0);
+	}
+
+	int main(string[] args) {
+		// make your main function forward to runCli!your_handler
+		return runCli!func(args);
+	}
+
+	assert(main(["unittest", "--a", "5", "--b", "1", "--b", "2"]) == 0);
+
+	// comma separated ints in a single arg are NOT supported
+	// assert(main(["unittest", "--a", "5", "--b", "1,2"]) == 1);
 }
 
 import arsd.core;
@@ -257,6 +279,8 @@ struct Cli {
 	int consumesRemainder = 2;
 	int holdsAllArgs = 2; // FIXME: not implemented
 	string[] options; // FIXME if it is not one of the options and there are options, should it error?
+
+	// bool positional; // if positional, it pulls it out of remainder args rather than requiring name
 }
 
 
@@ -515,6 +539,8 @@ private ExtractedCliArgs[] extractCliArgs(string[] args, bool needsCommandName, 
 	}
 
 	appendPossibleEmptyArg();
+
+	// FIXME: pull the positional args out of remainder and put them in name
 
 	ret ~= remainder; // remainder also a bit special, always the last one
 
