@@ -98,7 +98,7 @@
 	The 2nd dependency of the aforementioned `LoginService` is `Logger`.
 	For illustration purposes, we’ll assume the `Logger` class depends on `Formatter`,
 	a type that implements formatting facilities.
-	`Logger` is dependency-less class (like `PasswordHashUtil` was).
+	`Formatter` is dependency-less class (like `PasswordHashUtil` was).
 
 	The DI framework will retrieve a `Formatter` before it can construct the `Logger`.
 	Since `Formatter` has not dependencies, the framework can construct it as mentioned in the previous chapter.
