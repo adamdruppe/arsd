@@ -2298,6 +2298,8 @@ struct IntToStringArgs {
 		return args;
 	}
 
+	// FIXME: withPostPadding
+
 	IntToStringArgs withRadix(int radix, char ten = 'a') {
 		IntToStringArgs args = this;
 		args.radix = cast(ubyte) radix;
@@ -2335,6 +2337,8 @@ struct FloatToStringArgs {
 		return args;
 	}
 
+	// FIXME: withPostPadding
+
 	FloatToStringArgs withGroupSeparator(int groupSize, char separator = '_') {
 		FloatToStringArgs args = this;
 		args.groupSize = cast(ubyte) groupSize;
@@ -2357,6 +2361,14 @@ struct FloatToStringArgs {
 		return args;
 	}
 }
+
+/+
+struct StringFormattingArgs {
+	// FIXME withPadding
+	// FIXME withPostPadding
+	// FIXME withCentering?
+}
++/
 
 // the buffer should be at least 32 bytes long, maybe more with other args
 char[] floatToString(double value, char[] buffer, FloatToStringArgs args = FloatToStringArgs.init) {
@@ -11104,6 +11116,16 @@ void writeStderr(T...)(T t) {
 struct ValueWithFormattingArgs(T : double) {
 	double value;
 	FloatToStringArgs args;
+
+	ValueWithFormattingArgs opBinary(string op)(double value) {
+		return ValueWithFormattingArgs(mixin("this.value", op, "value"), args);
+	}
+	ValueWithFormattingArgs opOpAssign(string op)(double value) {
+		return this = this.opBinary!op(value);
+	}
+	ValueWithFormattingArgs opUnary(string op)() {
+		return ValueWithFormattingArgs(mixin(op, "this.value"), args);
+	}
 }
 
 struct ValueWithFormattingArgs(T : long) {
@@ -11116,12 +11138,15 @@ ValueWithFormattingArgs!double formatArgs(double value, FloatToStringArgs args) 
 }
 ValueWithFormattingArgs!double formatArgs(double value, int precision) {
 	return ValueWithFormattingArgs!double(value, FloatToStringArgs().withPrecision(precision));
-
 }
 
 unittest {
 	assert(toStringInternal(5.4364.formatArgs(FloatToStringArgs().withPrecision(2))) == "5.44");
 	assert(toStringInternal(5.4364.formatArgs(precision: 2)) == "5.44");
+
+	auto v = 5.4364.formatArgs(precision: 2);
+	v *= 2;
+	assert(toStringInternal(v) == "10.87");
 }
 
 /++
@@ -11281,7 +11306,7 @@ debug void dump(T...)(T t, string file = __FILE__, size_t line = __LINE__) {
 		separator = "; ";
 
 	char[256] bufferBacking;
-	writeGuts(bufferBacking[], file ~ ":" ~ toStringInternal(line) ~ ": ", "\n", separator, true, true, &actuallyWriteToStdout, t);
+	writeGuts(bufferBacking[], file ~ "(" ~ toStringInternal(line) ~ "): ", "\n", separator, true, true, &actuallyWriteToStdout, t);
 }
 
 private string makeString(scope char[] buffer) @safe {
