@@ -877,11 +877,11 @@ static:
 class Cgi {
   public:
 	/// the methods a request can be
-	enum RequestMethod { GET, HEAD, POST, PUT, DELETE, // GET and POST are the ones that really work
-		// these are defined in the standard, but idk if they are useful for anything
+	enum RequestMethod {
+		GET, HEAD, POST, PUT, DELETE,
 		OPTIONS, TRACE, CONNECT,
-		// These seem new, I have only recently seen them
 		PATCH, MERGE,
+		QUERY, // https://www.rfc-editor.org/info/rfc10008/
 		// this is an extension for when the method is not specified and you want to assume
 		CommandLine }
 
@@ -1114,7 +1114,13 @@ class Cgi {
 				}
 			} else {
 				// it is an argument of some sort
-				if(requestMethod == Cgi.RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT || requestMethod == Cgi.RequestMethod.CommandLine) {
+				if(
+					requestMethod == Cgi.RequestMethod.POST ||
+					requestMethod == Cgi.RequestMethod.PATCH ||
+					requestMethod == Cgi.RequestMethod.PUT ||
+					requestMethod == Cgi.RequestMethod.QUERY ||
+					requestMethod == Cgi.RequestMethod.CommandLine)
+				{
 					auto parts = breakUp(arg);
 					_post[parts[0]] ~= parts[1];
 					allPostNamesInOrder ~= parts[0];
@@ -1324,7 +1330,13 @@ class Cgi {
 		// FIXME: DOCUMENT_ROOT?
 
 		// FIXME: what about PUT?
-		if(requestMethod == RequestMethod.POST || requestMethod == Cgi.RequestMethod.PATCH || requestMethod == Cgi.RequestMethod.PUT || requestMethod == Cgi.RequestMethod.CommandLine) {
+		if(
+			requestMethod == RequestMethod.POST ||
+			requestMethod == Cgi.RequestMethod.PATCH ||
+			requestMethod == Cgi.RequestMethod.PUT ||
+			requestMethod == Cgi.RequestMethod.QUERY ||
+			requestMethod == Cgi.RequestMethod.CommandLine)
+		{
 			version(preserveData) // a hack to make forwarding simpler
 				immutable(ubyte)[] data;
 			size_t amountReceived = 0;
@@ -2958,7 +2970,7 @@ class Cgi {
 	/** Here come the parsed request variables - the things that come close to PHP's _GET, _POST, etc. superglobals in content. */
 
 	immutable(string[string]) get; 	/// The data from your query string in the url, only showing the last string of each name. If you want to handle multiple values with the same name, use getArray. This only works right if the query string is x-www-form-urlencoded; the default you see on the web with name=value pairs separated by the & character.
-	immutable(string[string]) post; /// The data from the request's body, on POST requests. It parses application/x-www-form-urlencoded data (used by most web requests, including typical forms), and multipart/form-data requests (used by file uploads on web forms) into the same container, so you can always access them the same way. It makes no attempt to parse other content types. If you want to accept an XML Post body (for a web api perhaps), you'll need to handle the raw data yourself.
+	immutable(string[string]) post; /// The data from the request's body, on POST requests. Also PUT, QUERY, and PATCH requests. It parses application/x-www-form-urlencoded data (used by most web requests, including typical forms), and multipart/form-data requests (used by file uploads on web forms) into the same container, so you can always access them the same way. It makes no attempt to parse other content types. If you want to accept an XML Post body (for a web api perhaps), you'll need to handle the raw data yourself.
 	immutable(string[string]) cookies; /// Separates out the cookie header into individual name/value pairs (which is how you set them!)
 
 	/// added later
@@ -10792,6 +10804,8 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 
 	try
 	switch(cgi.requestMethod) {
+		case Cgi.RequestMethod.QUERY:
+		QUERY:
 		case Cgi.RequestMethod.GET:
 			// I could prolly use template this parameters in the implementation above for some reflection stuff.
 			// sure, it doesn't automatically work in subclasses... but I instantiate here anyway...
@@ -10800,6 +10814,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 			// even if the format is json, it could actually send out the links and formats, but really there i'ma be meh.
 			switch(cgi.request("_method", "GET")) {
 				case "GET":
+				case "QUERY":
 					static if(is(T : CollectionOf!(C), C)) {
 						auto results = obj.index();
 						if(cgi.request("format", "html") == "html") {
@@ -10876,6 +10891,8 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 					goto PATCH;
 				case "DELETE":
 					goto DELETE;
+				case "QUERY":
+					goto QUERY;
 				case "POST":
 					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
 						auto p = new obj.PostProxy();

@@ -2503,7 +2503,9 @@ enum HttpVerb {
 	///
 	PATCH,
 	///
-	MERGE
+	MERGE,
+	///
+	QUERY,
 }
 
 /++
