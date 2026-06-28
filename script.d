@@ -47,7 +47,7 @@ FIXME: named params!!
 */
 
 /++
-	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have has easy
+	A small script interpreter that builds on [arsd.jsvar] to be easily embedded inside and to have easy
 	two-way interop with the host D program.  The script language it implements is based on a hybrid of D and Javascript.
 	The type the language uses is based directly on [var] from [arsd.jsvar].
 
