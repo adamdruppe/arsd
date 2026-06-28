@@ -184,6 +184,19 @@ struct Grid(T) {
 
 	@nogc:
 
+	private int horizontalCheck(int x, bool checkingSliceUpper, string file, size_t line) const {
+		if(x < 0 || (checkingSliceUpper ? (x > width) : (x >= width)))
+			throw gridRangeError(0, x, width, height, file, line);
+		return x;
+	}
+
+	private int verticalCheck(int y, bool checkingSliceUpper, string file, size_t line) const {
+		if(y < 0 || (checkingSliceUpper ? (y > height) : (y >= height)))
+			throw gridRangeError(1, y, width, height, file, line);
+		return y;
+	}
+
+
 	/// Wraps an existing array.
 	this(T[] array, Size size) {
 		assert(array.length == size.area);
@@ -206,7 +219,9 @@ struct Grid(T) {
 	}
 
 	///
-	ref inout(T) opIndex(int x, int y) inout {
+	ref inout(T) opIndex(int x, int y, string file = __FILE__, size_t line = __LINE__) inout {
+		x = horizontalCheck(x, false, file, line);
+		y = verticalCheck(y, false, file, line);
 		return array[y * width + x];
 	}
 
@@ -214,7 +229,6 @@ struct Grid(T) {
 	ref inout(T) opIndex(const Point pt) inout {
 		return this.opIndex(pt.x, pt.y);
 	}
-	// T[] opSlice
 
 	///
 	bool inBounds(int x, int y) const {
@@ -230,6 +244,228 @@ struct Grid(T) {
 	bool opBinaryRight(string op : "in")(Point pt) const {
 		return inBounds(pt);
 	}
+
+	///
+	int opDollar(int dim)() const {
+		static if(dim == 0)
+			return width;
+		else static if(dim == 1)
+			return height;
+		else static assert(0);
+	}
+
+	/++
+		You can slice up a Grid into SubGrids. SubGrids can wrap around
+	+/
+	auto opSlice(int dim)(int lower, int upper, string file = __FILE__, size_t line = __LINE__) const {
+		static if(dim == 0) {
+			lower = horizontalCheck(lower, false, file, line);
+			upper = horizontalCheck(upper, true, file, line);
+		} else static if(dim == 1) {
+			lower = verticalCheck(lower, false, file, line);
+			upper = verticalCheck(upper, true, file, line);
+		} else static assert(0);
+
+		return SliceHelper!dim(lower, upper);
+	}
+
+	/// ditto
+	inout(SubGrid!T) opIndex(SliceHelper!0 width, SliceHelper!1 height, bool wraparound = false) inout {
+		return SubGrid!T(this, width, height, wraparound);
+	}
+
+	inout(SubGrid!T) withWrapAround() inout {
+		return this[0 .. $, 0 .. $, true];
+	}
+
+	// opIndex of a Rectangle might be useful too
+}
+
+private Error gridRangeError(int dim, int idx, int width, int height, string file, size_t line) pure nothrow @nogc @trusted {
+	static Error helper(int dim, int idx, int width, int height, string file, size_t line) {
+		import arsd.core;
+		char[256] buffer;
+		auto text = toTextBuffer(buffer[], i"$((dim == 0) ? "x":"y")-coordinate of $(idx) is out of bounds for a grid of size $(width)x$(height)");
+		return new Error(text.idup, file, line);
+	}
+	Error function(int, int, int, int, string, size_t) pure nothrow @nogc @safe fn;
+	fn = cast(typeof(fn)) &helper;
+	return fn(dim, idx, width, height, file, line);
+}
+
+/+
+import core.exception;
+class GridIndexError : RangeError {
+
+}
++/
+
+/++
+	Please do not try to construct this yourself.
++/
+struct SliceHelper(int dim) {
+	int lower;
+	int upper;
+}
+
+struct SubGrid(T) {
+	private inout Grid!T grid;
+	private Rectangle rectangle;
+	bool wraparound;
+
+	private this(inout Grid!T grid, SliceHelper!0 width, SliceHelper!1 height, bool wraparound) {
+		this.grid = grid;
+		this.rectangle = Rectangle(Point(width.lower, height.lower), Size(width.upper, height.upper));
+		this.wraparound = wraparound;
+	}
+
+	private int horizontalCheck(int x, bool checkingSliceUpper, string file, size_t line) const {
+		if(wraparound) {
+			while(x < 0)
+				x += width;
+			x = x % width;
+		}
+
+		if(x < 0 || (checkingSliceUpper ? (x > width) : (x >= width)))
+			throw gridRangeError(0, x, width, height, file, line);
+		return x;
+	}
+
+	private int verticalCheck(int y, bool checkingSliceUpper, string file, size_t line) const {
+		if(wraparound) {
+			while(y < 0)
+				y += height;
+			y = y % height;
+		}
+		if(y < 0 || (checkingSliceUpper ? (y > height) : (y >= height)))
+			throw gridRangeError(1, y, width, height, file, line);
+		return y;
+	}
+
+
+	@property {
+		///
+		inout(Size) size() inout { return rectangle.size; }
+		///
+		int width() const { return size.width; }
+		///
+		int height() const { return size.height; }
+	}
+
+	///
+	ref inout(T) opIndex(int x, int y, string file = __FILE__, size_t line = __LINE__) inout {
+		x = horizontalCheck(x, false, file, line);
+		y = verticalCheck(y, false, file, line);
+
+		x += rectangle.left;
+		y += rectangle.top;
+
+		if(wraparound) {
+			while(x >= grid.width)
+				x -= grid.width;
+			while(y >= grid.height)
+				y -= grid.height;
+		}
+
+		return grid[x, y];
+	}
+
+	///
+	ref inout(T) opIndex(const Point pt, string file = __FILE__, size_t line = __LINE__) inout {
+		return this.opIndex(pt.x, pt.y, file, line);
+	}
+
+	/+
+	///
+	bool inBounds(int x, int y) const {
+		return x >= 0 && y >= 0 && x < width && y < height;
+	}
+
+	///
+	bool inBounds(const Point pt) const {
+		return inBounds(pt.x, pt.y);
+	}
+
+	/// Supports `if(point in grid) {}`
+	bool opBinaryRight(string op : "in")(Point pt) const {
+		return inBounds(pt);
+	}
+	+/
+
+	int opDollar(int dim)() {
+		static if(dim == 0)
+			return rectangle.width;
+		else static if(dim == 1)
+			return rectangle.height;
+		else static assert(0);
+	}
+
+	auto opSlice(int dim)(int lower, int upper) {
+		return SliceHelper!dim(lower, upper);
+	}
+
+	inout(SubGrid!T) opIndex(SliceHelper!0 width, SliceHelper!1 height, bool wraparound = false) inout {
+		return SubGrid!T(
+			this.grid,
+			SliceHelper!0(width.lower + rectangle.left, width.upper + rectangle.top),
+			SliceHelper!1(height.lower + rectangle.left, height.upper + rectangle.top),
+			wraparound || this.wraparound
+		);
+	}
+
+	void opIndexAssign(T val) {
+		foreach(ref item; this)
+			item = val;
+	}
+
+	int opApply(int delegate(ref T item) dg) {
+		foreach(y; 0 .. height)
+		foreach(x; 0 .. width)
+		if(auto ret = dg(this[x, y]))
+			return ret;
+		return 0;
+	}
+	int opApply(int delegate(int x, int y, ref T item) dg) {
+		foreach(y; 0 .. height)
+		foreach(x; 0 .. width)
+		if(auto ret = dg(x, y, this[x, y]))
+			return ret;
+		return 0;
+	}
+	int opApply(int delegate(Point pt, ref T item) dg) {
+		foreach(y; 0 .. height)
+		foreach(x; 0 .. width)
+		if(auto ret = dg(Point(x, y), this[x, y]))
+			return ret;
+		return 0;
+	}
+}
+
+unittest {
+	Grid!int grid = Grid!int(60, 50);
+	grid[3, 4] = 7;
+
+	SubGrid!int s = grid[0 .. $, 0 .. $];
+	assert(s[3, 4] == 7);
+
+	SubGrid!int wraps = s[0 .. $, 0 .. $, true];
+	assert(wraps[63, 54] == 7);
+
+	auto omg = wraps[4000 .. 5000, 2000 .. 4444];
+
+	SubGrid!int s2 = s[1 .. $-1, 1 .. $-1];
+	assert(s2[2, 3] == 7);
+
+	s2[] = 4;
+	assert(s2[3, 4] == 4);
+
+	Grid!int grid2 = Grid!int(4, 4);
+	grid2[3, 2] = 1;
+	grid2[0, 2] = 2;
+	auto sd = grid2.withWrapAround;
+	auto cool = sd[3 .. 5, 2 .. 3];
+	assert(cool[0, 0] == 1);
+	assert(cool[1, 0] == 2);
 }
 
 /++
