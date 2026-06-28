@@ -143,7 +143,7 @@
 	While the injection of a `DatabaseClient` into dependent services principally works like before,
 	the framework cannot instantiate a new one by itself.
 	Hence it is that an instance has to be registered with the framework in advance.
-	A user-created `DatabaseClient` can provided by passing it to [arsd.di.DI.register|register()].
+	A user-created `DatabaseClient` can be provided by passing it to [arsd.di.DI.register|register()].
 
 	The framework will pick up on it later, when it constructs `LoginService`
 	or, failing that, if no custom instance has been registered beforehand,
