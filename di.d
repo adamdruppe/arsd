@@ -98,7 +98,7 @@
 	The 2nd dependency of the aforementioned `LoginService` is `Logger`.
 	For illustration purposes, we’ll assume the `Logger` class depends on `Formatter`,
 	a type that implements formatting facilities.
-	`Logger` is dependency-less class (like `PasswordHashUtil` was).
+	`Formatter` is dependency-less class (like `PasswordHashUtil` was).
 
 	The DI framework will retrieve a `Formatter` before it can construct the `Logger`.
 	Since `Formatter` has not dependencies, the framework can construct it as mentioned in the previous chapter.
@@ -143,7 +143,7 @@
 	While the injection of a `DatabaseClient` into dependent services principally works like before,
 	the framework cannot instantiate a new one by itself.
 	Hence it is that an instance has to be registered with the framework in advance.
-	A user-created `DatabaseClient` can provided by passing it to [arsd.di.DI.register|register()].
+	A user-created `DatabaseClient` can be provided by passing it to [arsd.di.DI.register|register()].
 
 	The framework will pick up on it later, when it constructs `LoginService`
 	or, failing that, if no custom instance has been registered beforehand,
