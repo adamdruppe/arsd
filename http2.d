@@ -972,6 +972,7 @@ class HttpRequest {
 		bool specSaysRequestAlwaysHasBody =
 			requestParameters.method == HttpVerb.POST ||
 			requestParameters.method == HttpVerb.PUT ||
+			requestParameters.method == HttpVerb.QUERY ||
 			requestParameters.method == HttpVerb.PATCH;
 
 		if(requestParameters.userAgent.length)
@@ -4062,6 +4063,8 @@ class HttpApiClient() {
 		final HttpRequestWrapper PATCH(T...)(T t) { return _EXECUTE(HttpVerb.PATCH, this.toUri(), toBytes(t)); }
 		/// ditto
 		final HttpRequestWrapper PUT(T...)(T t) { return _EXECUTE(HttpVerb.PUT, this.toUri(), toBytes(t)); }
+		/// ditto
+		final HttpRequestWrapper QUERY(T...)(T t) { return _EXECUTE(HttpVerb.QUERY, this.toUri(), toBytes(t)); }
 
 		struct ToBytesResult {
 			ubyte[] bytes;
