@@ -2315,6 +2315,7 @@ class Cgi {
 		}
 	}
 
+	/+
 	/// ditto
 	void requireBasicAuth(scope bool delegate(string user, string pass) checker, string message = null, string file = __FILE__, size_t line = __LINE__) {
 		// FIXME
@@ -2324,6 +2325,7 @@ class Cgi {
 		}
 		+/
 	}
+	+/
 
 
 	/// Very simple caching controls - setCache(false) means it will never be cached. Good for rapidly updated or sensitive sites.
@@ -8647,13 +8649,50 @@ class MissingArgumentException : Exception {
 	}
 }
 
+
+
+/++
+	Base class that, when caught by the automatic wrappers, will create a specific http code and some headers.
+
+	You should use a subclass that overrides [httpCode] and possibly [httpHeaders]. If this is inadequate, you
+	can override [applyToCgi] instead for maximum flexibility. The default is just http 500: Internal Server Error.
+
+	If you throw one of these after already outputting a response, you won't get the results you want. If you are going
+	to throw one of these, make sure it is before you write any kind of response.
+
+	History:
+		Added July 8, 2026 (dub v13.0).
+	See_Also:
+		[ResourceNotFoundException]
++/
+@CheckHttpCode
+class HttpCodeException : Exception {
+	/// Forwards to the base `Exception` constructor.
+	this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		super(msg, file, line, next);
+	}
+
+	/++
+		Called by automatic error presenter to show this error to a particular client.
+	+/
+	protected void applyToCgi(Cgi cgi) {
+		if(cgi.outputtedResponseData)
+			return;
+		cgi.setResponseStatus(getHttpCodeText(httpCode));
+	}
+	/++
+		Should return an integer constant indicating the http code this exception represents.
+		Make sure it is one of the standard codes supported by [getHttpCodeText].
+	+/
+	int httpCode() { return 500; }
+}
 /++
 	You can throw this from an api handler to indicate a 404 response. This is done by the presentExceptionAsHtml function in the presenter.
 
 	History:
-		Added December 15, 2021 (dub v10.5)
+		Added December 15, 2021 (dub v10.5). Changed to child of [HttpCodeException] on July 8, 2026 (dub v13.0).
 +/
-class ResourceNotFoundException : Exception {
+class ResourceNotFoundException : HttpCodeException {
 	string resourceType;
 	string resourceId;
 
@@ -8664,6 +8703,14 @@ class ResourceNotFoundException : Exception {
 		super("Resource not found: " ~ resourceType ~ " " ~ resourceId, file, line, next);
 	}
 
+	override int httpCode() { return 404; }
+}
+
+private struct CheckHttpCode {
+	template opChildOfUDAOn(alias symbol) {
+		static if(is(typeof(symbol.__ctor) Params == __parameters))
+			static assert(getHttpCodeText((new symbol(Params.init)).httpCode()));
+	}
 }
 
 /++
@@ -8691,6 +8738,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	// FIXME: think more about checkboxes and bools.
 
 	import std.traits;
+	import arsd.jsvar;
 
 	Parameters!method params;
 	alias idents = ParameterIdentifierTuple!method;
@@ -8760,7 +8808,10 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	// second, parse the arguments in order to build up arrays, etc.
 
 	static bool setVariable(T)(string name, string paramName, T* what, string value) {
-		static if(is(T == struct)) {
+		static if(is(T == var)) {
+			*what = var.fromJson(value);
+			return true;
+		} else static if(is(T == struct)) {
 			if(name == paramName) {
 				*what = T.init;
 				return true;
@@ -9442,13 +9493,13 @@ html", true, true);
 	}
 
 	void presentExceptionAsHtmlImpl(Cgi cgi, Throwable t, Form automaticForm) {
-		if(auto e = cast(ResourceNotFoundException) t) {
+		if(auto e = cast(HttpCodeException) t) {
 			auto container = this.htmlContainer();
 
 			container.addChild("p", e.msg);
 
-			if(!cgi.outputtedResponseData)
-				cgi.setResponseStatus("404 Not Found");
+			e.applyToCgi(cgi);
+
 			cgi.write(container.parentDocument.toString(), true);
 		} else if(auto mae = cast(MissingArgumentException) t) {
 			if(automaticForm is null)
@@ -9524,6 +9575,7 @@ html", true, true);
 	+/
 	Element elementFor(T)(string displayName, string name, Element function() udaSuggestion) {
 		import std.traits;
+		import arsd.jsvar;
 
 		auto div = Element.make("div");
 		div.addClass("form-field");
@@ -9568,6 +9620,19 @@ html", true, true);
 			foreach(memberName; __traits(allMembers, T))
 				i.addChild("option", memberName);
 
+		} else static if(is(T == var)) {
+			Element lbl;
+			if(displayName !is null) {
+				lbl = div.addChild("label");
+				lbl.addChild("span", displayName, "label-text");
+				lbl.appendText(" ");
+			} else {
+				lbl = div;
+			}
+			auto i = lbl.addChild("input", name);
+			i.attrs.name = name;
+			i.attrs.placeholder = "json string...";
+			i.attrs.type = "text";
 		} else static if(is(T == struct)) {
 			if(displayName !is null)
 				div.addChild("span", displayName, "label-text");
@@ -10746,11 +10811,13 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 		case "script.js":
 			cgi.setResponseContentType("text/javascript");
 			cgi.gzipResponse = true;
+			cgi.setResponseExpiresRelative(60 * 3);
 			cgi.write(presenter.script(), true);
 			return true;
 		case "style.css":
 			cgi.setResponseContentType("text/css");
 			cgi.gzipResponse = true;
+			cgi.setResponseExpiresRelative(60 * 3);
 			cgi.write(presenter.style(), true);
 			return true;
 		default:
