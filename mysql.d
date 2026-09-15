@@ -383,6 +383,11 @@ class MySql : Database {
 		return cast(int) mysql_affected_rows(mysql);
 	}
 
+	SqlState sqlState(ResultSet rs) {
+		// FIXME: https://dev.mysql.com/doc/c-api/8.0/en/mysql-sqlstate.html
+		return SqlState();
+	}
+
 	override ResultSet queryImpl(string sql, Variant[] args...) {
 		sql = escapedVariants(this, sql, args);
 

@@ -99,6 +99,11 @@ class MsSql : Database {
 		return null; // FIXME
 	}
 
+	SqlState sqlState(ResultSet rs) {
+		// FIXME
+		return SqlState();
+	}
+
 	override bool isAlive() {
 		return true;
 	}

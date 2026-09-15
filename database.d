@@ -130,11 +130,25 @@ interface Database {
 	+/
 	bool isAlive();
 
+	/++
+		Returns the SQLSTATE error code associated with a result, if available.
+
+		`SqlState.init` is returned if it is not available or not implemented by the driver.
+
+		History:
+			Added September 15, 2026
+	+/
+	SqlState sqlState(ResultSet rs);
+
 	/// Prepared statement api
 	/*
 	PreparedStatement prepareStatement(string sql, int numberOfArguments);
 
 	*/
+}
+
+struct SqlState {
+	char[5] code = 0;
 }
 
 // Added Oct 26, 2021
@@ -215,7 +229,7 @@ struct DatabaseDatum {
 	/++
 		For compatibility with earlier versions of the api, all data can easily convert to string implicitly and opCast keeps to!x(this) working.
 
-		The toArsdJsVar one is in particular subject to change.
+		The toArsdJsvar one is in particular subject to change.
 	+/
 	alias toString this;
 
@@ -226,7 +240,14 @@ struct DatabaseDatum {
 	}
 
 	/// ditto
-	string toArsdJsVar() { return this.toString; }
+	auto toArsdJsvar() {
+		import arsd.jsvar;
+		// FIXME: try to handle numeric and var and such too
+		if(this.isNull())
+			return var(null);
+		else
+			return var(this.toString());
+	}
 
 	/++
 		Explicit indicator that you want a NULL value for the database.
@@ -500,6 +521,24 @@ unittest {
 	main(); // remove from docs
 }
 
+package struct ParsedInterpolatedQuery {
+	string sql;
+	Variant[] args;
+
+	this(Args...)(arsd.core.InterpolationHeader ihead, Args args, arsd.core.InterpolationFooter ifoot) {
+		sql = sqlFromInterpolatedArgs!Args(true);
+		this.args = variantsFromInterpolatedArgs(args);
+	}
+}
+
+/+
+// won't parse on older compilers
+unittest {
+	import arsd.core;
+	writeln(ParsedInterpolatedQuery(i"foo $(5)").sql);
+}
++/
+
 private Variant[] variantsFromInterpolatedArgs(Args...)(Args args) {
 	Variant[] ret;
 
@@ -530,7 +569,7 @@ private Variant[] variantsFromInterpolatedArgs(Args...)(Args args) {
 
 			} else static assert(0);
 		}
-		// FIXME: iraw and sql!"" too and VALUES
+		// FIXME: iraw("") and sql!"" too and VALUES. if it is sql!"" it should be concatted at compile time.
 		else
 			ret ~= Variant(arg);
 	}
@@ -538,10 +577,25 @@ private Variant[] variantsFromInterpolatedArgs(Args...)(Args args) {
 	return ret;
 }
 
-private string sqlFromInterpolatedArgs(Args...)() {
+// might not keep this idk
+// see ~/test/isqltest.d
+alias isql = arsd.core.InterpolatedLiteral;
+
+string sqlFromInterpolatedArgs(Args...)(bool useNumberFormat = false) {
 	string ret;
 
 	import arsd.core;
+
+	int num;
+	string nextPlaceholder() {
+		if(useNumberFormat) {
+			char[8] buffer;
+			auto n = intToString(++num, buffer[]);
+			return cast(string)("$" ~ n);
+		} else {
+			return "?";
+		}
+	}
 
 	foreach(arg; Args) {
 		static if(is(arg == InterpolationHeader))
@@ -570,7 +624,7 @@ private string sqlFromInterpolatedArgs(Args...)() {
 					static if(is(value == sql_!code, string code)) {
 						ret ~= code;
 					} else {
-						ret ~= "?";
+						ret ~= nextPlaceholder();
 					}
 				}
 				ret ~= ")";
@@ -579,7 +633,7 @@ private string sqlFromInterpolatedArgs(Args...)() {
 		}
 		// FIXME: iraw and sql_!"" too
 		else
-			ret ~= "?";
+			ret ~= nextPlaceholder();
 	}
 
 	return ret;
@@ -724,6 +778,7 @@ class MockDatabase : Database {
 	void startTransaction() {}
 	string sysTimeToValue(SysTime s) { return null; }
 	bool isAlive() { return true; }
+	SqlState sqlState(ResultSet rs) { return SqlState.init; }
 
 	ResultSet queryImpl(string sql, Variant[] args...) {
 		return new PredefinedResultSet(null, null);

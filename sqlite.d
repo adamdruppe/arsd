@@ -128,6 +128,11 @@ class Sqlite : Database {
 		return true;
 	}
 
+	SqlState sqlState(ResultSet rs) {
+		// FIXME
+		return SqlState();
+	}
+
 	///
 	override void startTransaction() {
 		query("BEGIN TRANSACTION");

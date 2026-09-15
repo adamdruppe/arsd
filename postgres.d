@@ -80,6 +80,13 @@ class PostgreSql : Database {
 
 	private bool connectionOk;
 	override bool isAlive() {
+		if(conn is null)
+			return false;
+
+		if(PQstatus(conn) != CONNECTION_OK) {
+			return false;
+		}
+
 		return connectionOk;
 	}
 
@@ -97,18 +104,25 @@ class PostgreSql : Database {
 
 		foreach(idx, arg; args) {
 			// FIXME: optimize to remove allocations here
-			import std.conv;
 			static if(!is(typeof(arg) == typeof(null)))
-				argsStrings[idx] = toStringz(to!string(arg));
+				argsStrings[idx] = toStringz(argToPostgresString(arg));
 			// else make it null
 		}
 
+		bool first_retry = true;
+		retry:
 		auto res = PQexecPrepared(conn, toStringz(name), argsStrings.length, argsStrings.ptr, null, null, 0);
 
 		int ress = PQresultStatus(res);
 		if(ress != PGRES_TUPLES_OK
 			&& ress != PGRES_COMMAND_OK)
+		{
+			if(first_retry && retryConnection()) {
+				first_retry = false;
+				goto retry;
+			}
 			throw new DatabaseException(error());
+		}
 
 		return new PostgresResult(res);
 
@@ -117,6 +131,22 @@ class PostgreSql : Database {
 	///
 	override void startTransaction() {
 		query("START TRANSACTION");
+	}
+
+	private bool retryConnection(bool forceTry = false) {
+		if(forceTry || error() == "no connection to the server\n") {
+			// try to reconnect...
+			PQfinish(conn);
+			conn = PQconnectdb(toStringz(connectionString));
+			if(conn is null)
+				throw new DatabaseConnectionException("Unable to allocate PG connection object");
+			if(PQstatus(conn) != CONNECTION_OK) {
+				this.connectionOk = false;
+				throw new DatabaseConnectionException(error());
+			}
+			return true;
+		}
+		return false;
 	}
 
 	ResultSet queryImpl(string sql, Variant[] args...) {
@@ -133,17 +163,8 @@ class PostgreSql : Database {
 		if(ress != PGRES_TUPLES_OK
 			&& ress != PGRES_COMMAND_OK)
 		{
-			if(first_retry && error() == "no connection to the server\n") {
+			if(first_retry && retryConnection()) {
 				first_retry = false;
-				// try to reconnect...
-				PQfinish(conn);
-				conn = PQconnectdb(toStringz(connectionString));
-				if(conn is null)
-					throw new DatabaseConnectionException("Unable to allocate PG connection object");
-				if(PQstatus(conn) != CONNECTION_OK) {
-					this.connectionOk = false;
-					throw new DatabaseConnectionException(error());
-				}
 				goto retry;
 			}
 			throw new SqlException(error());
@@ -185,9 +206,320 @@ class PostgreSql : Database {
 		return copyCString(PQerrorMessage(conn));
 	}
 
+	SqlState sqlState(ResultSet rs) {
+		auto r = cast(PostgresResult) rs;
+		if(r is null)
+			return SqlState.init;
+		return SqlState(getSqlState(r.res));
+	}
+
+	private char[5] getSqlState(PGresult* res) @trusted {
+		auto ret = PQresultErrorField(res, PG_DIAG_SQLSTATE);
+		if(ret is null)
+			throw new Exception("sqlstate null should never happen");
+		char[5] buffer = 0;
+		int pos = 0;
+		while(*ret) {
+			assert(pos < 5);
+			buffer[pos++] = *ret;
+			ret++;
+		}
+		return buffer;
+	}
+
 	private:
 		PGconn* conn;
 }
+
+/++
+	It will send as many parts as possible down a pipe and call the handle result method on each one as it arrives.
+
+	Returns when the whole thing is finished. The connection will be switched to and from pipeline mode for each call.
++/
+class PostgresPipeline {
+	// you CAN append to the pipeline while it is executing and it will send the request asap
+	// you can abort a pipeline when it is running.
+	// you can NOT modify or remove an item already in the pipeline
+
+	void abort() {
+
+	}
+
+	void append(PipelineComponent component) {
+		components ~= component;
+	}
+
+	private static import arsd.core;
+	auto append(Args...)(arsd.core.InterpolationHeader ihead, Args args, arsd.core.InterpolationFooter ifoot) {
+		struct secret {
+			private PipelineComponent* ptr;
+
+			void forEach(void delegate(Row row) dg) {
+				ptr.forEach = dg;
+			}
+			void onNone(void delegate() dg) {
+				ptr.onNone = dg;
+			}
+			void onError(void delegate() dg) {
+				ptr.onError = dg;
+			}
+			void onComplete(void delegate() dg) {
+				ptr.onComplete = dg;
+			}
+		}
+		auto piq = ParsedInterpolatedQuery(ihead, args, ifoot);
+		components ~= PipelineComponent(piq.sql, piq.args);
+		return secret(&components[$-1]);
+	}
+
+	void execute(PostgreSql db) {
+		if(!PQenterPipelineMode(db.conn))
+			throw new DatabaseConnectionException(db.error());
+		scope(exit)
+			if(!PQexitPipelineMode(db.conn))
+				throw new DatabaseConnectionException(db.error());
+
+		// FIXME error check
+		PQsetnonblocking(db.conn, 1);
+		scope(exit)
+			PQsetnonblocking(db.conn, 0);
+
+		send(db);
+		finish(db);
+	}
+
+	void send(PostgreSql db) {
+		bool first_retry = true;
+		retry:
+
+		while(sendLocation < components.length) {
+			import std.string;
+			PipelineComponent toSend = components[sendLocation];
+			arsd.core.CharzBuffer sql = toSend.query;
+			//import arsd.core; writeln("sending: ",stringz(sql.ptr));
+			char*[] paramValues;
+			paramValues.length = toSend.args.length;
+			foreach(idx, arg; toSend.args)
+				paramValues[idx] = cast(char*) toStringz(variantToPostgresString(arg));
+			auto ret = PQsendQueryParams(db.conn, sql.ptr, cast(int) toSend.args.length, null /* infer types */, paramValues.ptr, null /* it is zero terminated things */, null /* assume all text */, 0 /* get text format response */);
+			if(ret)
+				sendLocation++;
+			else
+				break; // FIXME: handle buffer full? or other errors?
+
+		}
+
+		//PQsendPipelineSync(db.conn); // apparently my libpq is not new enough for this but flush request is better than nothing
+		if(!PQsendFlushRequest(db.conn)) {
+			if(first_retry && db.retryConnection(true)) {
+				first_retry = false;
+				goto retry;
+			}
+			throw new DatabaseConnectionException(db.error());
+		}
+		auto flushResult = PQflush(db.conn);
+		assert(flushResult == 0); // FIXME: if it is 1 i need to wait for it to be ready to write more and do PQconsumeInput too
+	}
+
+	void finish(PostgreSql db) {
+		more:
+
+		/+
+		while(PQisBusy(db.conn))
+		PQconsumeInput(db.conn);
+
+		import arsd.core; writeln(PQisBusy(db.conn));
+		+/
+
+		string[] errors;
+		while(receiveLocation < sendLocation) {
+			// FIXME: onError ?
+			while(auto result = PQgetResult(db.conn)) {
+				int ress = PQresultStatus(result);
+
+				// FIXME: auto-reconnect here too?
+
+				if(ress != PGRES_TUPLES_OK
+					&& ress != PGRES_COMMAND_OK)
+				{
+					// prolly gonna get PGRES_FATAL_ERROR followed by PGRES_PIPELINE_ABORTED
+					auto oe = components[receiveLocation].onError;
+					if(oe) {
+						// if a user handler is there, let them handle it
+						oe();
+					} else {
+						// otherwise, we need to consume the pipeline still, but
+						// log this for later and we'll throw at the end so it isn't ignored
+						errors ~= db.error();
+					}
+					continue;
+				}
+
+				auto resultObject = new PostgresResult(result);
+				if(resultObject.empty()) {
+					auto dg = components[receiveLocation].onNone;
+					if(dg)
+						dg();
+				} else {
+					if(components[receiveLocation].onResult) {
+						components[receiveLocation].onResult(resultObject);
+					} else {
+						foreach(row; resultObject) {
+							components[receiveLocation].forEach(row);
+						}
+					}
+				}
+				.destroy(resultObject); // the dtor calls PQclear(result);
+			}
+			auto oc = components[receiveLocation].onComplete;
+			if(oc)
+				oc();
+			receiveLocation++;
+		}
+
+		if(sendLocation < components.length) {
+			send(db);
+			goto more;
+		}
+		if(errors.length) {
+			string combined;
+			foreach(error; errors) {
+				if(combined.length)
+					combined ~= "\n";
+				combined ~= error;
+			}
+			throw new DatabaseException(combined);
+		}
+	}
+
+	/+
+	void start() {
+
+	}
+
+	void waitForCompletion() {
+
+	}
+	+/
+
+	private PipelineComponent[] components;
+	private int sendLocation;
+	private int receiveLocation;
+}
+
+/// ditto
+struct PipelineComponent {
+	string query;
+	Variant[] args;
+	void delegate(Row) forEach;
+	void delegate() onNone;
+	void delegate() onError;
+	void delegate() onComplete;
+	private void delegate(ResultSet) onResult;
+}
+
+///
+unittest {
+	/+
+	scope p = new PostgresPipeline();
+	int foo = 100;
+	p.append(i"SELECT * FROM test WHERE id < $(foo)")
+		.forEach((row) { string s = row["id"]; import arsd.core; writeln(row.id); })
+	;
+	p.append(PipelineComponent(
+		query: "SELECT * FROM test",
+		forEach: (row) { import arsd.core; writeln(row["id"]); }
+	));
+	p.append(PipelineComponent(
+		query: "SELECT * FROM test",
+		forEach: (row) { import arsd.core; writeln("Second: ", row["id"]); }
+	));
+	p.execute(new PostgreSql("dbname=me"));
+	+/
+}
+
+// a factory function could return some magic and i could maybe use an alias param...
+
+class PostgresPipelineFor(PooledConnection) {
+	PostgresPipeline pipeline;
+	this() {
+		pipeline = new PostgresPipeline();
+	}
+
+	private static import arsd.core;
+	auto append(string file = __FILE__, size_t line = __LINE__, Args...)(arsd.core.InterpolationHeader ihead, Args args, arsd.core.InterpolationFooter ifoot) {
+		auto queryFunc = &PooledConnection.query!(file, line, arsd.core.InterpolationHeader, Args, arsd.core.InterpolationFooter);
+
+		static if(is(typeof(queryFunc) Return == return)) {
+			static struct secret {
+				private PipelineComponent* ptr;
+
+				this(PipelineComponent* ptr) {
+					this.ptr = ptr;
+
+					ptr.onResult = &this.onResult;
+				}
+
+				void onResult(ResultSet rs) {
+					auto it = new Return(rs);
+					foreach(arg; it)
+						if(forEachDg)
+							forEachDg(arg);
+				}
+
+				private void delegate(typeof(Return.front()) row) forEachDg;
+
+				typeof(this) forEach(void delegate(typeof(Return.front()) row) dg) {
+					this.forEachDg = dg;
+					return this;
+				}
+				typeof(this) onNone(void delegate() dg) {
+					ptr.onNone = dg;
+					return this;
+				}
+				typeof(this) onError(void delegate() dg) {
+					ptr.onError = dg;
+					return this;
+				}
+				typeof(this) onComplete(void delegate() dg) {
+					ptr.onComplete = dg;
+					return this;
+				}
+			}
+			auto piq = ParsedInterpolatedQuery(ihead, args, ifoot);
+			pipeline.components ~= PipelineComponent(piq.sql, piq.args);
+			return secret(&pipeline.components[$-1]);
+		} else static assert(0, "some kind of invalid args i guess idk");
+	}
+
+	void execute(ref PooledConnection conn) {
+		pipeline.execute(conn.borrow);
+	}
+}
+
+/+
+///
+unittest {
+	// need the interpolated queries
+	// but also rt queries w/ params
+
+	db.executePipeline(PipelineComponent(
+		i"SELECT foo from bar",
+		(result) { foreach(row; result) { } }
+	), PipelineComponent(
+		i"SELECT foo from bar",
+		(row) => row....
+
+	));
+
+	// put it in pipeline mode and call each opApply....
+	foreach(item; myList) {
+		pipeline ~= PipelineComponent()
+	}
+
+	db.executePipeline(pipeline)
+}
++/
 
 /+
 # when it changes from lowercase to upper case, call that a new word. or when it goes to/from anything else and underscore or dashes.
@@ -418,6 +750,17 @@ string copyCString(const char* c, int actualLength = -1) @system {
 	return ret;
 }
 
+string argToPostgresString(T)(T arg) {
+	import std.conv;
+	return to!string(arg);
+}
+
+string variantToPostgresString(Variant b) {
+	if(b.peek!(int[]))
+		return "{"~b.toString()[1 ..$-1]~"}";
+	return b.toString;
+}
+
 extern(C) {
 	struct PGconn {};
 	struct PGresult {};
@@ -440,6 +783,10 @@ extern(C) {
 	int PQsendClosePrepared(PGconn* conn, const char* name);
 
 	int PQresultStatus(PGresult*); // FIXME check return value
+
+	char* PQresultErrorField(const PGresult* res, int fieldcode);
+	enum int PG_DIAG_SQLSTATE = 'C';
+
 
 	int PQnfields(PGresult*); // number of fields in a result
 	const(char*) PQfname(PGresult*, int); // name of field
@@ -513,7 +860,7 @@ extern(C) {
 
 	char* PQcmdTuples(PGresult *res);
 
-	int PQsendQuery(PGconn* conn, const char* command);
+	int PQsendQuery(PGconn* conn, const char* command); // incompatible with pipeline
 	int PQsendQueryParams(PGconn* conn, const char* command, int params, const Oid* paramTypes, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
 
 	PGresult *PQdescribePrepared(PGconn *conn, const char *stmtName);
