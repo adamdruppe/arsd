@@ -14438,6 +14438,7 @@ version(X11) {
 		}
 
 		void drawRectangle(int x, int y, int width, int height) {
+			// FIXME handle the -2 better if tiny rect
 			if(backgroundIsNotTransparent) {
 				swapColors();
 				XFillRectangle(display, d, gc, x+1, y+1, width-2, height-2); // Need to ensure pixels are only drawn once...

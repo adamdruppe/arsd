@@ -60,6 +60,10 @@
 +/
 module arsd.shell;
 
+// can do a colon which is a built in to parse the command but do nothing. or leading dot which is to run a script inside this process.
+// : "${1:?missing argument, aborting.}"
+// see https://refp.se/articles/your-shell-and-the-magic-colon
+
 // $_: In most shells, $_ expands to the last argument of the previous command-especially useful interactively or in simple scripts when you need to operate on the same long path twice:
 // disown a background job?
 // |& means pipe both stderr and stdout to the same thing
