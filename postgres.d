@@ -134,7 +134,7 @@ class PostgreSql : Database {
 	}
 
 	private bool retryConnection(bool forceTry = false) {
-		if(forceTry || error() == "no connection to the server\n") {
+		if(forceTry || PQstatus(conn) != CONNECTION_OK) {
 			// try to reconnect...
 			PQfinish(conn);
 			conn = PQconnectdb(toStringz(connectionString));
@@ -215,9 +215,9 @@ class PostgreSql : Database {
 
 	private char[5] getSqlState(PGresult* res) @trusted {
 		auto ret = PQresultErrorField(res, PG_DIAG_SQLSTATE);
-		if(ret is null)
-			throw new Exception("sqlstate null should never happen");
 		char[5] buffer = 0;
+		if(ret is null)
+			return buffer;
 		int pos = 0;
 		while(*ret) {
 			assert(pos < 5);
@@ -229,6 +229,8 @@ class PostgreSql : Database {
 
 	private:
 		PGconn* conn;
+
+		PostgresPipeline activePipeline;
 }
 
 /++
@@ -272,23 +274,72 @@ class PostgresPipeline {
 		return secret(&components[$-1]);
 	}
 
-	void execute(PostgreSql db) {
-		if(!PQenterPipelineMode(db.conn))
-			throw new DatabaseConnectionException(db.error());
-		scope(exit)
+	/++
+		You can only have one pipeline executor active for any individual database connection active at a time.
+	+/
+	@(arsd.core.mustuse)
+	static struct PostgresPipelineExecutor {
+		private PostgresPipeline pipeline;
+		private PostgreSql db;
+		private bool sent;
+		private this(PostgresPipeline pipeline, PostgreSql db) {
+			assert(db.activePipeline is null, "only one pipeline can be active at a time");
+			this.pipeline = pipeline;
+			this.db = db;
+
+			if(!PQenterPipelineMode(db.conn))
+				throw new DatabaseConnectionException(db.error());
+			scope(failure)
+				PQexitPipelineMode(db.conn);
+
+			PQsetnonblocking(db.conn, 1);
+
+			db.activePipeline = pipeline;
+		}
+		@disable this(this);
+
+		/++
+		+/
+		void send() {
+			pipeline.send(db);
+			sent = true;
+		}
+
+		/++
+		+/
+		void waitForCompletion() {
+			if(!sent)
+				send();
+			pipeline.finish(db);
+		}
+
+		~this() {
+			db.activePipeline = null;
+
 			if(!PQexitPipelineMode(db.conn))
 				throw new DatabaseConnectionException(db.error());
-
-		// FIXME error check
-		PQsetnonblocking(db.conn, 1);
-		scope(exit)
+			// FIXME error check
 			PQsetnonblocking(db.conn, 0);
-
-		send(db);
-		finish(db);
+		}
 	}
 
-	void send(PostgreSql db) {
+	/++
+		History:
+			Added September 15, 2026
+	+/
+	PostgresPipelineExecutor getExecutor(PostgreSql db) {
+		return PostgresPipelineExecutor(this, db);
+	}
+
+	/++
+	+/
+	void execute(PostgreSql db) {
+		auto executor = getExecutor(db);
+		executor.send();
+		executor.waitForCompletion();
+	}
+
+	private void send(PostgreSql db) {
 		bool first_retry = true;
 		retry:
 
@@ -321,7 +372,7 @@ class PostgresPipeline {
 		assert(flushResult == 0); // FIXME: if it is 1 i need to wait for it to be ready to write more and do PQconsumeInput too
 	}
 
-	void finish(PostgreSql db) {
+	private void finish(PostgreSql db) {
 		more:
 
 		/+
