@@ -2918,6 +2918,20 @@ public auto toDelegate(T)(T t) {
 	assert(dg(5) == 5); // and forwards the args correctly
 }
 
+@system unittest {
+	int function(ref int) fn;
+	fn = (a) { return a++; };
+
+	int delegate(ref int) dg = toDelegate(fn);
+
+	assert(dg.ptr is fn); // it stores the original function as the context pointer
+	assert(dg.funcptr !is fn); // which is called through a lil trampoline
+	int a = 5;
+	assert(dg(a) == 5); // and forwards the args correctly
+	assert(a == 6); // and confirm ref worked too
+}
+
+
 /++
 	This populates a struct from a list of values (or other expressions, but it only looks at the values) based on types of the members, with one exception: `bool` members.. maybe.
 
