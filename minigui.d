@@ -13738,7 +13738,7 @@ class Button : MouseActivatedWidget {
 		If true, this button will emit trigger events on double (and other quick events, if added) click events as well as on normal single click events.
 
 		History:
-			Added July 2, 2021
+			Added July 2, 2021, defaulting to `false`. On July 5, 2026 (v13.0), I decided to change the default to `true`, so all clicks on the button will trigger it by default. If you want to get the old behavior back, either override the double click event or set `triggersOnMultiClick = false` *after* you call the super constructor.
 	+/
 	public bool triggersOnMultiClick;
 
@@ -13817,6 +13817,7 @@ class Button : MouseActivatedWidget {
 			of March 28, 2022 iff you provide a manifest file to opt into common controls v6.
 	+/
 	this(string label, Widget parent) {
+		triggersOnMultiClick = true;
 		this(ImageLabel(label), parent);
 	}
 
