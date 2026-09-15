@@ -596,6 +596,9 @@ class TerminalEmulator {
 						changed2 = selectionEnd;
 					}
 
+					if(changed1 < 0)
+						return true;
+
 					foreach(ref cell; (alternateScreenActive ? alternateScreen : normalScreen)[changed1 .. changed2]) {
 						cell.invalidated = true;
 						cell.selected = true;
