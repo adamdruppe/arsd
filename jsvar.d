@@ -371,6 +371,79 @@ var varObject(T...)(T t) {
 	return a;
 }
 
+/+
+auto JSON() {
+	import arsd.core;
+	return AdHocBuiltStruct!"JSON"();
+}
+
+unittest {
+	var a = [
+		"id": 5.var,
+		"name": "foo".var,
+		"orders": [
+			[
+				"id": 1.var,
+				"quantity": 5.var,
+			].var
+		].var
+	];
+	static struct Order {
+		int id;
+		int quantity;
+	}
+	static struct Thing {
+		int id;
+		string name;
+		Order[] orders;
+	}
+
+	auto b = Thing(
+		id: 5,
+		name: "foo",
+		orders: [
+			Order(
+				id: 1,
+				quantity: 5
+			)
+		]
+	);
+	auto c = a.get!Thing;
+	assert(b == c);
+	assert(a == var(b));
+
+	/+
+	var a = {
+		id: 5,
+		name: "foo",
+		orders: [
+			{
+				id: 1,
+				quantity: 5,
+			},
+		],
+	};
+	+/
+	/+
+	var a = (JSON
+		.id(5)
+		.name("foo")
+		.orders(var.arrayOf(
+			(JSON
+			.id(1)
+			.items([
+				JSON()
+					.id(100)
+					.quantity(5)
+			])
+			)
+		)))
+	;
+	+/
+
+	import arsd.core; writeln(a.toJson);
+}
++/
 
 private double stringToNumber(string s) {
 	double r;
@@ -733,7 +806,7 @@ struct var {
 	+/
 	public var opAssign(T)(T t) if(!is(T == var)) {
 		import std.typecons;
-		static if(__traits(compiles, this = t.toArsdJsvar())) {
+		static if(__traits(hasMember, t, "toArsdJsvar")) {
 			static if(__traits(compiles, t is null)) {
 				if(t is null)
 					this = null;
