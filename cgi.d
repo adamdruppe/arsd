@@ -481,7 +481,7 @@ void main() {
 
 	Copyright:
 
-	cgi.d copyright 2008-2023, Adam D. Ruppe. Provided under the Boost Software License.
+	cgi.d copyright 2008-2026, Adam D. Ruppe. Provided under the Boost Software License.
 
 	Yes, this file is old, and yes, it is still actively maintained and used.
 
@@ -3670,11 +3670,15 @@ struct RequestServer {
 		privilegesDropToUid = 0;
 	}
 
+	private __gshared bool actuallyUseFiber = true;
+
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
 
 		History:
-			Added Oct 10, 2020.
+			Added Oct 10, 2020. The overload with a `delegate` was added September 26, 2026. The one with an alias param is now discouraged.
+			You can migrate code from the old param to the new one in most cases by simply deleting the `!` template instantiation operator,
+			see the example.
 		Example:
 
 		---
@@ -3683,16 +3687,32 @@ struct RequestServer {
 			RequestServer server = RequestServer("127.0.0.1", 6789);
 			string oauthCode;
 			string oauthScope;
-			server.serveHttpOnce!((cgi) {
+			server.serveHttpOnce((cgi) {
 				oauthCode = cgi.request("code");
 				oauthScope = cgi.request("scope");
-				cgi.write("Thank you, please return to the application.");
+				cgi.write("Thank you, please return to the application.\n");
 			});
 			// use the code and scope given
 		}
 		---
 	+/
+	void serveHttpOnce(void delegate(Cgi cgi) handler) {
+		actuallyUseFiber = false; scope(exit) actuallyUseFiber = true;
+		import std.socket;
+
+		bool tcp;
+		void delegate() cleanup;
+		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto connection = socket.accept();
+		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection);
+
+		if(cleanup)
+			cleanup();
+	}
+
+	/// ditto
 	void serveHttpOnce(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		actuallyUseFiber = false; scope(exit) actuallyUseFiber = true;
 		import std.socket;
 
 		bool tcp;
@@ -5313,7 +5333,6 @@ version(cgi_use_fiber) {
 
 version(cgi_use_fiber)
 private void registerEventWakeup(bool* registered, Socket source, WakeupEvent e) @nogc {
-
 	// static cast since I know what i have in here and don't want to pay for dynamic cast
 	auto f = cast(CgiFiber) cast(void*) Fiber.getThis();
 
@@ -5370,9 +5389,12 @@ class BufferedInputRange {
 	this(Socket source, ubyte[] buffer = null, bool allowGrowth = true) {
 		// if they connect but never send stuff to us, we don't want it wasting the process
 		// so setting a time out
-		version(cgi_use_fiber)
-			source.blocking = false;
-		else
+		version(cgi_use_fiber) {
+			if(RequestServer.actuallyUseFiber)
+				source.blocking = false;
+			else
+				{} // this space intentionally left blank
+		} else
 			source.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
 
 		this.source = source;
@@ -5965,10 +5987,14 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 	} else {
 		auto address = host.length ? parseAddress(host, port) : new InternetAddress(port);
 		version(cgi_use_fiber) {
-			version(Windows)
-				listener = new PseudoblockingOverlappedSocket(AddressFamily.INET, SocketType.STREAM);
-			else
+			version(Windows) {
+				if(RequestServer.actuallyUseFiber)
+					listener = new PseudoblockingOverlappedSocket(AddressFamily.INET, SocketType.STREAM);
+				else
+					listener = new Socket(address.addressFamily, SocketType.STREAM);
+			} else {
 				listener = new Socket(address.addressFamily, SocketType.STREAM);
+			}
 		} else {
 			listener = new Socket(address.addressFamily, SocketType.STREAM);
 		}
