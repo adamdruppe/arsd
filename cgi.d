@@ -491,6 +491,8 @@ void main() {
 		This change is primarily to integrate the event loops across the library, allowing you to more easily use cgi.d along with my other libraries like simpledisplay and http2.d. Previously, you'd have to run separate helper threads. Now, they can all automatically work together.
 
 		The `struct Uri` was removed on November 2, 2025. You can find that now in [arsd.http2]. Other functions, including `rawurlencode`, `makeDataUrl`, `decodeVariablesSingle`, and `encodeVariables` were moved to [arsd.uri].
+
+		Prior to September 20, 2026, the server defaulted for forking at least once on compatible platforms. Since then, it does not unless you either request it with `-version=cgi_use_fork` when compiling or by setting [RequestServer.useFork] before starting the server.
 +/
 module arsd.cgi;
 
@@ -680,9 +682,11 @@ version(embedded_httpd) {
 
 version(embedded_httpd_hybrid) {
 	version=embedded_httpd_threads;
-	version(cgi_no_fork) {} else version(Posix)
-		version=cgi_use_fork;
 	version=cgi_use_fiber;
+}
+
+version(cgi_no_fork) {
+	version(cgi_use_fork) static assert(0, "conflicting versions on no fork and use fork");
 }
 
 version(cgi_use_fork)
@@ -3538,6 +3542,9 @@ struct RequestServer {
 			Added August 12, 2022  (dub v10.9). Previously, this was only configurable through the `-version=cgi_no_fork`
 			argument to dmd. That version still defines the value of `cgi_use_fork_default`, used to initialize this, for
 			compatibility.
+
+			On September 20, 2026 (dub v13.0) the default has changed to always be false, unless you opt in with either
+			`-version=cgi_use_fork` or by setting this variable to `true`.
 	+/
 	bool useFork = cgi_use_fork_default;
 
@@ -3697,6 +3704,11 @@ struct RequestServer {
 		if(cleanup)
 			cleanup();
 	}
+
+	/+
+		FIXME: serveAsync? ListeningConnectionManager.listenAsync? serveHttpOnce async? etc
+		multiple request servers?
+	+/
 
 	/++
 		Starts serving requests according to the current configuration.
