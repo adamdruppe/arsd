@@ -2960,6 +2960,7 @@ struct RealTimeConsoleInput {
 	}
 
 	private bool utf8MouseMode;
+	private bool sgrMouseMode;
 
 	version(Posix) {
 		private int fdOut;
@@ -3033,8 +3034,8 @@ struct RealTimeConsoleInput {
 			import std.process : environment;
 
 			if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
-				terminal.writeStringRaw("\033[?1003h\033[?1005h"); // full mouse tracking (1003) with utf-8 mode (1005) for exceedingly large terminals
-				utf8MouseMode = true;
+				terminal.writeStringRaw("\033[?1003h\033[?1006h"); // full mouse tracking (1003) with sgr mouse mode (1006) for exceedingly large terminals. i previously used utf-8 mouse mode (1005) but changed that because the windows pseudoterminal kinda insists on sgr.
+				sgrMouseMode = true;
 			} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 				terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 			}
@@ -3132,9 +3133,9 @@ struct RealTimeConsoleInput {
 
 				if(terminal.terminalInFamily("xterm") && environment.get("MOUSE_HACK") != "1002") {
 					// this is vt200 mouse with full motion tracking, supported by xterm
-					terminal.writeStringRaw("\033[?1003h\033[?1005h");
-					utf8MouseMode = true;
-					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1005l\033[?1003l"); };
+					terminal.writeStringRaw("\033[?1003h\033[?1006h");
+					sgrMouseMode = true;
+					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1006l\033[?1003l"); };
 				} else if(terminal.terminalInFamily("rxvt", "screen", "tmux") || environment.get("MOUSE_HACK") == "1002") {
 					terminal.writeStringRaw("\033[?1002h"); // this is vt200 mouse with press/release and motion notification iff buttons are pressed
 					destructor ~= (this_) { this_.terminal.writeStringRaw("\033[?1002l"); };
@@ -4036,10 +4037,10 @@ struct RealTimeConsoleInput {
 			while(sequenceLength < sequence.length) {
 				auto n = nextRaw();
 				sequence[sequenceLength++] = cast(char) n;
-				// I think a [ is supposed to termiate a CSI sequence
+				// I think a [ is supposed to terminate a CSI sequence
 				// but the Linux console sends CSI[A for F1, so I'm
 				// hacking it to accept that too
-				if(n >= 0x40 && !(sequenceLength == 3 && n == '['))
+				if(n >= 0x40 && n <= 0x7E && !(sequenceLength == 3 && n == '['))
 					break;
 			}
 
@@ -4120,6 +4121,100 @@ struct RealTimeConsoleInput {
 
 
 		InputEvent[] doEscapeSequence(in char[] sequence) {
+
+			if(sequence.length > 3 && sequence[0 .. 3] == "\033[<") {
+				// sgr mouse event
+				int sequencePos = 3;
+				char c = sequence[sequencePos++];
+
+				bool getNext(out int what) {
+					int number = 0;
+
+					do {
+						if(c >= '0' && c <= '9') {
+							c -= '0';
+							number *= 10;
+							number += c;
+						} else return true;
+
+						c = sequence[sequencePos++];
+					} while(c != ';' && c != 'm' && c != 'M');
+
+					what = number;
+
+					return false;
+				}
+
+				int buttonCode, x, y;
+				bool isRelease;
+				if(sgrMouseMode) {
+
+					if(getNext(buttonCode))
+						return null;
+
+					c = sequence[sequencePos++];
+
+					if(getNext(x))
+						return null;
+
+					c = sequence[sequencePos++];
+
+					if(getNext(y))
+						return null;
+
+					if(c == 'm')
+						isRelease = true;
+					else if(c == 'M')
+						isRelease = false;
+					else
+						return null;
+
+
+					int buttonNumber;
+					bool isMovement = (buttonCode & 0b11) == 0b11;
+					if(!isRelease) {
+						buttonNumber = (buttonCode & 0b11);
+						if(buttonCode & 64)
+							buttonNumber += 3; // button 4 and 5 are sent as like button 1 and 2, but code | 64
+							// so button 1 == button 4 here
+
+						// note: buttonNumber == 0 means button 1 at this point
+						buttonNumber++; // hence this
+
+						// apparently this considers middle to be button 2. but i want middle to be button 3.
+						if(buttonNumber == 2)
+							buttonNumber = 3;
+						else if(buttonNumber == 3)
+							buttonNumber = 2;
+					}
+
+					auto modifiers = buttonCode & (0b0001_1100);
+						// 4 == shift
+						// 8 == meta
+						// 16 == control
+
+					MouseEvent m;
+
+					if(isMovement)
+						m.eventType = MouseEvent.Type.Moved;
+					else
+						m.eventType = isRelease ? MouseEvent.Type.Released : MouseEvent.Type.Pressed;
+
+					if(buttonNumber == 0)
+						m.buttons = 0; // we don't actually know :(
+					else
+						m.buttons = 1 << (buttonNumber - 1); // I prefer flags so that's how we do it
+					m.x = x;
+					m.y = y;
+					m.modifierState = modifiers;
+
+					return [InputEvent(m, terminal)];
+				} else {
+					return null;
+				}
+			}
+
+
 			switch(sequence) {
 				case "\033[200~":
 					// bracketed paste begin
@@ -4201,7 +4296,6 @@ struct RealTimeConsoleInput {
 						x = cast(int) (/*nextChar*/(nextRaw())) - 33; /* they encode value + 32, but make upper left 1,1. I want it to be 0,0 */
 						y = cast(int) (/*nextChar*/(nextRaw())) - 33; /* ditto */
 					}
-
 
 					bool isRelease = (buttonCode & 0b11) == 3;
 					int buttonNumber;
