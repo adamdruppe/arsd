@@ -225,6 +225,15 @@
 			"dflags-gdc": ["-fmodule-file=arsd.fibersocket=$PACKAGE_DIR/fibersocket.d"],
 			"sourceFiles": ["fibersocket.d"]
 		},
+		{
+			"name": "csv",
+			"description": "Basic string[][]-based csv read/write functions",
+			"targetType": "library",
+			"dflags-dmd": ["-mv=arsd.csv=$PACKAGE_DIR/csv.d"],
+			"dflags-ldc": ["--mv=arsd.csv=$PACKAGE_DIR/csv.d"],
+			"dflags-gdc": ["-fmodule-file=arsd.csv=$PACKAGE_DIR/csv.d"],
+			"sourceFiles": ["csv.d"]
+		},
 
 		{
 			"name": "email",
@@ -497,7 +506,12 @@
 			"dflags-dmd": ["-mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
 			"dflags-ldc": ["--mv=arsd.cgi=$PACKAGE_DIR/cgi.d"],
 			"dflags-gdc": ["-fmodule-file=arsd.cgi=$PACKAGE_DIR/cgi.d"],
-			"dependencies": { "arsd-official:core":"*" },
+			"dependencies": {
+				"arsd-official:core":"*",
+				"arsd-official:dom":"*",
+				"arsd-official:jsvar":"*",
+				"arsd-official:csv":"*"
+			},
 			"configurations": [
 				{
 					"name": "embedded_httpd",

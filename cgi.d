@@ -483,8 +483,6 @@ void main() {
 
 	cgi.d copyright 2008-2026, Adam D. Ruppe. Provided under the Boost Software License.
 
-	Yes, this file is old, and yes, it is still actively maintained and used.
-
 	History:
 		An import of `arsd.core` was added on March 21, 2023 (dub v11.0). Prior to this, the module's default configuration was completely stand-alone. You must now include the `core.d` file in your builds with `cgi.d`.
 
@@ -493,6 +491,10 @@ void main() {
 		The `struct Uri` was removed on November 2, 2025. You can find that now in [arsd.http2]. Other functions, including `rawurlencode`, `makeDataUrl`, `decodeVariablesSingle`, and `encodeVariables` were moved to [arsd.uri].
 
 		Prior to September 20, 2026, the server defaulted for forking at least once on compatible platforms. Since then, it does not unless you either request it with `-version=cgi_use_fork` when compiling or by setting [RequestServer.useFork] before starting the server.
+
+		Additionally, on September 20, 2026, all builds default to including the fiber hybrid if supported on the platform. Use `-version=cgi_no_fiber` to disable it at build time.
+
+		Note: I'm actually trying to phase out the different build modes by default, in favor of using command line switches and/or function calls at runtime. I'll probably never *fully* remove them, but I'm moving toward compile switches disabling runtime detection and/or setting defaults instead of actually changing the build.
 +/
 module arsd.cgi;
 
@@ -666,6 +668,12 @@ void cloexec(Socket s) {
 // the servers must know about the connections to talk to them; the interfaces are vital
 version(with_addon_servers)
 	version=with_addon_servers_connections;
+
+
+version(cgi_no_fiber) {} else {
+	version(Windows) version=cgi_use_fiber;
+	version(linux) version=cgi_use_fiber;
+}
 
 version(embedded_httpd) {
 	version(OSX)
@@ -3670,7 +3678,8 @@ struct RequestServer {
 		privilegesDropToUid = 0;
 	}
 
-	private __gshared bool actuallyUseFiber = true;
+	private bool actuallyUseFiber = true;
+	private int cancelfd = -1;
 
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
@@ -3702,24 +3711,25 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(&this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
 		auto connection = socket.accept();
-		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection);
+		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection, &this);
 
 		if(cleanup)
 			cleanup();
 	}
 
 	/// ditto
+	deprecated("Pass your handler as a runtime delegate instead. Contact me if you need CustomCgi and maxContentLength.")
 	void serveHttpOnce(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
 		actuallyUseFiber = false; scope(exit) actuallyUseFiber = true;
 		import std.socket;
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(&this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
 		auto connection = socket.accept();
-		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection);
+		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection, &this);
 
 		if(cleanup)
 			cleanup();
@@ -3804,13 +3814,19 @@ struct RequestServer {
 		}
 	}
 
+	private bool stopRequested = false;
+
+	version(Windows)
+		HANDLE iocp;
+
+
 	/++
 		Runs the embedded HTTP thread server specifically, regardless of which build configuration you have.
 
 		If you want the forking worker process server, you do need to compile with the embedded_httpd_processes config though.
 	+/
 	void serveEmbeddedHttp(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)(ThisFor!fun _this) {
-		globalStopFlag = false;
+		stopRequested = false;
 		static if(__traits(isStaticFunction, fun))
 			alias funToUse = fun;
 		else
@@ -3820,8 +3836,8 @@ struct RequestServer {
 				else static assert(0, "Not implemented in your compiler version!");
 			}
 		auto manager = this.listenSpec is null ?
-			new ListeningConnectionManager(listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads) :
-			new ListeningConnectionManager(this.listenSpec, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads);
+			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads) :
+			new ListeningConnectionManager(&this, this.listenSpec, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads);
 		manager.listen();
 	}
 
@@ -3829,10 +3845,10 @@ struct RequestServer {
 		Runs the embedded SCGI server specifically, regardless of which build configuration you have.
 	+/
 	void serveScgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
-		globalStopFlag = false;
+		stopRequested = false;
 		auto manager = this.listenSpec is null ?
-			new ListeningConnectionManager(listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads) :
-			new ListeningConnectionManager(this.listenSpec, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads);
+			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads) :
+			new ListeningConnectionManager(&this, this.listenSpec, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads);
 		manager.listen();
 	}
 
@@ -3888,9 +3904,22 @@ struct RequestServer {
 			You might also try SIGINT perhaps.
 
 			The stopPriority is not yet fully implemented.
+
+		History:
+			Deprecated on September 22, 2026 due to being `static`. Instead, try [implicitRequestServer].requestStop or keep your own instance and call [requestStop] on it.
 	+/
+	deprecated("Use `instance.requestStop` instead. If you didn't make your own instance, try `implicitRequestServer.requestStop()`.")
 	static void stop(ForceStop stopPriority = ForceStop.afterCurrentRequestsComplete) {
-		globalStopFlag = true;
+		if(implicitRequestServer)
+			implicitRequestServer.requestStop(stopPriority);
+	}
+
+	/++
+		History:
+			Added September 22, 2026 (dub v13.0)
+	+/
+	void requestStop(ForceStop stopPriority = ForceStop.afterCurrentRequestsComplete) shared {
+		stopRequested = true;
 
 		version(Posix) {
 			if(cancelfd > 0) {
@@ -3898,10 +3927,11 @@ struct RequestServer {
 				core.sys.posix.unistd.write(cancelfd, &a, a.sizeof);
 			}
 		}
+		RequestServer* unshared = cast(RequestServer*) &this;
 		version(Windows) {
-			if(iocp) {
+			if(unshared.iocp) {
 				foreach(i; 0 .. 16) // FIXME
-				PostQueuedCompletionStatus(iocp, 0, cast(ULONG_PTR) null, null);
+				PostQueuedCompletionStatus(unshared.iocp, 0, cast(ULONG_PTR) null, null);
 			}
 		}
 	}
@@ -3933,10 +3963,8 @@ mixin(q{
 else
 	alias ThisFor(alias t) = AliasSeq!();
 
-private __gshared bool globalStopFlag = false;
-
 version(embedded_httpd_processes)
-void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer params) {
+void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer* params) {
 	import core.sys.posix.unistd;
 	import core.sys.posix.sys.socket;
 	import core.sys.posix.netinet.in_;
@@ -4037,7 +4065,7 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer param
 
 					scope(failure) close(s);
 					//ubyte[__traits(classInstanceSize, BufferedInputRange)] bufferedRangeContainer;
-					auto ir = new BufferedInputRange(s);
+					auto ir = new BufferedInputRange(params, s);
 					//auto ir = emplace!BufferedInputRange(bufferedRangeContainer, s, backingBuffer);
 
 					while(!ir.empty) {
@@ -4359,6 +4387,9 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 		return;
 
 	RequestServer server;
+	implicitRequestServer = cast(shared(RequestServer*)) &server;
+	scope(exit)
+		implicitRequestServer = null;
 	// you can change the port here if you like
 	// server.listeningPort = 9000;
 
@@ -4368,6 +4399,14 @@ void cgiMainImpl(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxC
 	// and serve the request(s).
 	server.serve!(fun, CustomCgi, maxContentLength)();
 }
+
+/++
+	When using [cgiMainImpl] (and helpers that use it, such as [GenericMain] and [DispatcherMain]), this shared pointer is set to the implicitly-created [RequestServer] object while `cgiMainImpl` is running.
+
+	History:
+		Added September 22, 2026
++/
+shared(RequestServer*) implicitRequestServer;
 
 //version(plain_cgi)
 void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
@@ -4431,8 +4470,6 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 	}
 }
 
-private __gshared int cancelfd = -1;
-
 /+
 	The event loop for embedded_httpd_threads will prolly fiber dispatch
 	cgi constructors too, so slow posts will not monopolize a worker thread.
@@ -4487,25 +4524,25 @@ __gshared size_t fiberStackSize = 4096 * 100;
 
 version(cgi_use_fiber)
 class CgiFiber : Fiber {
-	private void function(Socket) f_handler;
-	private void f_handler_dg(Socket s) { // to avoid extra allocation w/ function
-		f_handler(s);
+	private void function(Socket, RequestServer*) f_handler;
+	private void f_handler_dg(Socket s, RequestServer* rs) { // to avoid extra allocation w/ function
+		f_handler(s, rs);
 	}
-	this(void function(Socket) handler) {
+	this(void function(Socket, RequestServer*) handler) {
 		this.f_handler = handler;
 		this(&f_handler_dg);
 	}
 
-	this(void delegate(Socket) handler) {
+	this(void delegate(Socket, RequestServer*) handler) {
 		this.handler = handler;
 		super(&run, fiberStackSize);
 	}
 
 	Socket connection;
-	void delegate(Socket) handler;
+	void delegate(Socket, RequestServer*) handler;
 
 	void run() {
-		handler(connection);
+		handler(connection, null);
 	}
 
 	void delegate() postYield;
@@ -4588,16 +4625,19 @@ private class PseudoblockingOverlappedSocket : Socket {
 	SOCKET handle;
 
 	CgiFiber fiber;
+	RequestServer* requestServer;
 
-	this(AddressFamily af, SocketType st) {
+	this(RequestServer* requestServer, AddressFamily af, SocketType st) {
+		assert(requestServer !is null);
+		this.requestServer = requestServer;
 		auto handle = WSASocketW(af, st, 0, null, 0, 1 /*WSA_FLAG_OVERLAPPED*/);
 		if(!handle)
 			throw new Exception("WSASocketW");
 		this.handle = handle;
 
-		iocp = CreateIoCompletionPort(cast(HANDLE) handle, iocp, cast(ULONG_PTR) cast(void*) this, 0);
+		requestServer.iocp = CreateIoCompletionPort(cast(HANDLE) handle, requestServer.iocp, cast(ULONG_PTR) cast(void*) this, 0);
 
-		if(iocp is null) {
+		if(requestServer.iocp is null) {
 			writeln(GetLastError());
 			throw new Exception("CreateIoCompletionPort");
 		}
@@ -4655,12 +4695,12 @@ private class PseudoblockingOverlappedSocket : Socket {
 
 	PseudoblockingOverlappedSocket accepted;
 
-	__gshared static LPFN_ACCEPTEX lpfnAcceptEx;
 	__gshared static typeof(&GetAcceptExSockaddrs) lpfnGetAcceptExSockaddrs;
 
 	override Socket accept() @trusted {
 		__gshared static LPFN_ACCEPTEX lpfnAcceptEx;
 
+		synchronized(typeid(this))
 		if(lpfnAcceptEx is null) {
 			DWORD dwBytes;
 			GUID GuidAcceptEx = WSAID_ACCEPTEX;
@@ -4678,7 +4718,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 
 		}
 
-		auto pfa = new PseudoblockingOverlappedSocket(AddressFamily.INET, SocketType.STREAM);
+		auto pfa = new PseudoblockingOverlappedSocket(requestServer, AddressFamily.INET, SocketType.STREAM);
 		accepted = pfa;
 
 		SOCKET pendingForAccept = pfa.handle;
@@ -4765,7 +4805,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 }
 }
 
-void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection) {
+void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection, RequestServer* rs) {
 	assert(connection !is null);
 	version(cgi_use_fiber) {
 		auto fiber = new CgiFiber(&doThreadHttpConnectionGuts!(CustomCgi, fun));
@@ -4901,7 +4941,7 @@ struct HeaderCollection {
 }
 +/
 
-void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection) {
+void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection, RequestServer* requestServer) {
 	scope(failure) {
 		// catch all for other errors
 		try {
@@ -4922,7 +4962,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	ir.__ctor(connection, inputBuffer[], true);
 	+/
 
-	auto ir = new BufferedInputRange(connection);
+	auto ir = new BufferedInputRange(requestServer, connection);
 
 	while(!ir.empty) {
 
@@ -4994,7 +5034,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 				closeConnection = true;
 		}
 
-		if(globalStopFlag)
+		if(requestServer && requestServer.stopRequested)
 			closeConnection = true;
 
 		if(closeConnection || alwaysCloseConnection) {
@@ -5027,7 +5067,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	// I am otherwise NOT closing it here because the parent thread might still be able to make use of the keep-alive connection!
 }
 
-void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket connection) {
+void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket connection, RequestServer* requestServer) {
 	// and now we can buffer
 	scope(failure)
 		connection.close();
@@ -5038,7 +5078,7 @@ void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket 
 
 	string[string] headers;
 
-	auto range = new BufferedInputRange(connection);
+	auto range = new BufferedInputRange(requestServer, connection);
 	more_data:
 	auto chunk = range.front();
 	// waiting for colon for header length
@@ -5315,9 +5355,6 @@ version(cgi_use_fiber) {
 	} else static assert(0, "The hybrid fiber server is not implemented on your OS.");
 }
 
-version(Windows)
-	__gshared HANDLE iocp;
-
 version(cgi_use_fiber) {
 	version(linux)
 	private enum WakeupEvent {
@@ -5380,17 +5417,12 @@ void unregisterSource(Socket s) {
 // it is a class primarily for reference semantics
 // I might change this interface
 /// This is NOT ACTUALLY an input range! It is too different. Historical mistake kinda.
-class BufferedInputRange {
-	version(Posix)
-	this(int source, ubyte[] buffer = null) {
-		this(new Socket(cast(socket_t) source, AddressFamily.INET), buffer);
-	}
-
-	this(Socket source, ubyte[] buffer = null, bool allowGrowth = true) {
+private class BufferedInputRange {
+	this(RequestServer* requestServer, Socket source, ubyte[] buffer = null, bool allowGrowth = true) {
 		// if they connect but never send stuff to us, we don't want it wasting the process
 		// so setting a time out
 		version(cgi_use_fiber) {
-			if(RequestServer.actuallyUseFiber)
+			if(requestServer && requestServer.actuallyUseFiber)
 				source.blocking = false;
 			else
 				{} // this space intentionally left blank
@@ -5592,7 +5624,7 @@ import core.sync.semaphore;
 import core.atomic;
 
 /**
-	To use this thing:
+	This is for internal use only. It was previously public but never stabilized and now to become private.
 
 	---
 	void handler(Socket s) { do something... }
@@ -5617,6 +5649,8 @@ class ListeningConnectionManager {
 	ubyte nextIndexBack;
 	shared(int) queueLength;
 
+	RequestServer* requestServer;
+
 	Socket acceptCancelable() {
 		version(Posix) {
 			import core.sys.posix.sys.select;
@@ -5628,10 +5662,10 @@ class ListeningConnectionManager {
 				if(listener.handle > max)
 					max = listener.handle;
 			}
-			if(cancelfd != -1) {
-				FD_SET(cancelfd, &read_fds);
-				if(cancelfd > max)
-					max = cancelfd;
+			if(requestServer && requestServer.cancelfd != -1) {
+				FD_SET(requestServer.cancelfd, &read_fds);
+				if(requestServer.cancelfd > max)
+					max = requestServer.cancelfd;
 			}
 			auto ret = select(max + 1, &read_fds, null, null, null);
 			if(ret == -1) {
@@ -5642,7 +5676,7 @@ class ListeningConnectionManager {
 					throw new Exception("wtf select");
 			}
 
-			if(cancelfd != -1 && FD_ISSET(cancelfd, &read_fds)) {
+			if(requestServer && requestServer.cancelfd != -1 && FD_ISSET(requestServer.cancelfd, &read_fds)) {
 				return null;
 			}
 
@@ -5667,7 +5701,7 @@ class ListeningConnectionManager {
 				foreach(listener; listeners)
 					if(check.isSet(listener))
 						return listener.accept();
-			if(globalStopFlag)
+			if(requestServer && requestServer.stopRequested)
 				return null;
 			else
 				goto keep_looping;
@@ -5694,8 +5728,8 @@ class ListeningConnectionManager {
 		}
 
 		version(linux) {
-			if(cancelfd == -1)
-				cancelfd = eventfd(0, 0);
+			if(requestServer && requestServer.cancelfd == -1)
+				requestServer.cancelfd = eventfd(0, 0);
 		}
 
 		version(cgi_no_threads) {
@@ -5704,7 +5738,7 @@ class ListeningConnectionManager {
 
 			// the thread mode is faster and less likely to stall the whole
 			// thing when a request is slow
-			while(!loopBroken && !globalStopFlag) {
+			while(!loopBroken && (requestServer && !requestServer.stopRequested)) {
 				auto sn = acceptCancelable();
 				if(sn is null) continue;
 				cloexec(sn);
@@ -5750,7 +5784,7 @@ class ListeningConnectionManager {
 				}
 
 
-				while(!globalStopFlag) {
+				while(requestServer && !requestServer.stopRequested) {
 					Thread.sleep(1.seconds);
 					if(fiber_crash_check())
 						break;
@@ -5765,7 +5799,7 @@ class ListeningConnectionManager {
 					thread.start();
 				}
 
-				while(!loopBroken && !globalStopFlag) {
+				while(!loopBroken && !stopRequested) {
 					Socket sn;
 
 					bool crash_check() {
@@ -5814,7 +5848,7 @@ class ListeningConnectionManager {
 					accept_new_connection();
 					if(sn !is null)
 						existing_connection_new_data();
-					else if(sn is null && globalStopFlag) {
+					else if(sn is null && stopRequested) {
 						foreach(thread; threads) {
 							semaphore.notify();
 						}
@@ -5839,9 +5873,9 @@ class ListeningConnectionManager {
 	bool tcp;
 	void delegate() cleanup;
 
-	private void function(Socket) fhandler;
-	private void dg_handler(Socket s) {
-		fhandler(s);
+	private void function(Socket, RequestServer*) fhandler;
+	private void dg_handler(Socket s, RequestServer* rs) {
+		fhandler(s, rs);
 	}
 
 	static struct ParsedListenSpec {
@@ -5900,43 +5934,46 @@ class ListeningConnectionManager {
 		return pls;
 	}
 
-	this(string[] listenSpec, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		fhandler = handler;
-		this(listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
 	}
-	this(string[] listenSpec, void delegate(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		auto pls = parseListenSpec(listenSpec);
 
-		this(pls.host, pls.port, handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, pls.host, pls.port, handler, dropPrivs, useFork, numberOfThreads);
 	}
 
-	this(string host, ushort port, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
-		this([host], [port], handler, dropPrivs, useFork, numberOfThreads);
+	this(RequestServer* requestServer, string host, ushort port, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
 	}
-	this(string host, ushort port, void delegate(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
-		this([host], [port], handler, dropPrivs, useFork, numberOfThreads);
+	this(RequestServer* requestServer, string host, ushort port, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
 	}
 
-	this(string[] host, ushort[] port, void function(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		fhandler = handler;
-		this(host, port, &dg_handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, host, port, &dg_handler, dropPrivs, useFork, numberOfThreads);
 	}
 
-	this(string[] host, ushort[] port, void delegate(Socket) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		assert(host.length == port.length);
 
+		this.requestServer = requestServer;
 		this.handler = handler;
 		this.useFork = useFork;
 		this.numberOfThreads = numberOfThreads ? numberOfThreads : defaultNumberOfThreads();
 
 		listeners.reserve(host.length);
 
+		assert(requestServer !is null);
+
 		foreach(i; 0 .. host.length)
 			if(host[i] == "localhost") {
-				listeners ~= startListening("127.0.0.1", port[i], tcp, cleanup, 128, dropPrivs);
-				listeners ~= startListening("::1", port[i], tcp, cleanup, 128, dropPrivs);
+				listeners ~= startListening(requestServer, "127.0.0.1", port[i], tcp, cleanup, 128, dropPrivs);
+				listeners ~= startListening(requestServer, "::1", port[i], tcp, cleanup, 128, dropPrivs);
 			} else {
-				listeners ~= startListening(host[i], port[i], tcp, cleanup, 128, dropPrivs);
+				listeners ~= startListening(requestServer, host[i], port[i], tcp, cleanup, 128, dropPrivs);
 			}
 
 		version(cgi_use_fiber)
@@ -5950,13 +5987,13 @@ class ListeningConnectionManager {
 	}
 
 	Socket[] listeners;
-	void delegate(Socket) handler;
+	void delegate(Socket, RequestServer*) handler;
 
 	immutable bool useFork;
 	int numberOfThreads;
 }
 
-Socket startListening(string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
+Socket startListening(RequestServer* requestServer, string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
 	Socket listener;
 	if(host.startsWith("unix:")) {
 		version(Posix) {
@@ -5988,8 +6025,8 @@ Socket startListening(string host, ushort port, ref bool tcp, ref void delegate(
 		auto address = host.length ? parseAddress(host, port) : new InternetAddress(port);
 		version(cgi_use_fiber) {
 			version(Windows) {
-				if(RequestServer.actuallyUseFiber)
-					listener = new PseudoblockingOverlappedSocket(AddressFamily.INET, SocketType.STREAM);
+				if(requestServer && requestServer.actuallyUseFiber)
+					listener = new PseudoblockingOverlappedSocket(requestServer, AddressFamily.INET, SocketType.STREAM);
 				else
 					listener = new Socket(address.addressFamily, SocketType.STREAM);
 			} else {
@@ -6054,7 +6091,7 @@ class HttpVersionNotSupportedException : Exception {
 	}
 }
 
-alias void delegate(Socket) CMT;
+alias void delegate(Socket, RequestServer*) CMT;
 
 import core.thread;
 /+
@@ -6102,6 +6139,7 @@ import core.thread;
 +/
 class ConnectionThread : Thread {
 	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
+		assert(lcm !is null);
 		this.lcm = lcm;
 		this.dg = dg;
 		this.myThreadNumber = myThreadNumber;
@@ -6113,7 +6151,7 @@ class ConnectionThread : Thread {
 			// so if there's a bunch of idle keep-alive connections, it can
 			// consume all the worker threads... just sitting there.
 			lcm.semaphore.wait();
-			if(globalStopFlag)
+			if(lcm.requestServer && lcm.requestServer.stopRequested)
 				return;
 			Socket socket;
 			synchronized(lcm) {
@@ -6125,7 +6163,7 @@ class ConnectionThread : Thread {
 			}
 			try {
 			//import std.stdio; writeln(myThreadNumber, " taking it");
-				dg(socket);
+				dg(socket, lcm.requestServer);
 				/+
 				if(socket.isAlive) {
 					// process it more later
@@ -6170,6 +6208,7 @@ class ConnectionThread : Thread {
 version(cgi_use_fiber)
 class WorkerThread : Thread {
 	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
+		assert(lcm !is null);
 		this.lcm = lcm;
 		this.dg = dg;
 		this.myThreadNumber = myThreadNumber;
@@ -6182,7 +6221,8 @@ class WorkerThread : Thread {
 		PseudoblockingOverlappedSocket key;
 		OVERLAPPED* overlapped;
 		DWORD bytes;
-		while(!globalStopFlag && GetQueuedCompletionStatus(iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, timeout)) {
+		assert(lcm.requestServer !is null);
+		while(!lcm.requestServer.stopRequested && GetQueuedCompletionStatus(lcm.requestServer.iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, timeout)) {
 			if(key is null)
 				continue;
 			key.lastAnswer = bytes;
@@ -6205,7 +6245,7 @@ class WorkerThread : Thread {
 					sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
 				}
 
-				dg(sn);
+				dg(sn, lcm.requestServer);
 			}
 		}
 		//SleepEx(INFINITE, TRUE);
@@ -6223,11 +6263,11 @@ class WorkerThread : Thread {
 			close(epfd);
 		}
 
-		{
+		if(lcm.requestServer) {
 			epoll_event ev;
 			ev.events = EPOLLIN;
-			ev.data.fd = cancelfd;
-			epoll_ctl(epfd, EPOLL_CTL_ADD, cancelfd, &ev);
+			ev.data.fd = lcm.requestServer.cancelfd;
+			epoll_ctl(epfd, EPOLL_CTL_ADD, lcm.requestServer.cancelfd, &ev);
 		}
 
 		foreach(listener; lcm.listeners) {
@@ -6240,7 +6280,7 @@ class WorkerThread : Thread {
 
 
 
-		while(!globalStopFlag) {
+		while(lcm.requestServer is null || !lcm.requestServer.stopRequested) {
 			Socket sn;
 
 			epoll_event[64] events;
@@ -6254,8 +6294,9 @@ class WorkerThread : Thread {
 			outer: foreach(idx; 0 .. nfds) {
 				auto flags = events[idx].events;
 
-				if(cast(size_t) events[idx].data.ptr == cast(size_t) cancelfd) {
-					globalStopFlag = true;
+				if(lcm.requestServer && cast(size_t) events[idx].data.ptr == cast(size_t) lcm.requestServer.cancelfd) {
+					if(lcm.requestServer)
+						lcm.requestServer.stopRequested = true;
 					//import std.stdio; writeln("exit heard");
 					break;
 				} else {
@@ -6280,7 +6321,7 @@ class WorkerThread : Thread {
 								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
 							}
 
-							dg(sn);
+							dg(sn, lcm.requestServer);
 							continue outer;
 						} else {
 							// writeln(events[idx].data.ptr);
@@ -9381,6 +9422,37 @@ html", true, true);
 		enum methodMeta = null;
 	}
 
+	void presentCsv(E)(Cgi cgi, E[] t) {
+		string[][] csv;
+		string[] header;
+		csv.reserve(t.length + 1);
+		foreach(memberName; __traits(allMembers, E))
+			header ~= memberName;
+		csv ~= header;
+		foreach(item; t) {
+			string[] row;
+
+			import std.conv;
+			foreach(memberName; __traits(allMembers, E))
+				row ~= to!string(__traits(getMember, item, memberName));
+
+			csv ~= row;
+		}
+		presentCsvHelper(cgi, csv);
+	}
+
+	private void presentCsvHelper(Cgi cgi, string[][] csv) {
+		import arsd.csv;
+		string fn = cgi.pathInfo;
+		auto idx = fn.lastIndexOf("/");
+		if(idx != -1)
+			fn = fn[idx +1 .. $];
+		fn ~= ".csv";
+		cgi.setResponseContentType("text/csv");
+		cgi.header("Content-Disposition: attachment; filename="~fn~";");
+		cgi.write(toCsv(csv), true);
+	}
+
 	void presentSuccessfulReturn(T, Meta)(Cgi cgi, T ret, Meta meta, string format) {
 		switch(format) {
 			case "html":
@@ -9406,6 +9478,13 @@ html", true, true);
 				cgi.setResponseContentType("application/json");
 				cgi.write(envelope.toJson(), true);
 			break;
+			case "csv":
+				static if(is(T == E[], E) && is(E == struct)) {
+					presentCsv(cgi, ret);
+					break;
+				} else {
+					goto default;
+				}
 			default:
 				cgi.setResponseStatus("406 Not Acceptable"); // not exactly but sort of.
 		}
