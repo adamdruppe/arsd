@@ -54,10 +54,10 @@
 	)
 
 	a) If a given dialect requests no mutation of the input data
-	(i.e. no escape sequences, no concaternation of substrings etc.)
+	(i.e. no escape sequences, no concatenation of substrings etc.)
 	and is therefore possible to implement with slicing operations only,
 	the parser will be non-destructive and not do any heap allocations.
-	Such a parser is verifiably `@nogc`, too.
+	Such a parser is verifiable `@nogc`, too.
 
 	b) In cases where a dialect requires data-mutating operations,
 	there are two ways for a parser to implement them:
@@ -67,7 +67,7 @@
 	Because of the destructive nature of this operation,
 	it can be performed only once safely.
 	(Such an implementation could optionally fix up the modified data
-	to become valid and parsable again.
+	to become valid and parseable again.
 	Though doing so would come with a performance overhead.)
 
 	b.1) Or allocate a new buffer for the result of the operation.
@@ -85,6 +85,9 @@
 	auto parser = makeIniParser!(dialect, const(char)[])(mutableInput);
 	assert(parser.isDestructive == false);
 	---
+
+	History:
+		Added February 7, 2025
  +/
 module arsd.ini;
 
