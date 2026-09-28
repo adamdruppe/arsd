@@ -514,6 +514,10 @@ private var _op(alias _this, alias this2, string op, T)(T t) if(op != "~") {
 		if(this2.payloadType() == var.Type.Integral) {
 			auto l = this2._payload._integral;
 			static if(isIntegral!T) {
+				static if(op == "/") {
+					if(t == 0)
+						throw new Exception("Divide by zero");
+				}
 				mixin("l "~op~"= t;");
 				_this._type = var.Type.Integral;
 				_this._payload._integral = l;
@@ -831,8 +835,13 @@ struct var {
 			this._type = Type.Floating;
 			this._payload._floating = t;
 		} else static if(isIntegral!T) {
-			this._type = Type.Integral;
-			this._payload._integral = t;
+			version(jsvar_always_float) {
+				this._type = Type.Floating;
+				this._payload._floating = t;
+			} else {
+				this._type = Type.Integral;
+				this._payload._integral = t;
+			}
 		} else static if(isCallable!T) {
 			this._type = Type.Function;
 			static if(is(T == typeof(this._payload._function))) {
