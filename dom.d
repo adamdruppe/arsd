@@ -146,6 +146,8 @@ class Document : FileResource, DomParent {
 	inout(Document) asDocument() inout { return this; }
 	inout(Element) asElement() inout { return null; }
 
+	bool trackOriginalFilePositionInElements;
+
 	/++
 		These three functions, `processTagOpen`, `processTagClose`, and `processNodeWhileParsing`, allow you to process elements as they are parsed and choose to not append them to the dom tree.
 
@@ -1146,6 +1148,10 @@ class Document : FileResource, DomParent {
 						pos++;
 
 						auto e = createElement(tagName);
+						if(trackOriginalFilePositionInElements) {
+							e.originalFilePosition = getLineNumber(whereThisTagStarted);
+						}
+
 						e.attributes = attributes;
 						version(dom_node_indexes) {
 							if(e.dataset.nodeIndex.length == 0)
@@ -1982,6 +1988,8 @@ interface DomParent {
 +/
 /// Group: core_functionality
 class Element : DomParent {
+	int originalFilePosition;
+
 	inout(Document) asDocument() inout { return null; }
 	inout(Element) asElement() inout { return this; }
 
@@ -3991,6 +3999,7 @@ class Element : DomParent {
 		auto e = Element.make(this.tagName);
 		e.attributes = this.attributes.aadup;
 		e.selfClosed = this.selfClosed;
+		e.originalFilePosition = this.originalFilePosition;
 
 		if(deepClone) {
 			foreach(child; children) {
@@ -4477,6 +4486,12 @@ struct MaybeNullElement(SomeElementType) {
 		this.element = ele;
 	}
 	SomeElementType element;
+
+	int originalFilePosition() {
+		if(element is null)
+			return 0;
+		return element.originalFilePosition;
+	}
 
 	/// Forwards to the element, wit a null check inserted that propagates null.
 	auto opDispatch(string method, T...)(T args) {
@@ -5408,6 +5423,9 @@ string htmlEntitiesDecode(string data, bool strict = false) {
 	foreach(dchar ch; data) {
 		if(tryingEntity) {
 			entityAttemptIndex++;
+			if(entityBeingTriedLength >= entityBeingTried.length)
+				throw new Exception("out of bounds entity length");
+
 			entityBeingTried[entityBeingTriedLength++] = ch;
 
 			if(entityBeingTriedLength == 2 && ch == '#') {
@@ -8914,6 +8932,472 @@ void fillForm(T)(Form form, T obj, string name) {
 	fillData((k, v) => form.setValue(k, v), obj, name);
 }
 
+static struct MappedSourceCode {
+	// dmd gives us 1-based lines, but source maps want zero-based line numbers
+	this(string content, string file = __FILE__, size_t line = __LINE__ - 1) {
+		if(file.length > 0 && file[0] == '/')
+			file = arsd.core.FilePath(file).filename; // can't do a default arg w/ the transformation cuz it crashes dmd, alas
+		this.content = content;
+		this.file = file;
+		this.line = line;
+	}
+
+	string content;
+	string file;
+	size_t line;
+}
+
+/++
+	If you're writing a HTML document and want to add custom elements, these classes help you do it.
+
+
+	Custom elements can define html, javascript, and css associated with them. The `RuntimeCustomElement`,
+	the preferred way to support them, lets you define an element like this:
+
+	```html
+	<Arsd-Custom-Element tagName="My-Custom-Element">
+		<template>
+
+		</template>
+		<style>
+
+		</style>
+		<script>
+		</script>
+	</Arsd-Custom-Element>
+	```
+
+	There's two magic elements you can use inside your `<template>`: `<Arsd-Template-Children />`, which is replaced by the children of the original custom element the user wrote, and `<Arsd-Template-Transform selector="X"> ... </Arsd-Template-Transform>`, which gets all children the user wrote that matches the given selector and feeds them to a mini-template inside.
+
+	I might also want a magic one <Arsd-Template-Attribute content="{foo}" /> which forwards an attribute to content which is there really just for value to textarea transforms. This is not yet done and may never be done. Maybe arsd-forward-all="*" as a magic attribute too.
+
+	Adding a new custom element to the DOM via javascript will generally work, but modifying an existing one should be avoided, since once it is transformed, the structure changes in a user-visible way. This gives compatibility with traditional browsers. You can change some of the expanded contents in the normal way (e.g. checking a checkbox can be done by just working on the checkbox element directly pretending the custom element was never there). Consider the expansion to be the dynamic api.
+
+	History:
+		Added October 2, 2026
++/
+// FIXME: alias tags in the custom element thing: <Arsd-Custom-Element tagName="foo" aliasOf="..." /> could do it. just register the same class.
+// FIXME: forward all attributes to custom element. *="{*}" is valid in dom.d and html5.
+// FIXME <Arsd-Template-Value /> could be the value attribute as child text/html (an attribute could define that but default to text def)
+class CustomElementExpander {
+	enum jsRewriteCode = q"js
+	let ArsdCustomElementRewrite_LastId = 0;
+
+	function ArsdCustomElementHtml(strings) {
+		let parser = new DOMParser();
+		let parsedDoc = parser.parseFromString("<root>" + strings[0] + "</root>", "text/html");
+		let templ = parsedDoc.querySelector("template");
+		return templ;
+	}
+
+	function ArsdCustomElementRewrite(e) {
+		if(e.hasAttribute("data-rewrite-done-at"))
+			return;
+
+		let templ = e.constructor.arsdTemplateHtml;
+
+		// let templ = document.getElementById(e.tagName.toLowerCase());
+		if(templ === null)
+			throw new Error("no template for " + e.tagName);
+		templ = templ.cloneNode(true);
+
+		let subjectStack = [e];
+		let attributeSearchStack = [templ, e];
+
+		function helper(element) {
+			if(element.attributes)
+			Array.from(element.attributes).forEach(function(attribute) {
+				let k = attribute.name;
+				let v = attribute.value;
+				if(v.length > 2 && v.charAt(0) == '{' && v.charAt(v.length - 1) == '}') {
+					let search = v.substring(1, v.length - 1);
+					let found = null;
+
+					if(search === "thisId") {
+						let subject = subjectStack[subjectStack.length - 1];
+						if(!subject.arsdThisId) {
+							ArsdCustomElementRewrite_LastId++;
+							subject.arsdThisId = ArsdCustomElementRewrite_LastId;
+						}
+						found = subject.arsdThisId;
+					} else {
+						for(let stackIndex = attributeSearchStack.length - 1; stackIndex >= 0; stackIndex -= 1) {
+							let attrSearch = attributeSearchStack[stackIndex];
+							if(attrSearch.hasAttribute(search)) {
+								found = attrSearch.getAttribute(search);
+								break;
+							}
+						}
+					}
+
+					if(found !== null)
+						element.setAttribute(k, found);
+					else
+						element.removeAttribute(k);
+				}
+			});
+
+			Array.from(element.childNodes).forEach(function(child) {
+				switch(child.tagName) {
+					case "ARSD-TEMPLATE-CHILDREN":
+						var fragment = new DocumentFragment();
+
+						// fragment.stealChildren(subjectStack[$-1]);
+						Array.from(subjectStack[subjectStack.length - 1].childNodes).forEach(function(ec) {
+							fragment.appendChild(ec.parentNode.removeChild(ec));
+						});
+						// child.replaceWith(fragment);
+						child.parentNode.insertBefore(fragment, child);
+						child.parentNode.removeChild(child);
+					break;
+					case "ARSD-TEMPLATE-TRANSFORM":
+						var fragment = new DocumentFragment();
+						attributeSearchStack.push(child);
+						e.querySelectorAll(child.getAttribute("selector")).forEach(function(inputElement) {
+							attributeSearchStack.push(inputElement);
+							subjectStack.push(inputElement);
+
+							let r = child.cloneNode(true);
+							helper(r);
+
+							// fragment.stealChildren(r);
+							Array.from(r.childNodes).forEach(function(ec) {
+								fragment.appendChild(ec.parentNode.removeChild(ec));
+							});
+
+							attributeSearchStack.pop();
+							subjectStack.pop();
+
+						});
+						attributeSearchStack.pop();
+
+						// child.replaceWith(fragment);
+						child.parentNode.insertBefore(fragment, child);
+						child.parentNode.removeChild(child);
+					break;
+					default:
+						helper(child);
+					break;
+				}
+			});
+		}
+
+		helper(templ.content); // <template> only has a content thing not child nodes...
+
+		// e.removeAllChildren();
+		Array.from(e.childNodes).forEach(function(ec) {
+			ec.parentNode.removeChild(ec);
+		});
+
+		// e.stealChildren(templ);
+		Array.from(templ.content.childNodes).forEach(function(ec) {
+			e.appendChild(ec.parentNode.removeChild(ec));
+		});
+
+		e.dataset.rewriteDoneAt = "browser";
+
+	}
+
+	class ArsdCustomElement extends HTMLElement {
+		constructor() {
+			super();
+		}
+
+		connectedCallback() {
+			ArsdCustomElementRewrite(this);
+		}
+	}
+
+js"; // sadness upstream compatibility
+
+	int opApply(int delegate(CustomElement ce) dg) {
+		foreach(k, v; factories) {
+			auto o = v();
+			if(auto ret = dg(o))
+				return ret;
+		}
+		return 0;
+	}
+
+	private CustomElement delegate()[string] factories;
+	void registerCustomElement(string tagName, CustomElement delegate() customElementFactory) {
+		factories[tagName] = customElementFactory;
+	}
+	/+
+	void registerCustomElement(string tagName, CustomElement function() customElementFactory) {
+		registerCustomElement(tagName, arsd.core.toDelegate(customElementFactory));
+	}
+	+/
+
+	void registerCustomElement(RuntimeCustomElement rce) {
+		registerCustomElement(rce.name(), &rce.duplicate);
+	}
+
+	void apply(Document document, bool makeStandalone = false) {
+		apply(document.root);
+		if(makeStandalone)
+		if(auto b = document.mainBody) {
+			b.addChild("script", jsRewriteCode);
+			foreach(k, v; factories) {
+				auto o = v();
+				/+
+				if(auto html = o.html()) {
+					// FIXME: i could put this in the JS too for more cacheability etc. maybe.
+					html.id = o.jsTagName();
+					assert(html.tagName == "template");
+					b.appendChild(html);
+				}
+				+/
+				string s;
+				foreach(item; o.styleWrapped())
+					s ~= item.content;
+				b.addChild("style", s);
+				s = null;
+				foreach(item; o.scriptWrapped())
+					s ~= item.content;
+				b.addChild("script", s);
+			}
+		}
+	}
+
+	void apply(Element element) {
+		foreach(e; element.tree) {
+			if(auto pfactory = e.tagName in factories) {
+				auto ce = (*pfactory)();
+				ce.rewrite(e);
+				// note it all auto-recurse because tree picks up changes live
+			}
+		}
+	}
+}
+
+/// ditto
+abstract class CustomElement {
+	abstract string name(); // there MUST be a dash in there per html spec
+	protected string jsClassName() {
+		import arsd.string;
+		return name.replace("-", "");
+	}
+	protected string jsTagName() {
+		string s;
+		foreach(ch; name()) {
+			if(ch >= 'A' && ch <= 'Z')
+				s ~= ch | 32;
+			else
+				s ~= ch;
+		}
+		return s;
+	}
+
+	Element html() { return null; }
+	protected MappedSourceCode style() { return MappedSourceCode.init; }
+	protected MappedSourceCode script() { return MappedSourceCode.init; }
+
+	public MappedSourceCode[] styleWrapped() {
+		auto s = style();
+		return [
+			MappedSourceCode(name() ~ " {\n", s.file, s.line),
+			s,
+			MappedSourceCode("\n}\n")
+		];
+	}
+
+	private static string jsStringEncode(Element html) {
+		assert(html !is null);
+		if(html is null)
+			return "ArsdCustomElementHtml``";
+
+		auto originalString = html.toString();
+		string js;
+		js.reserve(originalString.length + 2);
+		js ~= "ArsdCustomElementHtml`";
+		foreach(ch; originalString)
+			switch(ch) {
+				case '$':
+				case '\\':
+				case '`':
+					js ~= '\\';
+					goto default;
+				default:
+					js ~= ch;
+			}
+
+		js ~= "`";
+		return js;
+	}
+
+	public MappedSourceCode[] scriptWrapped() {
+		return [
+		MappedSourceCode(`
+class `~jsClassName()~` extends ArsdCustomElement {
+
+	static arsdTemplateHtml = `~jsStringEncode(html)~`;
+	`),
+	script(),
+	MappedSourceCode(`
+}
+customElements.define("`~jsTagName()~`", `~jsClassName()~`);
+		`)];
+	/*
+	connectedCallback() {
+		super.connectedCallback();
+		`~connectedCallbackJs.content~`
+	}
+
+	disconnectedCallback() {
+		`~disconnectedCallbackJs.content~`
+	}
+	connectedMoveCallback() {}
+	adoptedCallback() {}
+	static observedAttributes = ["size"];
+	attributeChangedCallback(name, oldValue, newValue) { console.log("observed");}
+
+	*/
+	}
+
+	void rewrite(Element e) {
+		// the default is to apply it to the html template
+		auto templ = html();
+		if(templ is null)
+			return;
+
+		templ = templ.cloneNode(true);
+
+		Element[] subjectStack = [e];
+		Element[] attributeSearchStack = [templ, e];
+
+		void helper(Element element) {
+
+			foreach(k, v; element.attributes) {
+				if(v.length > 2 && v[0] == '{' && v[$-1] == '}') {
+					string search = v[1 .. $-1];
+					string found;
+
+					import arsd.conv;
+					if(search == "thisId")
+						found = to!string(cast(size_t) cast(void*) subjectStack[$-1]);
+					else
+					foreach_reverse(attrSearch; attributeSearchStack) {
+						if(attrSearch.hasAttribute(search)) {
+							found = attrSearch.getAttribute(search);
+							break;
+						}
+					}
+
+					if(found !is null)
+						element.setAttribute(k, found);
+					else
+						element.removeAttribute(k);
+				}
+			}
+
+			foreach(child; element.children) {
+				switch(child.tagName) {
+					case "Arsd-Template-Children":
+						auto fragment = new DocumentFragment(null);
+						fragment.stealChildren(subjectStack[$-1]);
+						child.replaceWith(fragment);
+					break;
+					case "Arsd-Template-Transform":
+						auto fragment = new DocumentFragment(null);
+
+						attributeSearchStack ~= child;
+						foreach(inputElement; e.querySelectorAll(child.attrs.selector)) {
+							attributeSearchStack ~= inputElement;
+							subjectStack ~= inputElement;
+
+							auto r = child.cloneNode(true);
+							helper(r);
+							fragment.stealChildren(r);
+
+							attributeSearchStack = attributeSearchStack[0 .. $-1];
+							attributeSearchStack.assumeSafeAppend();
+
+							subjectStack = subjectStack[0 .. $-1];
+							subjectStack.assumeSafeAppend();
+						}
+
+						attributeSearchStack = attributeSearchStack[0 .. $-1];
+						attributeSearchStack.assumeSafeAppend();
+
+						child.replaceWith(fragment);
+					break;
+					default:
+						helper(child);
+				}
+			}
+		}
+
+		helper(templ);
+
+		e.removeAllChildren();
+		e.selfClosed = false;
+		e.stealChildren(templ);
+		e.dataset.rewriteDoneAt = "server";
+	}
+
+	/+
+	private string thisId_;
+	final string thisId() {
+		import arsd.conv;
+		if(thisId_ is null)
+			thisId_ = to!string(cast(size_t) cast(void*) this);
+
+		return thisId_;
+	}
+	+/
+}
+
+/// ditto
+class RuntimeCustomElement : CustomElement {
+	private Element parsedInput;
+	private string filename;
+	private int lineNumberFromFile;
+	this(Html html, string filename = __FILE__, int lineNumberFromFile = 0) {
+		this.filename = filename;
+		this.lineNumberFromFile = lineNumberFromFile;
+
+		auto document = new Document();
+		document.trackOriginalFilePositionInElements = true;
+		document.parseUtf8(html.source, true, true);
+		parsedInput = document.root;
+		if(parsedInput is null)
+			throw new Exception("couldn't parse the html");
+		if(parsedInput.tagName != "Arsd-Custom-Element")
+			throw new Exception("Wanted <Arsd-Custom-Element tagName=\"name\"> ... </Arsd-Custom-Element>, not " ~ parsedInput.tagName);
+		if(!parsedInput.hasAttribute("tagName"))
+			throw new Exception("Missing tagName element on custom element");
+		if(parsedInput.getAttribute("tagName").indexOf("-") < 1)
+			throw new Exception("Custom element tag name must include a dash in the middle somewhere, not just " ~ parsedInput.getAttribute("tagName"));
+	}
+	private this(Element parsedInput, string filename, int lineNumberFromFile) {
+		this.parsedInput = parsedInput.cloneNode(true);
+		this.filename = filename;
+		this.lineNumberFromFile = lineNumberFromFile;
+	}
+
+	RuntimeCustomElement duplicate() {
+		return new RuntimeCustomElement(this.parsedInput, this.filename, this.lineNumberFromFile);
+	}
+
+	override MappedSourceCode script() {
+		auto e = parsedInput.optionSelector("> script");
+		return MappedSourceCode(e.innerHTML, filename, lineNumberFromFile + e.originalFilePosition - 1 /* to be zero based */);
+	}
+	override string name() {
+		return parsedInput.getAttribute("tagName");
+	}
+	override Element html() {
+		return parsedInput.requireSelector("> template");
+	}
+	override MappedSourceCode style() {
+		auto e = parsedInput.optionSelector("> style");
+		return MappedSourceCode(e.innerHTML, filename, lineNumberFromFile + e.originalFilePosition - 1 /* to be zero based */);
+	}
+	// string script() { return null ; }
+}
+
+
 /++
 	Normalizes the whitespace in the given text according to HTML rules.
 
@@ -9548,7 +10032,7 @@ unittest {
 }
 
 /*
-Copyright: Adam D. Ruppe, 2010 - 2023
+Copyright: Adam D. Ruppe, 2010 - 2026
 License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
 Authors: Adam D. Ruppe, with contributions by Nick Sabalausky, Trass3r, and ketmar among others
 */

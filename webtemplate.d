@@ -234,6 +234,14 @@ class WebTemplateRenderer {
 	}
 
 	/++
+		History:
+			Added October 4, 2026
+	+/
+	void populateCustomElements(CustomElementExpander cee) {
+		loader.populateCustomElements(cee);
+	}
+
+	/++
 		Adds the default functions to the context. You can override this to add additional default functions (or static data) to the context objects.
 	+/
 	void addDefaultFunctions(var context) {
@@ -554,6 +562,17 @@ interface TemplateLoader {
 	string loadTemplateHtml(string name);
 
 	/++
+		This populates custom elements that can be used by your template. It is acceptable
+		for you to do nothing in this function if you use no custom elements, but the
+		typical implementation is to loop through a directory and load runtime custom elements
+		from the html files inside.
+
+		History:
+			Added October 4, 2026
+	+/
+	void populateCustomElements(CustomElementExpander cee);
+
+	/++
 		Returns a loader for files in the given directory.
 	+/
 	static TemplateLoader forDirectory(string directoryName) {
@@ -564,6 +583,15 @@ interface TemplateLoader {
 			string loadTemplateHtml(string name) {
 				import std.file;
 				return readText(directoryName ~ name);
+			}
+
+			void populateCustomElements(CustomElementExpander cee) {
+				import std.file;
+				string ceDir = directoryName ~ "custom-elements/";
+				if(exists(ceDir))
+				foreach(fileName; dirEntries(ceDir, "*.html", SpanMode.depth)) {
+					cee.registerCustomElement(new RuntimeCustomElement(Html(readText(fileName)), fileName));
+				}
 			}
 		};
 	}
@@ -596,6 +624,7 @@ Document renderTemplate(string templateName, var context = var.emptyObject, var 
 unittest {
 	// for the unittest, we want to inject a loader that uses plain strings instead of files.
 	auto testLoader = new class TemplateLoader {
+		void populateCustomElements(CustomElementExpander cee) {}
 		string loadTemplateHtml(string name) {
 			switch(name) {
 				case "skeleton":
@@ -767,6 +796,12 @@ template WebPresenterWithTemplateSupport(CTRP) {
 			}
 		}
 
+		override void populateCustomElements(CustomElementExpander cee) {
+			super.populateCustomElements(cee);
+			WebTemplateRenderer renderer = this.webTemplateRenderer();
+			renderer.populateCustomElements(cee);
+		}
+
 		static struct Meta {
 			typeof(null) at;
 			string templateName;
@@ -830,6 +865,7 @@ template WebPresenterWithTemplateSupport(CTRP) {
 			auto skeleton = renderer.renderTemplate(ret.name, ret.context, ret.skeletonContext, ret.skeletonName);
 			cgi.setResponseContentType("text/html; charset=utf8");
 			cgi.gzipResponse = true;
+			getCustomElementExpander().apply(skeleton);
 			cgi.write(skeleton.toString(), true);
 		}
 

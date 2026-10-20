@@ -494,6 +494,8 @@ void main() {
 
 		Additionally, on September 20, 2026, all builds default to including the fiber hybrid if supported on the platform. Use `-version=cgi_no_fiber` to disable it at build time.
 
+		On October 9, 2026, the default format of responses using the [DispatcherMain], etc., changed to check the Accept header and some other heuristics. It generally assumes json unless html is requested. The way to request a format changed from `format=...` to `__format=...`.
+
 		Note: I'm actually trying to phase out the different build modes by default, in favor of using command line switches and/or function calls at runtime. I'll probably never *fully* remove them, but I'm moving toward compile switches disabling runtime detection and/or setting defaults instead of actually changing the build.
 +/
 module arsd.cgi;
@@ -3280,14 +3282,16 @@ mixin template CustomCgiDispatcherMain(CustomCgi, size_t maxContentLength, Prese
 
 		switch(cgi.pathInfo) {
 			case "/style.css":
-				cgi.setCache(true);
-				cgi.setResponseContentType("text/css");
-				cgi.write(presenter.style(), true);
+				presenter.serveStyleCss(cgi);
+			break;
+			case "/style.css.map":
+				presenter.serveStyleCssMap(cgi);
 			break;
 			case "/script.js":
-				cgi.setCache(true);
-				cgi.setResponseContentType("application/javascript");
-				cgi.write(presenter.script(), true);
+				presenter.serveScriptJs(cgi);
+			break;
+			case "/script.js.map":
+				presenter.serveScriptJsMap(cgi);
 			break;
 			default:
 				presenter.renderBasicError(cgi, 404);
@@ -8632,18 +8636,421 @@ ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
 	switch to choose if you want to override.
 */
 
-struct DispatcherDefinition(alias dispatchHandler, DispatcherDetails = typeof(null)) {// if(is(typeof(dispatchHandler("str", Cgi.init, void) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+DispatcherMetadata minimumMetadataFactory(DispatcherDetails)(string urlPrefix, bool rejectFurther, immutable(DispatcherDetails) dd) {
+	return new DispatcherMetadata(urlPrefix, rejectFurther);
+}
+
+struct DispatcherDefinition(alias dispatchHandler, DispatcherDetails = typeof(null), alias metadataFactoryArg = minimumMetadataFactory!DispatcherDetails) {// if(is(typeof(dispatchHandler("str", Cgi.init, void) == bool))) { // bool delegate(string urlPrefix, Cgi cgi) dispatchHandler;
+
 	alias handler = dispatchHandler;
+
 	string urlPrefix;
 	bool rejectFurther;
 	immutable(DispatcherDetails) details;
+
+	alias metadataFactory = metadataFactoryArg;
 }
+
+class DispatcherMetadata {
+	string urlPrefix;
+	bool rejectFurther;
+
+	this(string urlPrefix, bool rejectFurther) {
+		this.urlPrefix = urlPrefix;
+		this.rejectFurther = rejectFurther;
+	}
+
+	// FIXME: list runtime endpoints too prolly separately
+	string documentation() const { return null; }
+
+	immutable(ApiMethodMetadata[]) allEndpoints() const { return null; }
+	immutable(DispatcherMetadata[]) subresources() const { return null; }
+
+	private __gshared DispatcherMetadata[] allMeta_; // populated at startup by standalone shared static ctors
+	static immutable(DispatcherMetadata[]) allMeta() {
+		return cast(immutable) allMeta_;
+	}
+
+	void printInfo(string starting = null) const {
+		if(auto d = this.documentation)
+			writeln("Docs: ", d.strip);
+		foreach(endpoint; this.allEndpoints)
+			// FIXME: need the :id if it is a subresource but it goes above
+			writeln(endpoint.requestMethod, " ", starting, this.urlPrefix, endpoint.urlName, " (",endpoint.clientParameters,") => ", endpoint.returns);
+		foreach(subresource; this.subresources)
+			subresource.printInfo(starting ~ "/");
+	}
+
+	string toBrowserScriptBinding(bool includeTypes = false, bool isSubresource = false, string baseUrl = null) const { return null; }
+
+	shared static this() {
+		// FIXME: this is just a temporary thing to debug
+
+		foreach(def; allTsDefinitions)
+			writeln(def);
+
+		foreach(m; allMeta) {
+			//m.printInfo();
+			writeln(m.toBrowserScriptBinding(true));
+		}
+	}
+}
+
+struct ApiMethodParameter {
+	string dName;
+	string name;
+	string typeName;
+	string delivery;
+	bool required;
+
+	string tsName;
+}
+
+struct ApiMethodReturn {
+	bool hasDynamicFields;
+	string[] supportedContentTypes;
+
+	string typeName;
+
+	string tsName;
+}
+
+private interface ApiMethodMetadata {
+	Cgi.RequestMethod requestMethod() const;
+	string dName() const;
+	string urlName() const;
+	string displayName() const;
+
+	ApiMethodParameter[] clientParameters() const;
+	ApiMethodReturn returns() const;
+}
+
+private template EnsureSubresourceRegistration(Parent, string urlName, Sub) {
+	@(arsd.core.standalone) shared static this() @system {
+		ApiMetadataFor!(Parent).subresources_ ~= new ApiMetadataFor!Sub(urlName/*__traits(identifier, Sub)*/, false, true);
+	}
+
+	void EnsureSubresourceRegistration() {}
+}
+
+// FIXME: subobjects aren't included with the current callFromCgi hack
+private class ApiMethodMetadataFor(alias method) : ApiMethodMetadata {
+	Cgi.RequestMethod requestMethod() const {
+		auto thing = Cgi.RequestMethod.GET;
+		foreach(attr; __traits(getAttributes, method))
+			static if(is(typeof(attr) == Cgi.RequestMethod))
+				thing = attr;
+		return thing;
+	}
+	string dName() const { return __traits(identifier, method); }
+	string urlName() const {
+		string thing = urlify(dName());
+
+		foreach(attr; __traits(getAttributes, method))
+			static if(is(typeof(attr) == UrlName))
+				thing = attr.name;
+
+		return thing;
+	}
+	string displayName() const {
+		string thing = beautify(dName());
+
+		foreach(attr; __traits(getAttributes, method))
+			static if(is(typeof(attr) == DisplayName))
+				thing = attr.name;
+
+		return thing;
+	}
+
+	ApiMethodParameter[] clientParameters() const {
+		import std.traits;
+		ApiMethodParameter[] params;
+		static if(is(typeof(method) Params == __parameters)) {
+			alias defaults = ParameterDefaults!method;
+			foreach(idx, param; Params) {
+				ApiMethodParameter p;
+
+				p.dName = __traits(identifier, Params[idx .. idx + 1]);
+				p.typeName = param.stringof;
+				p.delivery = "body_or_url";
+				p.name = p.dName;
+				foreach(uda; __traits(getAttributes, Params[idx .. idx + 1])) {
+					static if(is(typeof(uda) == viaHeader)) {
+						p.delivery = "header";
+						p.name = uda.headerName;
+					}
+				}
+
+				p.required = is(defaults[idx] == void);
+
+				p.tsName = tsNameFor!param;
+
+				params ~= p;
+			}
+		}
+		return params;
+	}
+
+	ApiMethodReturn returns() const {
+		ApiMethodReturn ret;
+		static if(is(typeof(method) R == return)) {
+			ret.typeName = R.stringof;// __traits(identifier, R);
+			ret.tsName = tsNameFor!R;
+			// FIXME: error returns too...
+		}
+		return ret;
+	}
+}
+
+__gshared string[] allTsDefinitions;
+
+private template tsNameFor(T) {
+	// FIXME: SysTime, DateTime, etc?
+	// FIXME: Nullable, MultipleResponses
+	import arsd.jsvar;
+	import arsd.dom;
+	static if(is(T == var))
+		enum tsNameFor = "any";
+	else static if(is(T : Element) || is(T : Document))
+		enum tsNameFor = "string";
+	else static if(is(T == enum)) {
+		enum tsNameFor = __traits(identifier, T);
+		@(arsd.core.standalone) shared static this() @system {
+			string definition = "enum ";
+			definition ~= __traits(identifier, T);
+			definition ~= " {\n";
+			foreach(memberName; __traits(allMembers, T)) {
+				definition ~= "\t" ~ memberName ~ " = \"" ~ memberName ~ "\",\n";
+			}
+			definition ~= "}\n";
+			allTsDefinitions ~= definition;
+		}
+	} else static if(is(T : bool))
+		enum tsNameFor = "boolean";
+	else static if(is(T : double))
+		enum tsNameFor = "number";
+	else static if(is(T == string))
+		enum tsNameFor = "string";
+	else static if(is(T == struct)) {
+		enum tsNameFor = __traits(identifier, T);
+		@(arsd.core.standalone) shared static this() @system {
+			string definition = "interface ";
+			definition ~= __traits(identifier, T);
+			definition ~= " {\n";
+			foreach(memberName; __traits(allMembers, T)) {
+				static if(is(typeof(__traits(getMember, T, memberName).offsetof)))
+					definition ~= "\t" ~ memberName ~ " : " ~ tsNameFor!(typeof(__traits(getMember, T, memberName))) ~ ",\n";
+			}
+			definition ~= "}\n";
+			allTsDefinitions ~= definition;
+		}
+	} else static if(is(T == V[K], K, V))
+		enum tsNameFor = "object";
+	else static if(is(T == E[], E) || is(T == E[sz], E, size_t sz))
+		enum tsNameFor = tsNameFor!E ~ "[]";
+	else
+		enum tsNameFor = "any";
+}
+
+private class ApiMetadata : DispatcherMetadata {
+	bool isSubresource;
+	this(string urlPrefix, bool rejectFurther, bool isSubresource) {
+		this.isSubresource = isSubresource;
+		super(urlPrefix, rejectFurther);
+	}
+	abstract override immutable(ApiMetadata[]) subresources() const;
+	override string toBrowserScriptBinding(bool includeTypes = false, bool isSubresource = false, string baseUrl = "") const {
+		string ret;
+		ret ~= "/**\n";
+		ret ~= this.documentation;
+		ret ~= "*/\n";
+
+		ret ~= "class ";
+		ret ~= dName();
+		ret ~= " {\n";
+
+		if(isSubresource) {
+			ret ~= "\t_parent";
+			if(includeTypes)
+				ret ~= " : any";
+			ret ~= "\n";
+			ret ~= "\t_id";
+			if(includeTypes)
+				ret ~= " : string";
+			ret ~= "\n";
+			ret ~= "\tconstructor(id";
+			if(includeTypes)
+				ret ~= " : string";
+			ret ~= ", parent";
+			if(includeTypes)
+				ret ~= " : object";
+			ret ~= ") {\n";
+			ret ~= "\t\tthis._id = id;\n";
+			ret ~= "\t\tthis._parent = parent;\n";
+			ret ~= "\t}\n";
+		} else {
+			ret ~= "\tasync doRequest(method";
+			if(includeTypes)
+				ret ~= " : string";
+			ret ~= ", url";
+			if(includeTypes)
+				ret ~= " : string";
+			ret ~= ", headers";
+			if(includeTypes)
+				ret ~= " : HeadersInit";
+			ret ~= ", body";
+			if(includeTypes)
+				ret ~= " : object) : Promise<any>";
+			else
+				ret ~= ")";
+			ret ~= " {\n";
+			ret ~= "\t\t";
+			if(includeTypes)
+				ret ~= "(headers as any)";
+			else
+				ret ~= "headers";
+			ret ~= "[\"Content-Type\"] = \"application/json\";\n";
+			ret ~= "\t\tlet response = await fetch(url, { headers: headers, method: method, body: method == \"GET\" ? undefined : JSON.stringify(body) });\n";
+			ret ~= "\t\treturn await response.json();\n";
+			ret ~= "\t}\n";
+		}
+
+		foreach(endpoint; this.allEndpoints) {
+			ret ~= "\n\tasync " ~ endpoint.dName ~ "(";
+			foreach(idx, param; endpoint.clientParameters) {
+				if(idx)
+					ret ~= ", ";
+				ret ~= param.dName;
+				if(includeTypes) {
+					if(!param.required)
+						ret ~= "?";
+					ret ~= " : ";
+					ret ~= param.tsName;
+				}
+			}
+			ret ~= ")";
+			if(includeTypes) {
+				ret ~= " : Promise<";
+				ret ~= endpoint.returns.tsName;
+				ret ~= ">";
+			}
+			ret ~= " {\n";
+
+			if(isSubresource)
+				ret ~= "\t\treturn this._parent.doRequest(";
+			else
+				ret ~= "\t\treturn this.doRequest(";
+			import std.conv;
+			ret ~= "\"" ~ to!string(endpoint.requestMethod) ~ "\", ";
+			if(isSubresource)
+				ret ~= "\"" ~ baseUrl ~ this.urlPrefix ~ "/\" + this._id + \"/" ~ endpoint.urlName ~ "\", ";
+			else
+				ret ~= "\"" ~ baseUrl ~ this.urlPrefix ~ endpoint.urlName ~ "\", ";
+			string headerParams = "{";
+			string bodyParams = "{";
+			foreach(idx, param; endpoint.clientParameters) {
+				if(param.delivery == "header") {
+					if(headerParams.length > 1)
+						headerParams ~= ", ";
+					headerParams ~= "\"" ~ param.name ~ "\": " ~ param.dName;
+				} else {
+					if(bodyParams.length > 1)
+						bodyParams ~= ", ";
+					bodyParams ~= "\"" ~ param.name ~ "\": " ~ param.dName;
+				}
+			}
+			headerParams ~= "}";
+			bodyParams ~= "}";
+
+			ret ~= headerParams;
+			ret ~= ", ";
+			ret ~= bodyParams; // would be nice if this could take a FormData too
+
+			ret ~= ")";
+			if(includeTypes)
+				ret ~= " as Promise<" ~ endpoint.returns.tsName ~ ">";
+			ret ~= ";\n";
+
+			ret ~= "\t}\n";
+		}
+
+		// each subresource has a constructor here that returns a helper object of the appropriate type
+		foreach(subresource; this.subresources) {
+			ret ~= "\n";
+			ret ~= "\t" ~ subresource.urlPrefix ~ "(id";
+			if(includeTypes)
+				ret ~= " : string";
+			ret ~= ")";
+			if(includeTypes)
+				ret ~= " : " ~ subresource.dName;
+			ret ~= " {\n";
+			// of this is a subresource, pass our parent. if we are not, pass ourselves. the "parent" is always the top-level entry point
+			ret ~= "\t\treturn new " ~ subresource.dName ~ "(id, " ~ (isSubresource ? "this._parent" : "this") ~ ");\n";
+			ret ~= "\t}\n";
+
+		}
+		/+
+			writeln(endpoint.requestMethod, " ", starting, this.urlPrefix, endpoint.urlName, " (",endpoint.clientParameters,") => ", endpoint.returns);
+		foreach(subresource; this.subresources)
+			subresource.printInfo(starting ~ "/");
+		+/
+
+		ret ~= "\n}";
+
+		foreach(subresource; this.subresources) {
+			ret ~= "\n\n";
+			ret ~= subresource.toBrowserScriptBinding(includeTypes, true, baseUrl ~ this.urlPrefix);
+		}
+
+
+		return ret;
+	}
+
+	abstract string dName() const;
+
+}
+
+private class ApiMetadataFor(T) : ApiMetadata {
+	this(string urlPrefix, bool rejectFurther, bool isSubresource) {
+		super(urlPrefix, rejectFurther, isSubresource);
+	}
+
+	override string dName() const {
+		return __traits(identifier, T);
+	}
+
+	override immutable(ApiMethodMetadata[]) allEndpoints() const {
+		return callableMethods();
+	}
+
+	version(D_OpenD)
+	override string documentation() const {
+		return __traits(docComment, T);
+	}
+
+	private __gshared ApiMetadata[] subresources_;
+	override immutable(ApiMetadata[]) subresources() const {
+		return cast(immutable) subresources_;
+	}
+
+
+	private __gshared ApiMethodMetadata[] callableMethods_; // populated at startup by standalone shared static ctors
+
+	static immutable(ApiMethodMetadata[]) callableMethods() {
+		return cast(immutable) callableMethods_;
+	}
+}
+
+private DispatcherMetadata apiMetadataFactory(T)(string urlPrefix, bool rejectFurther, immutable(typeof(null)) dd) {
+	return new ApiMetadataFor!T(urlPrefix, rejectFurther, false);
+}
+
 
 private string urlify(string name) pure {
-	return beautify(name, '-', true);
+	return beautify(name, '-', true, false);
 }
 
-private string beautify(string name, char space = ' ', bool allLowerCase = false) pure {
+private string beautify(string name, char space = ' ', bool allLowerCase = false, bool changeUnderscores = true) pure {
 	if(name == "id")
 		return allLowerCase ? name : "ID";
 
@@ -8673,6 +9080,8 @@ private string beautify(string name, char space = ' ', bool allLowerCase = false
 			if(bufferIndex == buffer.length) return name; // out of space, just give up, not that important
 			shouldSpace = false;
 		}
+		if(changeUnderscores && ch == '_')
+			continue;
 		if(shouldCap) {
 			if(ch >= 'a' && ch <= 'z')
 				ch -= 32;
@@ -8785,6 +9194,29 @@ class ResourceNotFoundException : HttpCodeException {
 	override int httpCode() { return 404; }
 }
 
+/++
+	History:
+		Added October 9, 2026
++/
+class UnsupportedContentTypeException : HttpCodeException {
+	string got;
+	string wanted;
+	this(string got, string wanted, string file = __FILE__, size_t line = __LINE__, Throwable next = null) {
+		this.got = got;
+		this.wanted = wanted;
+
+		super("Unsupported content type: " ~ got ~ ", we need " ~ wanted, file, line, next);
+	}
+
+	override int httpCode() { return 415; }
+
+	override void applyToCgi(Cgi cgi) {
+		super.applyToCgi(cgi);
+		if(wanted.length)
+			cgi.header("Accept-Post: " ~ wanted);
+	}
+}
+
 private struct CheckHttpCode {
 	template opChildOfUDAOn(alias symbol) {
 		static if(is(typeof(symbol.__ctor) Params == __parameters))
@@ -8809,8 +9241,172 @@ private struct CheckHttpCode {
 +/
 struct ifCalledFromWeb(alias func) {}
 
+/++
+	Some specific arguments are passed by something other than the normal argument
+
+	History:
+		Added October 9, 2026
++/
+struct viaHeader {
+	this(string headerName) {
+		this.headerName = headerName.toLower;
+	}
+	string headerName;
+}
+
+/// ditto
+enum viaBody;
+
+private static bool setVariable(T)(string name, string paramName, T* what, string value) {
+	import arsd.jsvar;
+	import std.traits;
+
+	static if(is(T == var)) {
+		*what = var.fromJson(value);
+		return true;
+	} else static if(is(T == struct)) {
+		if(name == paramName) {
+			*what = T.init;
+			return true;
+		} else {
+			// could be a child. gonna allow either obj.field OR obj[field]
+
+			string afterName;
+
+			if(name[paramName.length] == '[') {
+				int count = 1;
+				auto idx = paramName.length + 1;
+				while(idx < name.length && count > 0) {
+					if(name[idx] == '[')
+						count++;
+					else if(name[idx] == ']') {
+						count--;
+						if(count == 0) break;
+					}
+					idx++;
+				}
+
+				if(idx == name.length)
+					return false; // malformed
+
+				auto insideBrackets = name[paramName.length + 1 .. idx];
+				afterName = name[idx + 1 .. $];
+
+				name = name[0 .. paramName.length];
+
+				paramName = insideBrackets;
+
+			} else if(name[paramName.length] == '.') {
+				paramName = name[paramName.length + 1 .. $];
+				name = paramName;
+				int p = 0;
+				foreach(ch; paramName) {
+					if(ch == '.' || ch == '[')
+						break;
+					p++;
+				}
+
+				afterName = paramName[p .. $];
+				paramName = paramName[0 .. p];
+			} else {
+				return false;
+			}
+
+			if(paramName.length)
+			// set the child member
+			switch(paramName) {
+				foreach(idx, memberName; __traits(allMembers, T))
+				static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
+					// data member!
+					case memberName:
+						return setVariable(name ~ afterName, paramName, &(__traits(getMember, *what, memberName)), value);
+				}
+				default:
+					// ok, not a member
+			}
+		}
+
+		return false;
+	} else static if(is(T == enum)) {
+		*what = to!T(value);
+		return true;
+	} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
+		*what = to!T(value);
+		return true;
+	} else static if(is(T == bool)) {
+		*what = value == "1" || value == "yes" || value == "t" || value == "true" || value == "on";
+		return true;
+	} else static if(is(T == K[], K)) {
+		K tmp;
+		if(name == paramName) {
+			// direct - set and append
+			if(setVariable(name, paramName, &tmp, value)) {
+				(*what) ~= tmp;
+				return true;
+			} else {
+				return false;
+			}
+		} else {
+			// child, append to last element
+			// FIXME: what about range violations???
+			auto ptr = &(*what)[(*what).length - 1];
+			return setVariable(name, paramName, ptr, value);
+
+		}
+	} else static if(is(T == V[K], K, V)) {
+		// assoc array, name[key] is valid
+		if(name == paramName) {
+			// no action necessary
+			return true;
+		} else if(name[paramName.length] == '[') {
+			int count = 1;
+			auto idx = paramName.length + 1;
+			while(idx < name.length && count > 0) {
+				if(name[idx] == '[')
+					count++;
+				else if(name[idx] == ']') {
+					count--;
+					if(count == 0) break;
+				}
+				idx++;
+			}
+			if(idx == name.length)
+				return false; // malformed
+
+			auto insideBrackets = name[paramName.length + 1 .. idx];
+			auto afterName = name[idx + 1 .. $];
+
+			auto k = to!K(insideBrackets);
+			V v;
+			if(auto ptr = k in *what)
+				v = *ptr;
+
+			name = name[0 .. paramName.length];
+			//writeln(name, afterName, " ", paramName);
+
+			auto ret = setVariable(name ~ afterName, paramName, &v, value);
+			if(ret) {
+				(*what)[k] = v;
+				return true;
+			}
+		}
+
+		return false;
+	} else {
+		static assert(0, "unsupported type for cgi call " ~ T.stringof);
+	}
+
+	//return false;
+}
+
+
 // it only looks at query params for GET requests, the rest must be in the body for a function argument.
-auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
+template callFromCgi(alias method, T) {
+	@(arsd.core.standalone) shared static this() @system {
+		ApiMetadataFor!(__traits(parent, method)).callableMethods_ ~= new ApiMethodMetadataFor!method;
+	}
+
+auto callFromCgi(T dg, Cgi cgi) {
 
 	// FIXME: any array of structs should also be settable or gettable from csv as well.
 
@@ -8823,206 +9419,12 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	alias idents = ParameterIdentifierTuple!method;
 	alias defaults = ParameterDefaults!method;
 
-	const(string)[] names;
-	const(string)[] values;
+	bool usesPostVariables = cgi.requestContentType == "application/x-www-form-urlencoded" || cgi.requestContentType == "multipart/form-data";
+	bool usesJsonBody = cgi.requestContentType == "application/json";
 
-	// first, check for missing arguments and initialize to defaults if necessary
-
-	static if(is(typeof(method) P == __parameters))
-	foreach(idx, param; P) {{
-		// see: mustNotBeSetFromWebParams
-		static if(is(param : Cgi)) {
-			static assert(!is(param == immutable));
-			cast() params[idx] = cgi;
-		} else static if(is(param == Session!D, D)) {
-			static assert(!is(param == immutable));
-			cast() params[idx] = cgi.getSessionObject!D();
-		} else {
-			bool populated;
-			foreach(uda; __traits(getAttributes, P[idx .. idx + 1])) {
-				static if(is(uda == ifCalledFromWeb!func, alias func)) {
-					static if(is(typeof(func(cgi))))
-						params[idx] = func(cgi);
-					else
-						params[idx] = func();
-
-					populated = true;
-				}
-			}
-
-			if(!populated) {
-				static if(__traits(compiles, { params[idx] = param.getAutomaticallyForCgi(cgi); } )) {
-					params[idx] = param.getAutomaticallyForCgi(cgi);
-					populated = true;
-				}
-			}
-
-			if(!populated) {
-				auto ident = idents[idx];
-				if(cgi.requestMethod == Cgi.RequestMethod.GET) {
-					if(ident !in cgi.get) {
-						static if(is(defaults[idx] == void)) {
-							static if(is(param == bool))
-								params[idx] = false;
-							else
-								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
-						} else
-							params[idx] = defaults[idx];
-					}
-				} else {
-					if(ident !in cgi.post) {
-						static if(is(defaults[idx] == void)) {
-							static if(is(param == bool))
-								params[idx] = false;
-							else
-								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
-						} else
-							params[idx] = defaults[idx];
-					}
-				}
-			}
-		}
-	}}
-
-	// second, parse the arguments in order to build up arrays, etc.
-
-	static bool setVariable(T)(string name, string paramName, T* what, string value) {
-		static if(is(T == var)) {
-			*what = var.fromJson(value);
-			return true;
-		} else static if(is(T == struct)) {
-			if(name == paramName) {
-				*what = T.init;
-				return true;
-			} else {
-				// could be a child. gonna allow either obj.field OR obj[field]
-
-				string afterName;
-
-				if(name[paramName.length] == '[') {
-					int count = 1;
-					auto idx = paramName.length + 1;
-					while(idx < name.length && count > 0) {
-						if(name[idx] == '[')
-							count++;
-						else if(name[idx] == ']') {
-							count--;
-							if(count == 0) break;
-						}
-						idx++;
-					}
-
-					if(idx == name.length)
-						return false; // malformed
-
-					auto insideBrackets = name[paramName.length + 1 .. idx];
-					afterName = name[idx + 1 .. $];
-
-					name = name[0 .. paramName.length];
-
-					paramName = insideBrackets;
-
-				} else if(name[paramName.length] == '.') {
-					paramName = name[paramName.length + 1 .. $];
-					name = paramName;
-					int p = 0;
-					foreach(ch; paramName) {
-						if(ch == '.' || ch == '[')
-							break;
-						p++;
-					}
-
-					afterName = paramName[p .. $];
-					paramName = paramName[0 .. p];
-				} else {
-					return false;
-				}
-
-				if(paramName.length)
-				// set the child member
-				switch(paramName) {
-					foreach(idx, memberName; __traits(allMembers, T))
-					static if(__traits(compiles, __traits(getMember, T, memberName).offsetof)) {
-						// data member!
-						case memberName:
-							return setVariable(name ~ afterName, paramName, &(__traits(getMember, *what, memberName)), value);
-					}
-					default:
-						// ok, not a member
-				}
-			}
-
-			return false;
-		} else static if(is(T == enum)) {
-			*what = to!T(value);
-			return true;
-		} else static if(isSomeString!T || isIntegral!T || isFloatingPoint!T) {
-			*what = to!T(value);
-			return true;
-		} else static if(is(T == bool)) {
-			*what = value == "1" || value == "yes" || value == "t" || value == "true" || value == "on";
-			return true;
-		} else static if(is(T == K[], K)) {
-			K tmp;
-			if(name == paramName) {
-				// direct - set and append
-				if(setVariable(name, paramName, &tmp, value)) {
-					(*what) ~= tmp;
-					return true;
-				} else {
-					return false;
-				}
-			} else {
-				// child, append to last element
-				// FIXME: what about range violations???
-				auto ptr = &(*what)[(*what).length - 1];
-				return setVariable(name, paramName, ptr, value);
-
-			}
-		} else static if(is(T == V[K], K, V)) {
-			// assoc array, name[key] is valid
-			if(name == paramName) {
-				// no action necessary
-				return true;
-			} else if(name[paramName.length] == '[') {
-				int count = 1;
-				auto idx = paramName.length + 1;
-				while(idx < name.length && count > 0) {
-					if(name[idx] == '[')
-						count++;
-					else if(name[idx] == ']') {
-						count--;
-						if(count == 0) break;
-					}
-					idx++;
-				}
-				if(idx == name.length)
-					return false; // malformed
-
-				auto insideBrackets = name[paramName.length + 1 .. idx];
-				auto afterName = name[idx + 1 .. $];
-
-				auto k = to!K(insideBrackets);
-				V v;
-				if(auto ptr = k in *what)
-					v = *ptr;
-
-				name = name[0 .. paramName.length];
-				//writeln(name, afterName, " ", paramName);
-
-				auto ret = setVariable(name ~ afterName, paramName, &v, value);
-				if(ret) {
-					(*what)[k] = v;
-					return true;
-				}
-			}
-
-			return false;
-		} else {
-			static assert(0, "unsupported type for cgi call " ~ T.stringof);
-		}
-
-		//return false;
+	var jsonBody;
+	if(usesJsonBody) {
+		jsonBody = var.fromJson(cgi.postBody);
 	}
 
 	void setArgument(string name, string value) {
@@ -9057,16 +9459,141 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 		}
 	}
 
-	if(cgi.requestMethod == Cgi.RequestMethod.GET) {
-		names = cgi.allGetNamesInOrder;
-		values = cgi.allGetValuesInOrder;
-	} else {
-		names = cgi.allPostNamesInOrder;
-		values = cgi.allPostValuesInOrder;
-	}
+	// first, check for missing arguments and initialize to defaults if necessary
 
-	foreach(idx, name; names) {
-		setArgument(name, values[idx]);
+	static if(is(typeof(method) P == __parameters))
+	foreach(idx, param; P) {{
+		// see: mustNotBeSetFromWebParams
+		static if(is(param : Cgi)) {
+			static assert(!is(param == immutable));
+			cast() params[idx] = cgi;
+		} else static if(is(param == Session!D, D)) {
+			static assert(!is(param == immutable));
+			cast() params[idx] = cgi.getSessionObject!D();
+		} else {
+			bool populated;
+			foreach(uda; __traits(getAttributes, P[idx .. idx + 1])) {
+				static if(is(uda == ifCalledFromWeb!func, alias func)) {
+					static if(is(typeof(func(cgi))))
+						params[idx] = func(cgi);
+					else
+						params[idx] = func();
+
+					populated = true;
+				} else static if(is(typeof(uda) == viaHeader)) {
+					if(auto ptr = uda.headerName in cgi.requestHeaders) {
+						params[idx] = to!(param)(*ptr);
+					} else {
+						static if(is(defaults[idx] == void)) {
+							throw new MissingArgumentException(__traits(identifier, method), idents[idx], param.stringof);
+						} else {
+							params[idx] = defaults[idx];
+						}
+					}
+					populated = true;
+				} else static if(is(uda == viaBody)) {
+					params[idx] == cgi.postBody;
+					populated = true;
+
+					if(usesPostVariables) {
+						static if(is(param == string)) {
+							params[idx] = cgi.postBody;
+						} else static if(is(param == var)) {
+							throw new UnsupportedContentTypeException(cgi.requestContentType, "application/json");
+						} else static if(is(param == struct)) {
+							void setArgumentStruct(string name, string value) {
+								int p;
+								foreach(ch; name) {
+									if(ch == '.' || ch == '[')
+										break;
+									p++;
+								}
+
+								auto paramName = name[0 .. p];
+
+								sw: switch(paramName) {
+									foreach(idxName, memberName; __traits(allMembers, param)) {
+										static if(is(typeof(&__traits(getMember, params[idx], memberName))))
+										case memberName:
+											setVariable(name, paramName, &__traits(getMember, params[idx], memberName), value);
+										break sw;
+									}
+									default:
+										// ignore; not relevant argument
+								}
+							}
+
+							const(string)[] names = cgi.allGetNamesInOrder;
+							const(string)[] values = cgi.allGetValuesInOrder;
+
+							foreach(idx, name; names) {
+								setArgumentStruct(name, values[idx]);
+							}
+						} else static assert(0, "unsupported type for viaBody " ~ param.stringof);
+					} else if(usesJsonBody) {
+						// FIXME: do we want to use a strict mode here?
+						params[idx] = jsonBody.get!param;
+					}
+				}
+			}
+
+			if(!populated) {
+				static if(__traits(compiles, { params[idx] = param.getAutomaticallyForCgi(cgi); } )) {
+					params[idx] = param.getAutomaticallyForCgi(cgi);
+					populated = true;
+				}
+			}
+
+			if(!populated) {
+				auto ident = idents[idx];
+				if(cgi.requestMethod == Cgi.RequestMethod.GET) {
+					if(ident !in cgi.get) {
+						static if(is(defaults[idx] == void)) {
+							static if(is(param == bool))
+								params[idx] = false;
+							else
+								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						} else
+							params[idx] = defaults[idx];
+					}
+				} else if(usesPostVariables) {
+					if(ident !in cgi.post) {
+						static if(is(defaults[idx] == void)) {
+							static if(is(param == bool))
+								params[idx] = false;
+							else
+								throw new MissingArgumentException(__traits(identifier, method), ident, param.stringof);
+						} else
+							params[idx] = defaults[idx];
+					}
+				}
+			}
+		}
+	}}
+
+	// second, parse the arguments in order to build up arrays, etc.
+
+	if(cgi.requestMethod == Cgi.RequestMethod.GET) {
+		const(string)[] names = cgi.allGetNamesInOrder;
+		const(string)[] values = cgi.allGetValuesInOrder;
+
+		foreach(idx, name; names) {
+			setArgument(name, values[idx]);
+		}
+	} else if(usesPostVariables) {
+		const(string)[] names = cgi.allPostNamesInOrder;
+		const(string)[] values = cgi.allPostValuesInOrder;
+
+		foreach(idx, name; names) {
+			setArgument(name, values[idx]);
+		}
+	} else if(usesJsonBody) {
+		static if(is(typeof(method) P == __parameters))
+		foreach(idx, param; P) {
+			static if(!mustNotBeSetFromWebParams!(P[idx], __traits(getAttributes, P[idx .. idx + 1]))) {
+				params[idx] = jsonBody[idents[idx]].get!param;
+			}
+		}
 	}
 
 	static if(is(ReturnType!method == void)) {
@@ -9081,6 +9608,7 @@ auto callFromCgi(alias method, T)(T dg, Cgi cgi) {
 	// also may need to wrap in envelope format: none, html, or json.
 	return ret;
 }
+}
 
 private bool mustNotBeSetFromWebParams(T, attrs...)() {
 	static if(is(T : const(Cgi))) {
@@ -9092,6 +9620,10 @@ private bool mustNotBeSetFromWebParams(T, attrs...)() {
 	} else {
 		foreach(uda; attrs)
 			static if(is(uda == ifCalledFromWeb!func, alias func))
+				return true;
+			else static if(is(typeof(uda) == viaHeader))
+				return true;
+			else static if(is(uda == viaBody))
 				return true;
 		return false;
 	}
@@ -9273,20 +9805,349 @@ class WebPresenter(CRTP) {
 	/// If you override a plain method, use `override`. If a template, use `@Override`.
 	enum Override;
 
-	string script() {
-		return `
-		`;
+	/++
+		Provides a hook to override the format for a response. Should be "json" or "html" usually.
+
+		History:
+			Added October 3, 2026
+	+/
+	string desiredFormat(Cgi cgi, string defaultFormat) {
+		if(defaultFormat.length == 0) {
+			// the accept header gives the requested formats in an order of prference
+			if(auto ptr = "accept" in cgi.requestHeaders) {
+				string accept = *ptr;
+				auto htmlIdx = accept.indexOf("text/html");
+				if(htmlIdx == -1)
+					htmlIdx = accept.length;
+				auto jsonIdx = accept.indexOf("application/json");
+				if(jsonIdx == -1)
+					jsonIdx = accept.length;
+				if(htmlIdx < jsonIdx)
+					defaultFormat = "html";
+				else if(jsonIdx < htmlIdx || accept == "*/*")
+					defaultFormat = "json";
+			}
+
+			// if not, we'll guess based on some assumptions
+			if(defaultFormat.length == 0) {
+				// json is easier to read on terminal
+				if(cgi.isCalledWithCommandLineArguments)
+					defaultFormat = "json";
+				else if(cgi.userAgent.startsWith("curl/"))
+					defaultFormat = "json";
+				// and assume if we got sent json, they'd prefer json back
+				else if(cgi.requestContentType == "application/json")
+					defaultFormat = "json";
+				// otherwise figure we in the browser
+				else
+					defaultFormat = "html";
+			}
+		}
+
+		// then let the user override it on the command line
+		return cgi.request("__format", defaultFormat);
 	}
 
-	string style() {
-		return `
+	private CustomElementExpander ceeCache;
+	final CustomElementExpander getCustomElementExpander() {
+		if(ceeCache is null) {
+			ceeCache = customElementExpanderFactory();
+			this.populateCustomElements(ceeCache);
+		}
+		return ceeCache;
+	}
+
+	/++
+		HTML output can include custom elements to be expanded on the server. Learn more at [arsd.dom.CustomElementExpander].
+
+		You should mostly override `populateCustomElements` rather than the factory, and call `super.populateCustomElements(cee)` to include the default custom elements, which cgi.d's default output may depend on.
+
+		History:
+			Added October 3, 2026
+	+/
+	CustomElementExpander customElementExpanderFactory() {
+		return new CustomElementExpander();
+	}
+
+	/// ditto
+	void populateCustomElements(CustomElementExpander cee) {
+
+	cee.registerCustomElement(new RuntimeCustomElement(Html(`
+	<Arsd-Custom-Element tagName="Arsd-Checkbox">
+		<template>
+			<div>
+				<input type="checkbox" name="{name}" value="{value}" checked="{checked}" id="{thisId}" />
+				<label for="{thisId}"><Arsd-Template-Children /></label>
+			</div>
+		</template>
+		<style>
+			& label {
+				user-select: none;
+			}
+		</style>
+	</Arsd-Custom-Element>
+	`)));
+
+	cee.registerCustomElement(new RuntimeCustomElement(Html(`
+	<Arsd-Custom-Element tagName="Arsd-Radioset">
+		<template>
+			<Arsd-Template-Transform selector="option">
+			<div>
+				<input type="radio" name="{name}" value="{value}" id="{thisId}" checked="{selected}" />
+				<label for="{thisId}"><Arsd-Template-Children /></label>
+			</div>
+			</Arsd-Template-Transform>
+		</template>
+		<style>
+			& label {
+				user-select: none;
+			}
+		</style>
+	</Arsd-Custom-Element>
+	`)));
+
+
+	cee.registerCustomElement(new RuntimeCustomElement(Html(`
+	<Arsd-Custom-Element tagName="Arsd-Checkbox-Multiselect">
+		<template>
+			<ul>
+			<Arsd-Template-Transform selector="option">
+				<li><Arsd-Checkbox name="{name}" value="{value}" checked="{selected}"><Arsd-Template-Children /></Arsd-Checkbox></li>
+			</Arsd-Template-Transform>
+			</ul>
+		</template>
+		<style>
+			& > ul {
+				margin: 0px;
+				padding: 0px;
+				list-style-type: none;
+				& > li {
+					padding-left: 0.25em;
+					border-left: solid transparent 2px;
+					&:has(:checked) {
+						border-left-color: var(--selected-color, blue);
+					}
+				}
+			}
+		</style>
+		<script>
+		connectedCallback() {
+			super.connectedCallback();
+
+			var selectedCount = 0;
+			var showingCount = 0;
+			var totalCount = this.querySelectorAll("li").length;
+
+			function updateStatusDisplay() {
+				if(!this.statusDisplay)
+					return;
+
+				if(selectedCount === null)
+					selectedCount = this.querySelectorAll(":checked").length;
+
+				this.statusDisplay.textContent = selectedCount + " selected; " + showingCount + "/" + totalCount + " showing";
+			}
+
+			function doSearch(ele) {
+				var finding = ele.value;
+				var search = new RegExp(finding, "i");
+				var list = ele.nextElementSibling.nextElementSibling;
+				var all = list.querySelectorAll("li");
+
+				selectedCount = 0;
+				showingCount = 0;
+				totalCount = all.length;
+				for(var i = 0; i < all.length; i++) {
+					var item = all[i];
+					if(finding == "") {
+						showingCount += 1;
+						item.style.display = "";
+					} else {
+						if(item.textContent.match(search)) {
+							item.style.display = "";
+							showingCount += 1;
+						} else {
+							item.style.display = "none";
+						}
+					}
+
+					if(item.querySelector(":checked"))
+						selectedCount += 1;
+				}
+
+				updateStatusDisplay.call(this);
+
+				// FIXME: update the status on checkbox change too
+				// FIXME: make it so you can click the selected things to show just them
+			}
+
+			function refocusSearch(event) {
+				var e = event.target;
+				var div = e.closest("Arsd-Checkbox-Multiselect");
+				if(!div)
+					return;
+				var search = div.querySelector("input[type=search]");
+				if(search) {
+					search.focus();
+					search.setSelectionRange(0, -1);
+				}
+			}
+
+
+			// 5 selected, 40/44 showing
+			this.search = document.createElement("input");
+			this.search.setAttribute("type", "search");
+			this.search.setAttribute("placeholder", "search...");
+			this.search.addEventListener("input", (event) => doSearch.call(this, event.target));
+			this.insertBefore(this.search, this.firstChild);
+
+			this.statusDisplay = document.createElement("div");
+			this.search.after(this.statusDisplay);
+			doSearch.call(this, this.search);
+
+			this.addEventListener("click", (event) => refocusSearch(event));
+			this.addEventListener("change", () => {
+				selectedCount = null;
+				updateStatusDisplay.call(this);
+			});
+		}
+		disconnectedCallback() {
+			// FIXME remove refocusSearch listener
+			this.removeChild(this.search);
+			this.removeChild(this.statusDisplay);
+			this.search = null;
+			this.statusDisplay = null;
+		}
+		</script>
+	</Arsd-Custom-Element>
+	`)));
+
+
+	}
+
+	void serveScriptJs(Cgi cgi) {
+		serveChunkedSource(cgi, scriptWithMap(), "text/javascript");
+	}
+	void serveStyleCss(Cgi cgi) {
+		serveChunkedSource(cgi, styleWithMap(), "text/css");
+	}
+	void serveChunkedSource(Cgi cgi, MappedSourceCode[] chunks, string contentType) {
+		cgi.setResponseContentType(contentType);
+		cgi.gzipResponse = true;
+
+		string str;
+		foreach(chunk; chunks) {
+			str ~= chunk.content;
+			str ~= "\n";
+		}
+
+		cgi.header("Sourcemap: " ~ cgi.pathInfo ~ ".map");
+
+		cgi.write(str, true);
+	}
+
+	void serveScriptJsMap(Cgi cgi) {
+		this.serveSourceMap(cgi, this.scriptWithMap());
+	}
+	void serveStyleCssMap(Cgi cgi) {
+		this.serveSourceMap(cgi, this.styleWithMap());
+	}
+	void serveSourceMap(Cgi cgi, MappedSourceCode[] chunks) {
+		import arsd.jsvar;
+
+		string mappingsString;
+		string[] sources;
+
+		int previousSrcIndex = 0;
+		int previousOutputLine = 0;
+		foreach(srcIdx, chunk; chunks) {
+			int outputLine = 0;
+			sources ~= chunk.file;
+
+			void outputLineMapping() {
+				if(mappingsString.length)
+					mappingsString ~= ";";
+
+				// FIXME: if it came from a function the source line may not actually be right but meh
+
+				mappingsString ~= base64VlqEncode(0); // column of line of generated code
+				auto currentSourceIndex = srcIdx - previousSrcIndex;
+				previousSrcIndex = cast(int) srcIdx;
+				mappingsString ~= base64VlqEncode(cast(int) currentSourceIndex); // index of source file name, relative to last ouput
+				auto currentLineNumber = (cast(int) chunk.line + outputLine);
+				auto currentLineNumberRelative = currentLineNumber - previousOutputLine;
+				previousOutputLine = currentLineNumber;
+				mappingsString ~= base64VlqEncode(currentLineNumberRelative); // line in original source, relative to last output if not first, but since we initialize things to zero and subtracting zero is identity, this just works
+				mappingsString ~= base64VlqEncode(0); // column of original source
+
+				outputLine++;
+			}
+
+			foreach(ch; chunk.content) {
+				if(ch == '\n')
+					outputLineMapping();
+			}
+
+			outputLineMapping(); // I always put a \n at the end of a chunk too, beyond what is in the content
+		}
+
+		var map = var.emptyObject;
+		map["version"] = 3;
+		map.sources = sources;
+		map.mappings = mappingsString;
+		map.sourceRoot = "http://localhost:0"; // setting this so it doesn't try to download the files from the server
+		// most everything is optional so ima try to not list too much
+
+		cgi.setResponseContentType("application/json");
+		cgi.gzipResponse = true;
+		cgi.write(map.toJson(), true);
+	}
+
+
+	MappedSourceCode[] scriptWithMap() {
+		// source maps use zero-based line numbers so the thing here has to -1 from dmd
+		MappedSourceCode[] ret;
+
+		ret ~= MappedSourceCode(
+			CustomElementExpander.jsRewriteCode,
+			__traits(getLocation, CustomElementExpander.jsRewriteCode)[0],
+			__traits(getLocation, CustomElementExpander.jsRewriteCode)[1] - 1,
+		);
+
+		foreach(ce; getCustomElementExpander()) {
+			ret ~= ce.scriptWrapped();
+		}
+
+		return ret;
+	}
+
+	MappedSourceCode[] styleWithMap() {
+		MappedSourceCode[] ret = [
+			MappedSourceCode(`
 			:root {
 				--mild-border: #ccc;
 				--middle-border: #999;
 				--accent-color: #f2f2f2;
 				--sidebar-color: #fefefe;
 			}
-		` ~ genericFormStyling() ~ genericSiteStyling();
+			`),
+			MappedSourceCode(genericFormStyling()),
+			MappedSourceCode(genericSiteStyling()),
+		];
+
+		foreach(ce; getCustomElementExpander()) {
+			ret ~= ce.styleWrapped();
+		}
+
+		return ret;
+	}
+
+	deprecated("Override scriptWithMap instead and return minimally `super.scriptWithMap() ~ MappedSourceCode(your_script_string)`") string script() {
+		return null;
+	}
+
+	deprecated("Override styleWithMap instead and return minimally `super.styleWithMap() ~ MappedSourceCode(your_style_string)`") string style() {
+		return null;
 	}
 
 	string genericFormStyling() {
@@ -9479,9 +10340,16 @@ html", true, true);
 				cgi.write(envelope.toJson(), true);
 			break;
 			case "csv":
-				static if(is(T == E[], E) && is(E == struct)) {
-					presentCsv(cgi, ret);
-					break;
+				static if(is(T == E[], E)) {
+					// FIXME: if it is an Element we can querySelector("table") and present that...
+					static if(is(E == struct)) {
+						presentCsv(cgi, ret);
+						break;
+					} else static if(is(E == string[])) {
+						presentCsvHelper(cgi, ret);
+						break;
+					}
+					goto default;
 				} else {
 					goto default;
 				}
@@ -9543,6 +10411,7 @@ html", true, true);
 	void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, typeof(null) meta) {
 		auto container = this.htmlContainer();
 		container.appendChild(formatReturnValueAsHtml(ret));
+		getCustomElementExpander().apply(container.parentDocument);
 		cgi.write(container.parentDocument.toString(), true);
 	}
 
@@ -9554,17 +10423,25 @@ html", true, true);
 	void presentExceptionalReturn(Meta)(Cgi cgi, Throwable t, Meta meta, string format) {
 		switch(format) {
 			case "html":
-				presentExceptionAsHtml(cgi, t, meta);
+				(cast(CRTP) this).presentExceptionAsHtml(cgi, t, meta);
 			break;
 			case "json":
-				presentExceptionAsJsonImpl(cgi, t);
+				(cast(CRTP) this).presentExceptionAsJson(cgi, t, meta);
 			break;
 			default:
 		}
 	}
 
+	void presentExceptionAsJson(Meta)(Cgi cgi, Throwable t, Meta meta) {
+		presentExceptionAsJsonImpl(cgi, t);
+	}
+
 	private void presentExceptionAsJsonImpl()(Cgi cgi, Throwable t) {
-		cgi.setResponseStatus("500 Internal Server Error");
+		if(auto e = cast(HttpCodeException) t) {
+			e.applyToCgi(cgi);
+		} else {
+			cgi.setResponseStatus("500 Internal Server Error");
+		}
 		cgi.setResponseContentType("application/json");
 		import arsd.jsvar;
 		var v = var.emptyObject;
@@ -9616,6 +10493,7 @@ html", true, true);
 			container.addChild("p", e.msg);
 
 			e.applyToCgi(cgi);
+			getCustomElementExpander().apply(container.parentDocument);
 
 			cgi.write(container.parentDocument.toString(), true);
 		} else if(auto mae = cast(MissingArgumentException) t) {
@@ -9625,6 +10503,7 @@ html", true, true);
 			if(cgi.requestMethod == Cgi.RequestMethod.POST)
 				container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
 			container.appendChild(automaticForm);
+			getCustomElementExpander().apply(container.parentDocument);
 
 			cgi.write(container.parentDocument.toString(), true);
 		} else {
@@ -9652,6 +10531,7 @@ html", true, true);
 
 			if(!cgi.outputtedResponseData)
 				cgi.setResponseStatus("500 Internal Server Error");
+			getCustomElementExpander().apply(container.parentDocument);
 			cgi.write(container.parentDocument.toString(), true);
 		}
 	}
@@ -9823,7 +10703,6 @@ html", true, true);
 
 	/// creates a form for gathering the function's arguments
 	Form createAutomaticFormForFunction(alias method, T)(T dg) {
-
 		auto form = cast(Form) Element.make("form");
 
 		form.method = "POST"; // FIXME
@@ -9904,6 +10783,7 @@ html", true, true);
 	///
 	Element formatReturnValueAsHtml(T)(T t) {
 		import std.traits;
+		import arsd.jsvar;
 
 		static if(is(T == typeof(null))) {
 			return Element.make("span");
@@ -9921,6 +10801,8 @@ html", true, true);
 			if(t.nextPageUrl.length)
 				e.appendChild(Element.make("a", "Next Page", t.nextPageUrl));
 			return e;
+		} else static if(is(T == var)) {
+			return Element.make("pre", t.toJson());
 		} else static if(isIntegral!T || isSomeString!T || isFloatingPoint!T) {
 			return Element.make("span", to!string(t), "automatic-data-display");
 		} else static if(is(T == V[K], K, V)) {
@@ -10215,7 +11097,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 								}
 							}
 						} else {
-
+							// FIXME: if something is viaHeader i can load it here for constructors as well
 							static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
 								params[pidx] = param.getAutomaticallyForCgi(cgi);
 							} else static if(is(param == string)) {
@@ -10230,27 +11112,19 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			} else {
 				auto obj = new T();
 			}
+			if(cgi.closed)
+				return true;
 
 			return internalHandlerWithObject(obj, remainingUrl, cgi, presenter);
 		} catch(Throwable t) {
-			switch(cgi.request("format", cgi.isCalledWithCommandLineArguments ? "json" : "html")) {
-				case "html":
-					static void dummy() {}
-					presenter.presentExceptionAsHtml(cgi, t, null);
-				return true;
-				case "json":
-					var envelope = var.emptyObject;
-					envelope.success = false;
-					envelope.result = null;
-					envelope.error = t.toString();
-					cgi.setResponseContentType("application/json");
-					cgi.write(envelope.toJson(), true);
-				return true;
-				default:
-					throw t;
-				// return true;
+			if(cgi.closed)
+				throw t;
+			static if(is(typeof(T.__ctor))) {
+				presenter.presentExceptionalReturn(cgi, t, presenter.methodMeta!(__traits(getMember, T, "__ctor")), presenter.desiredFormat(cgi, null));
+			} else {
+				presenter.presentExceptionalReturn(cgi, t, null, presenter.desiredFormat(cgi, null));
 			}
-			// return true;
+			return true;
 		}
 
 		assert(0);
@@ -10304,6 +11178,9 @@ private auto serveApiInternal(T)(string urlPrefix) {
 					// subresource_ctor
 					// also see mustNotBeSetFromWebParams
 
+					EnsureSubresourceRegistration!(T, urlify(methodName), R)();
+
+
 					P params;
 
 					string ident;
@@ -10332,6 +11209,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 								static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
 									params[pidx] = param.getAutomaticallyForCgi(cgi);
 								} else static if(is(param == string)) {
+									// FIXME: viaHeader here too
 									ident = nextPieceFromSlash(remainingUrl);
 									if(ident is null) {
 										// trailing slash mandated on subresources
@@ -10444,7 +11322,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 					if(callFunction)
 				+/
 
-					auto format = cgi.request("format", cgi.isCalledWithCommandLineArguments ? "json" : defaultFormat!overload());
+					auto format = presenter.desiredFormat(cgi, defaultFormat!overload());
 					auto wantsFormFormat = format.startsWith("form-");
 
 					if(wantsFormFormat || (automaticForm && cgi.requestMethod == Cgi.RequestMethod.GET)) {
@@ -10454,6 +11332,7 @@ private auto serveApiInternal(T)(string urlPrefix) {
 						return true;
 					}
 
+					if(!cgi.closed)
 					try {
 						// a void return (or typeof(null) lol) means you, the user, is doing it yourself. Gives full control.
 						auto ret = callFromCgi!(__traits(getOverloads, obj, methodName)[idx])(&(__traits(getOverloads, obj, methodName)[idx]), cgi);
@@ -10472,14 +11351,16 @@ private auto serveApiInternal(T)(string urlPrefix) {
 			}
 			}
 			case "GET script.js":
-				cgi.setResponseContentType("text/javascript");
-				cgi.gzipResponse = true;
-				cgi.write(presenter.script(), true);
+				presenter.serveScriptJs(cgi);
+				return true;
+			case "GET script.js.map":
+				presenter.serveScriptJsMap(cgi);
 				return true;
 			case "GET style.css":
-				cgi.setResponseContentType("text/css");
-				cgi.gzipResponse = true;
-				cgi.write(presenter.style(), true);
+				presenter.serveStyleCss(cgi);
+				return true;
+			case "GET style.css.map":
+				presenter.serveStyleCssMap(cgi);
 				return true;
 			default:
 				return false;
@@ -10487,7 +11368,37 @@ private auto serveApiInternal(T)(string urlPrefix) {
 
 		assert(0);
 	}
-	return DispatcherDefinition!internalHandler(urlPrefix, false);
+	return DispatcherDefinition!(internalHandler, typeof(null), apiMetadataFactory!T)(urlPrefix, false, null);
+}
+
+string base64VlqEncode(int i) {
+	uint toEncode;
+	bool isNegative;
+	if(i < 0) {
+		toEncode = -i;
+		isNegative = true;
+	} else {
+		toEncode = i;
+	}
+
+	toEncode <<= 1;
+	if(isNegative)
+		toEncode |= 1;
+
+	char[16] buffer = 0;
+	int bufferPos = 0;
+
+	do {
+		auto n = toEncode & 0b11111;
+		toEncode >>= 5;
+
+		if(toEncode)
+			n |= 32; // continuation bit
+
+		buffer[bufferPos++] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[n];
+	} while(toEncode);
+
+	return buffer[0 .. bufferPos].idup;
 }
 
 string defaultFormat(alias method)() {
@@ -10498,7 +11409,7 @@ string defaultFormat(alias method)() {
 				return attr.value;
 		}
 	}
-	return "html";
+	return null;
 }
 
 struct Paginated(T) {
@@ -10881,7 +11792,7 @@ auto serveRestObject(T)(string urlPrefix) {
 
 		return restObjectServeHandler!T(cgi, presenter, url);
 	}
-	return DispatcherDefinition!internalHandler(urlPrefix, false);
+	return DispatcherDefinition!internalHandler(urlPrefix, false, null);
 }
 
 /+
@@ -11374,7 +12285,7 @@ auto dispatchTo(alias handler)(string urlPrefix) {
 		return handler(DispatcherData!Presenter(cgi, presenter, urlPrefix.length));
 	}
 
-	return DispatcherDefinition!(internalHandler)(urlPrefix, false);
+	return DispatcherDefinition!(internalHandler)(urlPrefix, false, null);
 }
 
 /++
@@ -11531,7 +12442,7 @@ auto dispatchSubsection(alias PreRequestFilter, NewPresenter, definitions...)(st
 		}
 	}
 
-	return DispatcherDefinition!(internalHandler)(urlPrefix, false);
+	return DispatcherDefinition!(internalHandler)(urlPrefix, false, null);
 }
 
 /++
@@ -11556,6 +12467,12 @@ auto dispatchSubsection(alias PreRequestFilter, NewPresenter, definitions...)(st
 	[dispatchTo] will send the request to another function for handling.
 +/
 template dispatcher(definitions...) {
+	static foreach(definition; definitions)
+		@(arsd.core.standalone) shared static this() @system {
+			DispatcherMetadata.allMeta_ ~= definition.metadataFactory(definition.urlPrefix, definition.rejectFurther, definition.details);
+		}
+
+
 	bool dispatcher(Presenter)(Cgi cgi, Presenter presenterArg = null) {
 		static if(is(Presenter == typeof(null))) {
 			static class GenericWebPresenter : WebPresenter!(GenericWebPresenter) {}
