@@ -2973,6 +2973,12 @@ public auto toDelegate(T)(T t) {
 	---
 
 	The benefit of this over constructing the struct directly is that the arguments can be reordered or missing. Its value is diminished with named arguments in the language.
+
+	See_Also:
+		Steven Schveighoffer's "blueprint" concept from dconf online 2022: https://dconf.org/2022/online/#steves
+
+	History:
+		Added March 22, 2023
 +/
 template populateFromUdas(Struct, UDAs...) {
 	enum Struct populateFromUdas = () {
@@ -3903,12 +3909,26 @@ interface ICoreEventLoop {
 		}
 	}
 
+	/++
+		Runs the given function on the next run through the event loop. The event loop will be woken up asap if currently asleep.
+
+		History:
+			Added October 2, 2026
+	+/
+	void onNextTick(void delegate() dg);
+
+	void wake();
+
 	package static int function() getTimeout;
 	private __gshared bool exitApplicationRequested;
 
 	final static void exitApplication() {
 		exitApplicationRequested = true;
-		// FIXME: wake up all the threads
+		CoreWorkerThread.cancelAll();
+		if(!cast(CoreWorkerThread) Thread.getThis()) {
+			auto el = getThisThreadEventLoop();
+			el.wake();
+		}
 	}
 
 	/++
@@ -4114,7 +4134,7 @@ interface ICoreEventLoop {
 ICoreEventLoop getThisThreadEventLoop(EventLoopType type = EventLoopType.AdHoc) {
 	static ICoreEventLoop loop;
 	if(loop is null)
-		loop = new CoreEventLoopImplementation();
+		loop = new CoreEventLoopImplementation(type);
 	return loop;
 }
 
@@ -7764,15 +7784,19 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 			}
 
 			void markCompleted(long ret, int errno) {
-				// maybe i should queue an apc to actually do it, to ensure the event loop has cycled... FIXME
 				if(ret == -1)
 					response = typeof(response)(SystemErrorCode(errno), null);
 				else
 					response = typeof(response)(SystemErrorCode(0), llo.buffer[0 .. cast(size_t) ret]);
 				state_ = State.complete;
 
+				// maybe i should queue an user function to actually do it, to ensure the event loop has cycled...
 				if(oncomplete)
-					oncomplete(this);
+					getThisThreadEventLoop().onNextTick(&queueable);
+			}
+
+			void queueable() {
+				oncomplete(this);
 			}
 		}
 	}
@@ -7877,10 +7901,13 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 
 		This must only be called when the operation has already completed.
 	+/
-	void repeat() {
+	void repeat(ubyte[] buffer, long offset = 0) {
 		if(state_ != State.complete)
 			throw new Exception("wrong use, cannot repeat if not complete");
 		state_ = State.unused;
+		llo.buffer = buffer;
+		static if(__traits(hasMember, llo, "offset"))
+			llo.offset = offset;
 		start();
 	}
 
@@ -8065,6 +8092,10 @@ version(HasThread) class SchedulableTask : Fiber {
 		// tbh we should prolly just queue it every time
 	}
 
+	final void callWithRethrow() {
+		call();
+	}
+
 	private void taskRunner() {
 		try {
 			dg();
@@ -8145,12 +8176,7 @@ version(HasThread) struct SchedulableTaskController {
 		assert(fiber !is null);
 
 		auto cb = new CallbackHelper(() { fiber.call(); });
-
-		// FIXME: if the fd is already registered in this thread it can throw...
-		version(Windows)
-			auto rearmToken = getThisThreadEventLoop().addCallbackOnFdReadableOneShot(handle, cb);
-		else
-			auto rearmToken = getThisThreadEventLoop().addCallbackOnFdReadableOneShot(handle, cb);
+		auto rearmToken = getThisThreadEventLoop().addCallbackOnFdReadableOneShot(handle, cb);
 
 		// FIXME: this is only valid if the fiber is only ever going to run in this thread!
 		fiber.yield();
@@ -8164,7 +8190,21 @@ version(HasThread) struct SchedulableTaskController {
 
 	version(Windows)
 	void yieldUntilSignaled(NativeFileHandle handle) {
-		// add it to the WaitForMultipleObjects thing w/ a cb
+		assert(fiber !is null);
+
+		auto cb = new CallbackHelper(() { fiber.call(); });
+
+		auto rearmToken = getThisThreadEventLoop().addCallbackOnHandleReady(handle, cb);
+
+		// FIXME: this is only valid if the fiber is only ever going to run in this thread!
+		fiber.yield();
+
+		rearmToken.unregister();
+
+		// what if there are other messages, like a ctrl+c?
+		if(fiber.cancelled)
+			throw new TaskCancelledException();
+
 	}
 }
 
@@ -8223,6 +8263,8 @@ version(HasThread) private class CoreWorkerThread : Thread {
 
 	void cancel() {
 		cancelled = true;
+		if(eventLoop)
+			eventLoop.wake();
 	}
 
 	EventLoopType type;
@@ -8239,6 +8281,22 @@ version(HasThread) private class CoreWorkerThread : Thread {
 		shared(int) runningCount;
 
 		bool started;
+
+		void ensureSetup() {
+			synchronized {
+				if(!started) {
+					auto numCpus = numberOfCpus();
+					auto numWorkers = numCpus;
+					if(numWorkers <= 0)
+						numWorkers = 1;
+					auto numHelpers = numCpus / 2;
+					if(numHelpers <= 0)
+						numHelpers = 1;
+
+					setup(numWorkers, numHelpers);
+				}
+			}
+		}
 
 		void setup(int numberOfTaskRunners, int numberOfHelpers) {
 			assert(!started);
@@ -8277,7 +8335,8 @@ version(HasThread) private class CoreWorkerThread : Thread {
 }
 
 private int numberOfCpus() {
-	return 4; // FIXME
+	import core.cpuid;
+	return threadsPerCPU();
 }
 
 /++
@@ -8337,6 +8396,7 @@ version(HasThread) struct ArsdCoreApplication {
 
 	void exitApplication() {
 		CoreWorkerThread.cancelAll();
+		impl.exitApplication();
 	}
 
 	void waitForWorkersToExit(int timeoutMilliseconds) {
@@ -8362,6 +8422,21 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		private void rearmFd(RearmToken token) {}
 	}
 
+	EventLoopType eventLoopType;
+
+	this(EventLoopType elt) {
+		this.eventLoopType = elt;
+		this();
+	}
+
+	void wake() {
+		//int[1] a = 1; write(exitEventFd, a.ptr, a.length);
+		onNextTick(delegate() {});
+	}
+
+	void onNextTick(void delegate() dg) {
+		thisThreadQueue.enqueue(new CallbackHelper( dg ));
+	}
 
 	private {
 		static struct LoopIterationDelegate {
@@ -8377,7 +8452,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		}
 	}
 
-	UnregisterToken addDelegateOnLoopIteration(void delegate() dg, uint timingFlags) {
+	override UnregisterToken addDelegateOnLoopIteration(void delegate() dg, uint timingFlags) {
 		loopIterationDelegates ~= LoopIterationDelegate(dg, timingFlags);
 		UnregisterToken ut;
 		ut.impl = this;
@@ -8632,6 +8707,14 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		HANDLE[] handles;
 		CallbackHelper[] handlesCbs;
 
+		this() {
+			initializeGlobals();
+			thisThreadQueue = new CallbackQueue("this thread", false);
+			assert(thisThreadQueue.ev);
+			cast(void) addCallbackOnHandleReady(thisThreadQueue.ev, thisThreadQueue.callback);
+
+		}
+
 		void unregisterHandle(HANDLE handle, CallbackHelper cb) {
 			foreach(idx, h; handles)
 				if(h is handle && handlesCbs[idx] is cb) {
@@ -8652,18 +8735,43 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		// i think to terminate i just have to post the message at least once for every thread i know about, maybe a few more times for threads i don't know about.
 
-		bool isWorker; // if it is a worker we wait on the iocp, if not we wait on msg
-
 		RunOnceResult runOnce(Duration timeout = Duration.max) {
 			scope(exit) eventLoopRound++;
 
 			runLoopIterationDelegates(false);
 
-			if(isWorker) {
+			if(eventLoopType == EventLoopType.TaskRunner) {
+
+				auto timeout2 = INFINITE; // FIXME
+				/+
+				void* key;
+				OVERLAPPED* overlapped;
+				DWORD bytes;
+				+/
+
+				OVERLAPPED_ENTRY[1] overlappedEntries;
+				ULONG entriesRemoved;
+
+				assert(runInHelperThreadQueue);
+				assert(runInHelperThreadQueue.iocp);
+				//if(GetQueuedCompletionStatus(runInTaskRunnerQueue.iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, timeout2)) {
+				if(GetQueuedCompletionStatusEx(runInTaskRunnerQueue.iocp, overlappedEntries.ptr, overlappedEntries.length, &entriesRemoved, timeout2, true)) {
+					foreach(entry; overlappedEntries[0 .. entriesRemoved]) {
+						if(entry.lpOverlapped is null && entry.dwNumberOfBytesTransferred == 0 && entry.lpCompletionKey == 0) {
+							runInTaskRunnerQueue.callback.call();
+						}
+					}
+				}
+				// else if it returns false, GetLastError() == WAIT_IO_COMPLETION means an APC happened
+				// other errors means we might wanna throw.
+
+				runLoopIterationDelegates(true);
+
+				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+
 				// this function is only supported on Windows Vista and up, so using this
 				// means dropping support for XP.
 				//GetQueuedCompletionStatusEx();
-				assert(0); // FIXME
 			} else {
 				auto wto = getTimeout ? getTimeout() : 0;
 
@@ -8775,6 +8883,198 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		}
 	}
 
+	private {
+		CallbackQueue thisThreadQueue;
+
+		// I don't strictly NEED this on Windows because I can just QueueUserAPC instead...
+		// but i guess useful for the ones that need to trigger an iocp.
+		private static final class CallbackQueue : SynchronizableObject {
+			version(Arsd_core_epoll)
+				int fd = -1;
+			else version(Arsd_core_windows) {
+				HANDLE ev = null;
+				HANDLE iocp = null;
+				HANDLE forThread = null;
+			}
+			string name;
+			CallbackHelper callback;
+			SynchronizedCircularBuffer!CallbackHelper queue;
+
+			this(string name, bool dequeueIsShared) {
+				this.name = name;
+				queue = typeof(queue)(this);
+
+				version(Arsd_core_epoll) {
+					fd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | (dequeueIsShared ? EFD_SEMAPHORE : 0));
+				} else version(Arsd_core_windows) {
+					if(dequeueIsShared) {
+						iocp = Win32Enforce!CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, 0, 0);
+					} else {
+						Win32Enforce!DuplicateHandle(
+							GetCurrentProcess(),
+							GetCurrentThread(),
+							GetCurrentProcess(),
+							&forThread,
+							0,
+							false,
+							DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS
+						);
+						//writeln("Creating ", forThread);
+						ev = Win32Enforce!CreateEvent(null, true, false, null);
+					}
+				}
+
+				callback = new CallbackHelper(dequeueIsShared ? &sharedDequeueCb : &threadLocalDequeueCb);
+			}
+
+			void teardown() {
+				version(Arsd_core_epoll) {
+					import core.sys.posix.fcntl;
+					import core.sys.posix.unistd;
+
+					close(fd);
+					fd = -1;
+				} else version(Arsd_core_windows) {
+					if(ev) {
+						CloseHandle(ev);
+						ev = null;
+					}
+					if(iocp) {
+						CloseHandle(iocp);
+						iocp = null;
+					}
+					if(forThread) {
+						CloseHandle(forThread);
+						forThread = null;
+					}
+				}
+
+				callback.release();
+			}
+
+
+			private(this) {
+				version(Windows)
+				extern(Windows)
+				static void apc(ULONG_PTR param) {
+					CallbackHelper callback = cast(CallbackHelper) cast(void*) param;
+					callback.call();
+				}
+
+				void setEvent() {
+					version(Arsd_core_epoll) {
+						import core.sys.posix.unistd;
+						ulong count = 1;
+						ErrnoEnforce!write(fd, &count, count.sizeof);
+					} else version(Arsd_core_windows) {
+						if(forThread)
+							Win32Enforce!QueueUserAPC(&apc, forThread, cast(ULONG_PTR) cast(void*) callback);
+						if(ev)
+							SetEvent(ev);
+						if(iocp)
+							Win32Enforce!PostQueuedCompletionStatus(iocp, 0, 0, null);
+					} else version(Arsd_core_dispatch) {
+						throw new NotYetImplementedException();
+					} else version(Arsd_core_kqueue) {
+						throw new NotYetImplementedException();
+					} else throw new NotYetImplementedException();
+				}
+				bool resetEvent() {
+					version(Arsd_core_epoll) {
+						import core.sys.posix.unistd;
+						ulong count;
+						return read(fd, &count, count.sizeof) == count.sizeof;
+					} else version(Arsd_core_windows) {
+						if(ev)
+							return ResetEvent(ev) == true;
+						return true; // no need to reset, it was done automagically
+					} else version(Arsd_core_dispatch) {
+						throw new NotYetImplementedException();
+					} else version(Arsd_core_kqueue) {
+						throw new NotYetImplementedException();
+					} else throw new NotYetImplementedException();
+				}
+
+				void sharedDequeueCb() {
+					if(resetEvent()) {
+						auto cb = queue.dequeue();
+						cb.call();
+						cb.release();
+					}
+				}
+
+				void threadLocalDequeueCb() {
+					CallbackHelper[16] buffer;
+					foreach(cb; queue.dequeueSeveral(buffer[], () { resetEvent(); })) {
+						cb.call();
+						cb.release();
+					}
+				}
+			}
+
+			void enqueue(CallbackHelper cb) {
+				if(queue.enqueue(cb)) {
+					setEvent();
+				} else {
+					throw new ArsdException!"queue is full"(name);
+				}
+			}
+		}
+
+		static void initializeGlobals() {
+			if(!globalsInitialized) {
+				synchronized {
+					if(!globalsInitialized) {
+						version(Arsd_core_epoll) {
+							// blocking signals is problematic because it is inherited by child processes
+							// and that can be problematic for general purpose stuff so i use a self pipe
+							// here. though since it is linux, im using an eventfd instead just to notify
+							signalPipeFd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+							signalReaderCallback = new CallbackHelper(&signalReader);
+
+							setSignalHandlers();
+						}
+
+						runInTaskRunnerQueue = new CallbackQueue("task runners", true);
+						runInHelperThreadQueue = new CallbackQueue("helper threads", true);
+
+						globalsInitialized = true;
+					}
+				}
+			}
+		}
+
+		static void teardownGlobals() {
+			synchronized {
+				version(Arsd_core_epoll) {
+					import core.sys.posix.fcntl;
+					import core.sys.posix.unistd;
+					restoreSignalHandlers();
+					close(signalPipeFd);
+					signalReaderCallback.release();
+				}
+
+				runInTaskRunnerQueue.teardown();
+				runInHelperThreadQueue.teardown();
+
+				globalsInitialized = false;
+			}
+
+		}
+
+
+		// there's a global instance of this we refer back to
+		__gshared {
+			bool globalsInitialized;
+
+			CallbackHelper signalReaderCallback;
+
+			CallbackQueue runInTaskRunnerQueue;
+			CallbackQueue runInHelperThreadQueue;
+		}
+
+	}
+
 	version(Arsd_core_epoll) {
 
 		import core.sys.linux.epoll;
@@ -8782,24 +9082,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		private this() {
 
-			if(!globalsInitialized) {
-				synchronized {
-					if(!globalsInitialized) {
-						// blocking signals is problematic because it is inherited by child processes
-						// and that can be problematic for general purpose stuff so i use a self pipe
-						// here. though since it is linux, im using an eventfd instead just to notify
-						signalPipeFd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-						signalReaderCallback = new CallbackHelper(&signalReader);
-
-						runInTaskRunnerQueue = new CallbackQueue("task runners", true);
-						runInHelperThreadQueue = new CallbackQueue("helper threads", true);
-
-						setSignalHandlers();
-
-						globalsInitialized = true;
-					}
-				}
-			}
+			initializeGlobals();
 
 			epollfd = epoll_create1(EPOLL_CLOEXEC);
 
@@ -8810,12 +9093,19 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			// FIXME: i should prolly keep the tokens and release them when tearing down.
 
 			cast(void) addCallbackOnFdReadable(signalPipeFd, signalReaderCallback);
-			if(true) { // FIXME: if this is a task runner vs helper thread vs ui thread
-				cast(void) addCallbackOnFdReadable(runInTaskRunnerQueue.fd, runInTaskRunnerQueue.callback);
-				runInTaskRunnerQueue.callback.addref();
-			} else {
-				cast(void) addCallbackOnFdReadable(runInHelperThreadQueue.fd, runInHelperThreadQueue.callback);
-				runInHelperThreadQueue.callback.addref();
+			final switch(eventLoopType) {
+				case EventLoopType.AdHoc:
+				case EventLoopType.Explicit:
+				case EventLoopType.Ui:
+				break;
+				case EventLoopType.TaskRunner:
+					cast(void) addCallbackOnFdReadable(runInTaskRunnerQueue.fd, runInTaskRunnerQueue.callback);
+					runInTaskRunnerQueue.callback.addref();
+				break;
+				case EventLoopType.HelperWorker:
+					cast(void) addCallbackOnFdReadable(runInHelperThreadQueue.fd, runInHelperThreadQueue.callback);
+					runInHelperThreadQueue.callback.addref();
+				break;
 			}
 
 			// local listener
@@ -8843,99 +9133,14 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		}
 		+/
 
-		static void teardownGlobals() {
-			import core.sys.posix.fcntl;
-			import core.sys.posix.unistd;
-
-			synchronized {
-				restoreSignalHandlers();
-				close(signalPipeFd);
-				signalReaderCallback.release();
-
-				runInTaskRunnerQueue.teardown();
-				runInHelperThreadQueue.teardown();
-
-				globalsInitialized = false;
-			}
-
-		}
-
-
-		private static final class CallbackQueue : SynchronizableObject {
-			int fd = -1;
-			string name;
-			CallbackHelper callback;
-			SynchronizedCircularBuffer!CallbackHelper queue;
-
-			this(string name, bool dequeueIsShared) {
-				this.name = name;
-				queue = typeof(queue)(this);
-
-				fd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | (dequeueIsShared ? EFD_SEMAPHORE : 0));
-
-				callback = new CallbackHelper(dequeueIsShared ? &sharedDequeueCb : &threadLocalDequeueCb);
-			}
-
-			bool resetEvent() {
-				import core.sys.posix.unistd;
-				ulong count;
-				return read(fd, &count, count.sizeof) == count.sizeof;
-			}
-
-			void sharedDequeueCb() {
-				if(resetEvent()) {
-					auto cb = queue.dequeue();
-					cb.call();
-					cb.release();
-				}
-			}
-
-			void threadLocalDequeueCb() {
-				CallbackHelper[16] buffer;
-				foreach(cb; queue.dequeueSeveral(buffer[], () { resetEvent(); })) {
-					cb.call();
-					cb.release();
-				}
-			}
-
-			void enqueue(CallbackHelper cb) {
-				if(queue.enqueue(cb)) {
-					import core.sys.posix.unistd;
-					ulong count = 1;
-					ErrnoEnforce!write(fd, &count, count.sizeof);
-				} else {
-					throw new ArsdException!"queue is full"(name);
-				}
-			}
-
-			void teardown() {
-				import core.sys.posix.fcntl;
-				import core.sys.posix.unistd;
-
-				close(fd);
-				fd = -1;
-
-				callback.release();
-			}
-		}
-
-		// there's a global instance of this we refer back to
-		private __gshared {
-			bool globalsInitialized;
-
-			CallbackHelper signalReaderCallback;
-
-			CallbackQueue runInTaskRunnerQueue;
-			CallbackQueue runInHelperThreadQueue;
-
-			int exitEventFd = -1; // FIXME: implement
-		}
 
 		// and then the local loop
 		private {
 			int epollfd = -1;
+		}
 
-			CallbackQueue thisThreadQueue;
+		void addTask(SchedulableTask task) {
+			runInTaskRunnerQueue.enqueue(new CallbackHelper(&task.callWithRethrow));
 		}
 
 		// signal stuff {
@@ -9098,6 +9303,46 @@ bool postMessage(ThreadToRunIn destination, void delegate() code) {
 }
 bool postMessage(ThreadToRunIn destination, Object message) {
 	return false;
+}
+
+void runInWorkerThreadAsync(R)(R delegate() shared dg, void delegate(R) oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) {
+	R result;
+
+	runInWorkerThreadAsync_impl(
+		delegate void() {
+			cast() result = dg();
+		}, delegate void() {
+			oncomplete(result);
+		},
+		onerror,
+		onfinally
+	);
+}
+void runInWorkerThreadAsync(void delegate() shared dg, void delegate() oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) @system {
+	runInWorkerThreadAsync_impl(cast(void delegate()) dg, oncomplete, onerror, onfinally);
+}
+
+void runInWorkerThreadAsync_impl(void delegate() dg, void delegate() oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) @system {
+	auto replyTo = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+
+	CoreWorkerThread.ensureSetup();
+
+	void operator() {
+		try {
+			dg();
+			replyTo.thisThreadQueue.enqueue(new CallbackHelper(oncomplete));
+		} catch(Throwable t) {
+			if(onerror)
+				replyTo.thisThreadQueue.enqueue(new CallbackHelper(() { onerror(t); }));
+			else
+				logSwallowedException(t);
+		} finally {
+			if(onfinally)
+				replyTo.thisThreadQueue.enqueue(new CallbackHelper(() { onfinally(); }));
+		}
+	}
+
+	replyTo.runInTaskRunnerQueue.enqueue(new CallbackHelper(&operator));
 }
 
 /+
@@ -10786,8 +11031,10 @@ shared(LoggerOf!GenericEmbeddableInterpolatedSequence) logger() {
 
 	History:
 		Added April 17, 2025
+
+		Change to take `Throwable` instead of `Exception` on September 30, 2026.
 +/
-void logSwallowedException(Exception e) {
+void logSwallowedException(Throwable e) {
 	logger.error(InterpolationHeader(), e.toString(), InterpolationFooter());
 }
 
@@ -11235,7 +11482,14 @@ private void writeIndividualArg(T)(ref char[] buffer, ref int pos, bool quoteStr
 	} else static if(is(typeof(arg) : double)) {
 		appendToBuffer(buffer, pos, arg);
 	} else static if(is(typeof(arg.toString()) : const char[])) {
-		appendToBuffer(buffer, pos, arg.toString());
+		static if(is(typeof(null) : typeof(arg))) {
+			if(arg is null)
+				appendToBuffer(buffer, pos, "null");
+			else
+				appendToBuffer(buffer, pos, arg.toString());
+		} else {
+			appendToBuffer(buffer, pos, arg.toString());
+		}
 	} else static if(is(typeof(arg) A == struct)) {
 		appendToBuffer(buffer, pos, A.stringof);
 		appendToBuffer(buffer, pos, "(");
@@ -11823,6 +12077,22 @@ package(arsd) version(Windows) extern(Windows) {
 
 	int WSARecv(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
 	int WSARecvFrom(SOCKET, LPWSABUF, DWORD, LPDWORD, LPDWORD, sockaddr*, LPINT, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE);
+
+	struct OVERLAPPED_ENTRY {
+		ULONG_PTR    lpCompletionKey;
+		LPOVERLAPPED lpOverlapped;
+		ULONG_PTR    Internal;
+		DWORD        dwNumberOfBytesTransferred;
+	}
+
+	BOOL GetQueuedCompletionStatusEx(
+	  HANDLE             CompletionPort,
+	  OVERLAPPED_ENTRY*  lpCompletionPortEntries,
+	  ULONG              ulCount,
+	  PULONG             ulNumEntriesRemoved,
+	  DWORD              dwMilliseconds,
+	  BOOL               fAlertable
+	);
 }
 
 package(arsd) version(UseCocoa) {

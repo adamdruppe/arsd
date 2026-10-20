@@ -61,8 +61,9 @@
 module arsd.shell;
 
 // can do a colon which is a built in to parse the command but do nothing. or leading dot which is to run a script inside this process.
-// : "${1:?missing argument, aborting.}"
+// : "${1:?missing argument, aborting.!
 // see https://refp.se/articles/your-shell-and-the-magic-colon
+// bind ctrl+tab to fuzzy complete?
 
 // $_: In most shells, $_ expands to the last argument of the previous command-especially useful interactively or in simple scripts when you need to operate on the same long path twice:
 // disown a background job?
@@ -1707,49 +1708,8 @@ class ExternalCommandExecutor : Shell.CommandExecutor {
 		return MatchesResult.yesIfSearchSucceeds;
 	}
 	FilePath searchPathForCommand(string arg0) {
-		if(arg0.indexOf("/") != -1)
-			return FilePath(arg0);
-		// could also be built-ins and cmdlets...
-		// and on Windows we should check .exe, maybe .com, .bat, .cmd but note these need to be called through cmd.exe as the process and do a -c arg so maybe i won't allow it.
-
-		// so if .exe is not there i should add it.
-
-		string exeName;
-		version(Posix)
-			exeName = arg0;
-		else version(Windows) {
-			exeName = arg0;
-			if(exeName.length < 4 || (exeName[$ - 4 .. $] != ".exe" && exeName[$ - 4 .. $] != ".EXE"))
-				exeName ~= ".exe";
-		} else static assert(0);
-
-		import arsd.string;
-		version(Posix)
-			auto searchPaths = getEnvironmentVariable("PATH").split(":");
-		else version(Windows)
-			auto searchPaths = getEnvironmentVariable("PATH").split(";");
-
-		//version(Posix) immutable searchPaths = ["/usr/bin", "/bin", "/usr/local/bin", "/home/me/bin"]; // FIXME
-		//version(Windows) immutable searchPaths = [`c:/windows`, `c:/windows/system32`, `./`]; // FIXME
-		foreach(path; searchPaths) {
-			auto t = FilePath(exeName).makeAbsolute(FilePath(path));
-
-			version(Posix) {
-				import core.sys.posix.sys.stat;
-				stat_t sbuf;
-
-				CharzBuffer buf = t.toString();
-				auto ret = stat(buf.ptr, &sbuf);
-				if(ret != -1)
-					return t;
-			} else version(Windows) {
-				WCharzBuffer nameBuffer = t.toString();
-				auto ret = GetFileAttributesW(nameBuffer.ptr);
-				if(ret != INVALID_FILE_ATTRIBUTES)
-					return t;
-			}
-		}
-		return FilePath(null);
+		import arsd.process;
+		return arsd.process.searchPathForCommand(arg0);
 	}
 
 	RunningCommand startCommand(ShellCommand command, CommandRunningContext crc) {
