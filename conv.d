@@ -71,7 +71,7 @@ string to(T:string, From)(From value) {
 /++
 	Converts ints to other types of ints or enums
 +/
-T to(T)(long value) {
+T to(T, From:long)(long value) {
 	static if(is(T == enum))
 		return cast(T) value; // FIXME check if the value is actually in range
 	else
