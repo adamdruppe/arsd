@@ -1230,7 +1230,7 @@ class XlsxFile {
 
 		try
 		loadXml("xl/sharedStrings.xml", (document) {
-			foreach(element; document.querySelectorAll("si t"))
+			foreach(element; document.querySelectorAll("si"))
 				sharedStrings ~= element.textContent;
 		});
 		catch(Exception e) {} // this xml might not exist and that's ok
