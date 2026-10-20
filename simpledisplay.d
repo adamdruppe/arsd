@@ -5248,7 +5248,11 @@ struct EventLoopImpl {
 					unregisters ~= el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
 					loopInitialized = true;
 				}
-				el.run(() => !whileCondition());
+				el.run(() {
+					if(whileCondition is null)
+						return false;
+					return !whileCondition();
+				});
 			} else {
 				int ret = -1;
 				MSG message;
@@ -5329,7 +5333,11 @@ struct EventLoopImpl {
 			}
 
 				sdpyPrintDebugString("arsd.core loop starting");
-			el.run(() => !whileCondition());
+				el.run(() {
+					if(whileCondition is null)
+						return false;
+					return !whileCondition();
+				});
 
 				sdpyPrintDebugString("kiio all done");
 
@@ -22538,18 +22546,18 @@ void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
 
 			HRESULT DragEnter(IDataObject pDataObj, DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
 				DropPackage dropPackage = DropPackage(pDataObj);
-				*pdwEffect = win32DragAndDropAction(handler.dragEnter(&dropPackage));
+				*pdwEffect = win32DragAndDropAction(this.handler.dragEnter(&dropPackage));
 				return S_OK; // https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
 			}
 
 			HRESULT DragLeave() {
-				handler.dragLeave();
+				this.handler.dragLeave();
 				// release the IDataObject if needed
 				return S_OK;
 			}
 
 			HRESULT DragOver(DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
-				auto res = handler.dragOver(Point(pt.x, pt.y)); // FIXME: translate screen coordinates back to window coordinates
+				auto res = this.handler.dragOver(Point(pt.x, pt.y)); // FIXME: translate screen coordinates back to window coordinates
 
 				*pdwEffect = win32DragAndDropAction(res.action);
 				// same as DragEnter basically
@@ -22558,7 +22566,7 @@ void enableDragAndDrop(SimpleWindow window, DropHandler handler) {
 
 			HRESULT Drop(IDataObject pDataObj, DWORD grfKeyState, POINTL pt, DWORD* pdwEffect) {
 				DropPackage pkg = DropPackage(pDataObj);
-				handler.drop(&pkg);
+				this.handler.drop(&pkg);
 
 				return S_OK;
 			}
