@@ -1763,9 +1763,9 @@ struct var {
 	}
 
 	///
-	string toJson() {
+	string toJson(bool pretty = true) {
 		auto v = toJsonValue();
-		return toJSON(v);
+		return pretty ? v.toPrettyString() : toJSON(v);
 	}
 
 	///
