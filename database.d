@@ -240,7 +240,7 @@ struct DatabaseDatum {
 	}
 
 	/// ditto
-	auto toArsdJsvar() {
+	auto toArsdJsvar()() {
 		import arsd.jsvar;
 		// FIXME: try to handle numeric and var and such too
 		if(this.isNull())
@@ -461,7 +461,7 @@ struct PooledConnection(ConnectionPoolType) {
 
 	~this() {
 		import core.memory;
-		if(GC.inFinalizer)
+		if(pool is null || GC.inFinalizer) // check for double destruction and gc might have already destroyed member
 			return;
 		if(!discarded && dli.db.isAlive) {
 			// FIXME: a connection must not be returned to the pool unless it is both alive and idle; any pending query work would screw up the next user
@@ -666,6 +666,11 @@ struct AssociatedDatabaseDatum(alias queryMetadata, string name, string file, si
 
 	DatabaseDatum datum;
 
+	auto toArsdJsvar()() {
+		return datum.toArsdJsvar();
+	}
+
+
 	bool isNull() {
 		return datum.isNull();
 	}
@@ -712,6 +717,21 @@ class QueryResultRow(alias queryMetadata) {
 
 	AssociatedDatabaseDatum!(queryMetadata, name, file, line) opDispatch(string name, string file = __FILE__, size_t line = __LINE__)() if(name != "__dtor") {
 		return typeof(return)(row[name]);
+	}
+
+	/++
+		Converts the entire row to a struct, based on the struct's member names and types, which are assumed to match the query result.
+
+		History:
+			Added September 18, 2026
+	+/
+	T to(T, string file = __FILE__, size_t line = __LINE__)() if(is(T == struct)) {
+		T t;
+		foreach(memberName; __traits(allMembers, T)) {
+			// FIXME: what if it is null? or optional? or renamed? or compatible type?
+			__traits(getMember, t, memberName) = this.opDispatch!(memberName, file, line).get!(typeof(__traits(getMember, T, memberName)), file, line);
+		}
+		return t;
 	}
 
 	// i could support an opSlice. maybe opIndex tho it won't be CT bound checked w/o a ct!0 thing
@@ -773,6 +793,7 @@ class QueryMetadata(string q, string file_, size_t line_) : QueryMetadataBase {
 	override size_t line() const { return line_; }
 }
 
+// FIXME: mock query replies too, i can do that.....
 version(unittest)
 class MockDatabase : Database {
 	void startTransaction() {}
@@ -813,6 +834,36 @@ auto sql(string s)() {
 private struct sql_(string s) { }
 
 /++
+	History:
+		Added September 18, 2026
++/
+class DatabaseSchemaValidationException : arsd.core.ArsdExceptionBase {
+	this(string operation, string dbType, string dType, string fieldName, string file, size_t line) {
+		if(dType == "intDecimal")
+			dType = "int";
+		if(dbType == "intDecimal")
+			dbType = "int";
+		this.fieldName = fieldName;
+		this.dbType = dbType;
+		this.dType = dType;
+		super(operation, file, line);
+	}
+
+	string fieldName;
+	string dbType;
+	string dType;
+
+	override void getAdditionalPrintableInformation(scope void delegate(string name, in char[] value) sink) const {
+		sink("fieldName", fieldName);
+		sink("dbType", dbType);
+		sink("dType", dType);
+		sink("file", file);
+		import arsd.conv;
+		sink("line", to!string(line));
+	}
+}
+
+/++
 	A ConnectionPool manages a set of shared connections to a database.
 
 
@@ -850,72 +901,11 @@ class ConnectionPool(alias connectionFactory) : ConnectionPoolBase {
 		bool succeeded = true;
 
 		import arsd.postgres; // FIXME is this really postgres only? looks like sqlite has no similar function... maybe make a view then sqlite3_table_column_metadata ?
-		static assert(is(DriverType == PostgreSql), "Only implemented for postgres right now");
-
-		int count;
-		import arsd.core;
-		import arsd.conv;
-		foreach(q; registeredQueries) {
-			//writeln(q.file, ":", q.line, " ", q.sql);
-			try {
-				try {
-					string dbSpecificSql;
-					int placeholderNumber = 1;
-					size_t lastCopied = 0;
-					foreach(idx, ch; q.sql) {
-						if(ch == '?') {
-							dbSpecificSql ~= q.sql[lastCopied .. idx];
-							lastCopied = idx + 1;
-							dbSpecificSql ~= "$" ~ to!string(placeholderNumber);
-							placeholderNumber++;
-						}
-					}
-					dbSpecificSql ~= q.sql[lastCopied .. $];
-					// FIXME: pipeline this
-					db.query("PREPARE thing_"~to!string(++count)~" AS " ~ dbSpecificSql);
-				} catch(Exception e) {
-					e.file = q.file;
-					e.line = q.line;
-					throw e;
-					// continue;
-				}
-				//  this mysql function looks about right: https://dev.mysql.com/doc/c-api/8.0/en/mysql-stmt-result-metadata.html
-				// could maybe emulate by trying it in a rolled back transaction though.
-				auto desca = describePrepared(db,"thing_"~arsd.conv.to!string(count));
-				LimitedVariant[string] byName;
-				foreach(col; desca.result) {
-					byName[col.fieldName] = col.type.storage;
-				}
-
-				foreach(name; q.names) {
-					if(name.name !in byName)
-						throw ArsdException!"you reference unknown field"(name.name, name.file, name.line);
-					if(name.assumedType.length == 0)
-						continue;
-					if(byName[name.name].contains != name.sampleData.contains)
-						throw ArsdException!"type mismatch"(
-							name.name,
-							arsd.conv.to!string(byName[name.name].contains),
-							arsd.conv.to!string(name.sampleData.contains),
-							name.file,
-							name.line,
-						);
-
-					// i think this is redundant
-					if(name.assumedType.length && name.actualType.length && name.actualType != name.assumedType) {
-						throw ArsdException!"usage mismatch"(name.assumedType, name.actualType, name.file, name.line);
-					}
-				}
-			} catch(Exception e) {
-				writeln(e.toString());
-				succeeded = false;
-			}
+		static if(is(DriverType == PostgreSql)) {
+			return db.checkQueries(registeredQueries());
+		} else {
+			static assert(0, "Only implemented for postgres right now");
 		}
-
-		if(!succeeded)
-			writeln("db check failed.");
-
-		return succeeded;
 	}
 
 	/++

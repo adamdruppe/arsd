@@ -227,11 +227,234 @@ class PostgreSql : Database {
 		return buffer;
 	}
 
+	package bool checkQueries(immutable(QueryMetadataBase[]) registeredQueries) {
+		int count;
+		bool succeeded = true;
+		import arsd.core;
+		import arsd.conv;
+
+		if(!PQenterPipelineMode(this.conn))
+			throw new DatabaseConnectionException(this.error());
+		scope(exit)
+			PQexitPipelineMode(this.conn);
+		PQsetnonblocking(this.conn, 1);
+
+		scope(exit) {
+			if(!PQexitPipelineMode(this.conn))
+				throw new DatabaseConnectionException(this.error());
+			// FIXME error check
+			PQsetnonblocking(this.conn, 0);
+		}
+
+
+		foreach(q; registeredQueries) {
+			string dbSpecificSql;
+			int placeholderNumber = 1;
+			size_t lastCopied = 0;
+			foreach(idx, ch; q.sql) {
+				if(ch == '?') {
+					dbSpecificSql ~= q.sql[lastCopied .. idx];
+					lastCopied = idx + 1;
+					dbSpecificSql ~= "$" ~ to!string(placeholderNumber);
+					placeholderNumber++;
+				}
+			}
+			dbSpecificSql ~= q.sql[lastCopied .. $];
+
+			if(!PQsendPrepare(this.conn, "arsd_test", dbSpecificSql.toStringz, 0, null))
+				{ writeln("wtf1"); assert(0); }
+			if(!PQsendDescribePrepared(this.conn, "arsd_test"))
+				{ writeln("wtf2"); assert(0); }
+			//if(!PQsendClosePrepared(this.conn, "arsd_test"))
+			if(!PQsendQueryParams(this.conn, "DEALLOCATE arsd_test", 0, null, null, null, null, 0))
+				{ writeln("wtf3"); assert(0); }
+
+			// PQsendPipelineSync introduced some time after postgres 16...
+			if(!PQpipelineSync(this.conn))
+				{ writeln("wtf4"); assert(0); }
+		}
+
+		if(!PQsendFlushRequest(this.conn)) {
+			assert(0);
+		}
+		auto flushResult = PQflush(this.conn);
+		assert(flushResult == 0); // FIXME: if it is 1 i need to wait for it to be ready to write more and do PQconsumeInput too
+
+		DatabaseSchemaValidationException[] problems;
+
+		// and now get the result
+		foreach(q; registeredQueries) {
+			// send prepare
+			{
+				while(auto result = PQgetResult(this.conn)) {
+					int ress = PQresultStatus(result);
+					if(ress == PGRES_FATAL_ERROR) {
+						writeln(q.file, "(", q.line, "): ", fixupPostgresErrorString(q.file, q.line, this.error()));
+						succeeded = false;
+					}
+					PQclear(result);
+				}
+			}
+			// describe prepared
+			{
+				while(auto res = PQgetResult(this.conn)) {
+					int ress = PQresultStatus(res);
+					if(ress == PGRES_COMMAND_OK) {
+						// good
+
+						PreparedStatementResult[] ret;
+
+						// PQnparams PQparamtype for params
+						auto numFields = PQnfields(res);
+						foreach(num; 0 .. numFields) {
+							auto typeId = PQftype(res, num);
+							DatabaseDatum dd;
+							dd.platformSpecificTag = typeId;
+							dd.storage = sampleForOid(typeId);
+							ret ~= PreparedStatementResult(
+								copyCString(PQfname(res, num)),
+								dd,
+							);
+						}
+
+						PQclear(res);
+
+						auto desca = PreparedStatementDescription(ret);
+
+						LimitedVariant[string] byName;
+						foreach(col; desca.result) {
+							byName[col.fieldName] = col.type.storage;
+						}
+
+						foreach(name; q.names) {
+							if(name.name !in byName) {
+								problems ~= new DatabaseSchemaValidationException(
+									"unknown field",
+									null,
+									arsd.conv.to!string(name.sampleData.contains),
+									name.name,
+									name.file,
+									name.line
+								);
+								continue;
+							}
+							if(name.assumedType.length == 0)
+								continue;
+							if(byName[name.name].contains != name.sampleData.contains) {
+								problems ~= new DatabaseSchemaValidationException(
+									"type mismatch",
+									arsd.conv.to!string(byName[name.name].contains),
+									arsd.conv.to!string(name.sampleData.contains),
+									name.name,
+									name.file,
+									name.line,
+								);
+							}
+
+							// i think this is redundant
+							if(name.assumedType.length && name.actualType.length && name.actualType != name.assumedType) {
+								problems ~= new DatabaseSchemaValidationException(
+									"usage mismatch",
+									name.actualType,
+									name.assumedType,
+									name.name,
+									name.file,
+									name.line
+								);
+							}
+						}
+					}
+				}
+			}
+			// deallocate prepared
+			{
+				while(auto result = PQgetResult(this.conn)) {
+					int ress = PQresultStatus(result);
+					PQclear(result);
+					if(ress == PGRES_COMMAND_OK) {
+						// good
+					}
+				}
+			}
+
+			// pipeline sync
+			{
+				while(auto result = PQgetResult(this.conn)) {
+					int ress = PQresultStatus(result);
+					PQclear(result);
+					if(ress == PGRES_PIPELINE_SYNC)
+						break;
+					else
+						assert(0);
+				}
+			}
+		}
+
+
+		foreach(e; problems) {
+			writeln(e.file, "(", e.line, "): ", e.message, ": `", e.dType ~ " ", e.fieldName, "`", e.dbType.length ? (" should be `" ~ e.dbType ~ "`") : null);
+			succeeded = false;
+		}
+
+		if(!succeeded)
+			writeln("db check failed.");
+
+		return succeeded;
+
+	}
+
 	private:
 		PGconn* conn;
 
 		PostgresPipeline activePipeline;
 }
+
+private string fixupPostgresErrorString(string dFile, size_t startingLine, const(char)[] em) {
+	import std.string;
+	import std.conv;
+	string fixed;
+	int previousColon;
+	int previousNewColon;
+	foreach(line; splitLines(em)) {
+		if(fixed.length)
+			fixed ~= "\n";
+		if(line.startsWith("LINE ")) {
+			auto colon = line.indexOf(":");
+			if(colon <= 5) {
+				fixed ~= line;
+				continue;
+			}
+			previousColon = cast(int) colon;
+			int lineHere  = to!int(line[5 .. colon]);
+			string newLine;
+			newLine ~= dFile;
+			newLine ~= "(";
+			newLine ~= to!string(startingLine + lineHere - 1);
+			previousNewColon = cast(int) newLine.length + 1;
+			newLine ~= "):    ";
+			newLine ~= line[colon + 1 .. $];
+			fixed ~= newLine;
+		} else if(line.startsWith("     ")) {
+			auto carat = line.indexOf("^");
+			if(carat != -1) {
+				foreach(i; 0 .. previousNewColon - previousColon)
+					fixed ~= " ";
+				fixed ~= "    ";
+				foreach(i; 0 .. carat)
+					fixed ~= " ";
+				fixed ~= "^";
+			} else {
+				fixed ~= line;
+				continue;
+			}
+		} else {
+			fixed ~= line;
+		}
+
+	}
+	return fixed;
+}
+
 
 /++
 	It will send as many parts as possible down a pipe and call the handle result method on each one as it arrives.
@@ -373,6 +596,8 @@ class PostgresPipeline {
 	}
 
 	private void finish(PostgreSql db) {
+		bool first_retry = true;
+
 		more:
 
 		/+
@@ -388,11 +613,30 @@ class PostgresPipeline {
 			while(auto result = PQgetResult(db.conn)) {
 				int ress = PQresultStatus(result);
 
-				// FIXME: auto-reconnect here too?
-
 				if(ress != PGRES_TUPLES_OK
 					&& ress != PGRES_COMMAND_OK)
 				{
+
+					// this looks like a connection died before we actually did any work. safe to restart.
+					// but if receiveLocation != 0, we have some partial results accumulated, and need to throw
+					// to ensure consistency; a retry part way through might double something up that the user
+					// won't understand. an exception lets them clear out before retrying.
+					if(first_retry && ress == PGRES_FATAL_ERROR && receiveLocation == 0 && db.retryConnection()) {
+						first_retry = false;
+						receiveLocation = 0;
+						sendLocation = 0;
+
+						// reinitialize the connection details
+						if(!PQenterPipelineMode(db.conn))
+							throw new DatabaseConnectionException(db.error());
+
+						PQsetnonblocking(db.conn, 1);
+
+						send(db);
+						goto more;
+					}
+
+
 					// prolly gonna get PGRES_FATAL_ERROR followed by PGRES_PIPELINE_ABORTED
 					auto oe = components[receiveLocation].onError;
 					if(oe) {
@@ -505,13 +749,13 @@ class PostgresPipelineFor(PooledConnection) {
 			static struct secret {
 				private PipelineComponent* ptr;
 
-				this(PipelineComponent* ptr) {
+				private this(PipelineComponent* ptr) {
 					this.ptr = ptr;
 
 					ptr.onResult = &this.onResult;
 				}
 
-				void onResult(ResultSet rs) {
+				private void onResult(ResultSet rs) {
 					auto it = new Return(rs);
 					foreach(arg; it)
 						if(forEachDg)
@@ -522,6 +766,13 @@ class PostgresPipelineFor(PooledConnection) {
 
 				typeof(this) forEach(void delegate(typeof(Return.front()) row) dg) {
 					this.forEachDg = dg;
+					return this;
+				}
+				typeof(this) forEach(T, string file = __FILE__, size_t line = __LINE__)(void delegate(T row) dg) {
+					void helper(typeof(Return.front()) row) {
+						dg(row.to!(T, file, line));
+					}
+					this.forEach = &helper;
 					return this;
 				}
 				typeof(this) onNone(void delegate() dg) {
@@ -545,6 +796,10 @@ class PostgresPipelineFor(PooledConnection) {
 
 	void execute(ref PooledConnection conn) {
 		pipeline.execute(conn.borrow);
+	}
+
+	PostgresPipeline.PostgresPipelineExecutor getExecutor(ref PooledConnection conn) {
+		return PostgresPipeline.PostgresPipelineExecutor(pipeline, conn.borrow);
 	}
 }
 
@@ -827,11 +1082,10 @@ extern(C) {
 	void PQclear(PGresult*);
 
 	PGresult* PQprepare(PGconn*, const char* stmtName, const char* query, int nParams, const void* paramTypes);
-	int PQsendPrepare(PGconn*, const char*, const char*, int, const Oid*);
 
 	PGresult* PQexecPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
 	int PQsendQueryPrepared(PGconn*, const char* stmtName, int nParams, const char** paramValues, const int* paramLengths, const int* paramFormats, int resultFormat);
-	int PQsendClosePrepared(PGconn* conn, const char* name);
+	int PQsendClosePrepared(PGconn* conn, const char* name); // introduced in postgres 17...
 
 	int PQresultStatus(PGresult*); // FIXME check return value
 
@@ -931,6 +1185,7 @@ extern(C) {
 	int PQpipelineSync(PGconn* conn);
 	int PQsendPipelineSync(PGconn* conn);
 	int PQsendFlushRequest(PGconn* conn);
+	int PQsendPrepare(PGconn *conn, const char *stmtName, const char *query, int nParams, const Oid *paramTypes);
 
 	int PQconsumeInput(PGconn* conn);
 	int PQisBusy(PGconn* conn);
