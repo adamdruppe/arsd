@@ -68,7 +68,7 @@ class ExecuteFuture {
 	}
 	private void readDone(AsyncReadRequest request) {
 		auto result = request.waitForCompletion();
-		if(result.wasSuccessful) {
+		if(result.wasSuccessful && result.bufferRead.length > 0) {
 			if(request is stdoutRead) {
 				stdout ~= result.bufferRead[];
 				request.repeat(stdoutBuffer);
@@ -97,7 +97,7 @@ class ExecuteFuture {
 		auto result = request.waitForCompletion();
 		if(result.wasSuccessful) {
 			input = input[result.bufferWritten.length .. $];
-			if(input.length) {
+			if(input.length && result.bufferWritten.length) {
 				request.repeat(cast(ubyte[]) input);
 			} else
 				process.stdin.close();
