@@ -4528,16 +4528,18 @@ __gshared size_t fiberStackSize = 4096 * 100;
 
 version(cgi_use_fiber)
 class CgiFiber : Fiber {
+	private RequestServer* rs;
 	private void function(Socket, RequestServer*) f_handler;
 	private void f_handler_dg(Socket s, RequestServer* rs) { // to avoid extra allocation w/ function
 		f_handler(s, rs);
 	}
-	this(void function(Socket, RequestServer*) handler) {
+	this(RequestServer* rs, void function(Socket, RequestServer*) handler) {
 		this.f_handler = handler;
-		this(&f_handler_dg);
+		this(rs, &f_handler_dg);
 	}
 
-	this(void delegate(Socket, RequestServer*) handler) {
+	this(RequestServer* rs, void delegate(Socket, RequestServer*) handler) {
+		this.rs = rs;
 		this.handler = handler;
 		super(&run, fiberStackSize);
 	}
@@ -4546,7 +4548,7 @@ class CgiFiber : Fiber {
 	void delegate(Socket, RequestServer*) handler;
 
 	void run() {
-		handler(connection, null);
+		handler(connection, rs);
 	}
 
 	void delegate() postYield;
@@ -4812,7 +4814,7 @@ private class PseudoblockingOverlappedSocket : Socket {
 void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection, RequestServer* rs) {
 	assert(connection !is null);
 	version(cgi_use_fiber) {
-		auto fiber = new CgiFiber(&doThreadHttpConnectionGuts!(CustomCgi, fun));
+		auto fiber = new CgiFiber(rs, &doThreadHttpConnectionGuts!(CustomCgi, fun));
 
 		version(Windows) {
 			(cast(PseudoblockingOverlappedSocket) connection).fiber = fiber;
@@ -4823,7 +4825,7 @@ void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection, RequestServ
 		fiber.connection = connection;
 		fiber.proceed();
 	} else {
-		doThreadHttpConnectionGuts!(CustomCgi, fun)(connection);
+		doThreadHttpConnectionGuts!(CustomCgi, fun)(connection, rs);
 	}
 }
 
@@ -4969,7 +4971,6 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	auto ir = new BufferedInputRange(requestServer, connection);
 
 	while(!ir.empty) {
-
 		if(ir.view.length == 0) {
 			ir.popFront();
 			if(ir.sourceClosed) {
@@ -5426,9 +5427,9 @@ private class BufferedInputRange {
 		// if they connect but never send stuff to us, we don't want it wasting the process
 		// so setting a time out
 		version(cgi_use_fiber) {
-			if(requestServer && requestServer.actuallyUseFiber)
+			if(requestServer && requestServer.actuallyUseFiber) {
 				source.blocking = false;
-			else
+			} else
 				{} // this space intentionally left blank
 		} else
 			source.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
@@ -5803,7 +5804,7 @@ class ListeningConnectionManager {
 					thread.start();
 				}
 
-				while(!loopBroken && !stopRequested) {
+				while(!loopBroken && !requestServer.stopRequested) {
 					Socket sn;
 
 					bool crash_check() {
@@ -5852,7 +5853,7 @@ class ListeningConnectionManager {
 					accept_new_connection();
 					if(sn !is null)
 						existing_connection_new_data();
-					else if(sn is null && stopRequested) {
+					else if(sn is null && requestServer.stopRequested) {
 						foreach(thread; threads) {
 							semaphore.notify();
 						}
@@ -6278,6 +6279,7 @@ class WorkerThread : Thread {
 			epoll_event ev;
 			ev.events = EPOLLIN | EPOLLEXCLUSIVE; // EPOLLEXCLUSIVE is only available on kernels since like 2017 but that's prolly good enough.
 			ev.data.fd = listener.handle;
+			listener.blocking = false;
 			if(epoll_ctl(epfd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
 				throw new Exception("epoll_ctl " ~ to!string(errno));
 		}
@@ -6322,7 +6324,7 @@ class WorkerThread : Thread {
 								// certainly does for small requests, and I think it does for larger ones too
 								sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
 
-								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
+								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
 							}
 
 							dg(sn, lcm.requestServer);
