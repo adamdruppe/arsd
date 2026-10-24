@@ -12144,32 +12144,6 @@ auto serveStaticFile(string urlPrefix, string filename = null, string contentTyp
 	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(filename, contentType));
 }
 
-/++
-	Serves static data. To be used with [dispatcher].
-
-	History:
-		Added October 31, 2021
-+/
-auto serveStaticData(string urlPrefix, immutable(void)[] data, string contentType = null) {
-	assert(urlPrefix[0] == '/');
-	if(contentType is null) {
-		contentType = contentTypeFromFileExtension(urlPrefix);
-	}
-
-	static struct DispatcherDetails {
-		immutable(void)[] data;
-		string contentType;
-	}
-
-	static bool internalHandler(string urlPrefix, Cgi cgi, Object presenter, DispatcherDetails details) {
-		cgi.setCache(true);
-		cgi.setResponseContentType(details.contentType);
-		cgi.write(details.data, true);
-		return true;
-	}
-	return DispatcherDefinition!(internalHandler, DispatcherDetails)(urlPrefix, true, DispatcherDetails(data, contentType));
-}
-
 string contentTypeFromFileExtension(string filename) {
 	import arsd.core;
 	return FilePath(filename).contentTypeFromFileExtension();
@@ -12325,13 +12299,21 @@ auto dispatchTo(alias handler)(string urlPrefix) {
 	See [serveStaticFile] if you want to serve a file off disk.
 
 	History:
-		Added January 28, 2023 (dub v11.0)
+		Originally added October 31, 2021
+
+		Suggested download overload added January 28, 2023 (dub v11.0)
+
+		Two overloads merged on October 24, 2026
 +/
-auto serveStaticData(string urlPrefix, immutable(ubyte)[] data, string contentType, string filenameToSuggestAsDownload = null) {
+auto serveStaticData(string urlPrefix, immutable(void)[] data, string contentType = null, string filenameToSuggestAsDownload = null) {
 	assert(urlPrefix[0] == '/');
 
+	if(contentType is null) {
+		contentType = contentTypeFromFileExtension(urlPrefix);
+	}
+
 	static struct DispatcherDetails {
-		immutable(ubyte)[] data;
+		immutable(void)[] data;
 		string contentType;
 		string filenameToSuggestAsDownload;
 	}
