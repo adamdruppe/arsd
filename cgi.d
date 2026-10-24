@@ -5961,6 +5961,14 @@ class ListeningConnectionManager {
 		this(requestServer, host, port, &dg_handler, dropPrivs, useFork, numberOfThreads);
 	}
 
+	private void delegate()[] allCleanups;
+	private void cleanupAll() {
+		foreach(c; allCleanups) {
+			if(c)
+				c();
+		}
+	}
+
 	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		assert(host.length == port.length);
 
@@ -5973,12 +5981,16 @@ class ListeningConnectionManager {
 
 		assert(requestServer !is null);
 
+		void delegate() cleanupLocal;
 		foreach(i; 0 .. host.length)
 			if(host[i] == "localhost") {
-				listeners ~= startListening(requestServer, "127.0.0.1", port[i], tcp, cleanup, 128, dropPrivs);
-				listeners ~= startListening(requestServer, "::1", port[i], tcp, cleanup, 128, dropPrivs);
+				listeners ~= startListening(requestServer, "127.0.0.1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				allCleanups ~= cleanupLocal;
+				listeners ~= startListening(requestServer, "::1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				allCleanups ~= cleanupLocal;
 			} else {
-				listeners ~= startListening(requestServer, host[i], port[i], tcp, cleanup, 128, dropPrivs);
+				listeners ~= startListening(requestServer, host[i], port[i], tcp, cleanupLocal, 128, dropPrivs);
+				allCleanups ~= cleanupLocal;
 			}
 
 		version(cgi_use_fiber)
@@ -5989,6 +6001,8 @@ class ListeningConnectionManager {
 
 		// this is the UI control thread and thus gets more priority
 		Thread.getThis.priority = Thread.PRIORITY_MAX;
+
+		this.cleanup = &cleanupAll;
 	}
 
 	Socket[] listeners;
@@ -8684,18 +8698,6 @@ class DispatcherMetadata {
 	}
 
 	string toBrowserScriptBinding(bool includeTypes = false, bool isSubresource = false, string baseUrl = null) const { return null; }
-
-	shared static this() {
-		// FIXME: this is just a temporary thing to debug
-
-		foreach(def; allTsDefinitions)
-			writeln(def);
-
-		foreach(m; allMeta) {
-			//m.printInfo();
-			writeln(m.toBrowserScriptBinding(true));
-		}
-	}
 }
 
 struct ApiMethodParameter {
@@ -10105,6 +10107,35 @@ class WebPresenter(CRTP) {
 		cgi.write(map.toJson(), true);
 	}
 
+	/++
+		Provides browser script bindings for all items found in runtime reflection.
+
+		History:
+			Added October 22, 2026
+	+/
+	string typescriptBindings() {
+		string s;
+		foreach(def; allTsDefinitions) {
+			s ~= def;
+		}
+
+		foreach(m; DispatcherMetadata.allMeta) {
+			s ~= m.toBrowserScriptBinding(true);
+		}
+
+		return s;
+	}
+
+	/// ditto
+	string javascriptBindings() {
+		string s;
+
+		foreach(m; DispatcherMetadata.allMeta) {
+			s ~= m.toBrowserScriptBinding(false);
+		}
+
+		return s;
+	}
 
 	MappedSourceCode[] scriptWithMap() {
 		// source maps use zero-based line numbers so the thing here has to -1 from dmd
