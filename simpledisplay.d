@@ -1482,19 +1482,7 @@ void featureNotImplemented()() {
 		static assert(0);
 }
 
-// these are so the static asserts don't trigger unless you want to
-// add support to it for an OS
-version(Windows)
-	version = with_timer;
-version(linux)
-	version = with_timer;
-version(OSXCocoa)
-	version = with_timer;
-
-version(with_timer)
-	enum bool SimpledisplayTimerAvailable = true;
-else
-	enum bool SimpledisplayTimerAvailable = false;
+enum bool SimpledisplayTimerAvailable = true;
 
 /// If you have to get down and dirty with implementation details, this helps figure out if Windows is available you can `static if(UsingSimpledisplayWindows) ...` more reliably than `version()` because `version` is module-local.
 version(Windows)
@@ -3938,7 +3926,7 @@ private:
 
 	// process queued events and call custom event handlers
 	// this will not process events posted from called handlers (such events are postponed for the next iteration)
-	void processCustomEvents () @system {
+	bool processCustomEvents () @system {
 		bool hasSomethingToDo = false;
 		uint ecount;
 		bool ocep;
@@ -3975,7 +3963,7 @@ private:
 					}
 				}
 				inCustomEventProcessor = ocep;
-				return;
+				return false;
 			}
 		}
 		// process marked events
@@ -4031,21 +4019,26 @@ private:
 			}
 			inCustomEventProcessor = ocep;
 		}
+
+		return true;
 	}
 
 	// for all windows in nativeMapping
-	package static void processAllCustomEvents () @system {
+	package static bool processAllCustomEvents () @system {
+
+		bool didAnything;
 
 		cleanupQueue.process();
 
-		justCommunication.processCustomEvents();
+		didAnything = justCommunication.processCustomEvents() || didAnything;
 
 		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
 			if (sw is null || sw.closed) continue;
-			sw.processCustomEvents();
+			didAnything = sw.processCustomEvents() || didAnything;
 		}
 
-		runPendingRunInGuiThreadDelegates();
+		didAnything = runPendingRunInGuiThreadDelegates() || didAnything;
+		return didAnything;
 	}
 
 	// 0: infinite (i.e. no scheduled events in queue)
@@ -4070,7 +4063,8 @@ private:
 	}
 
 	// for all windows in nativeMapping
-	static uint eventAllQueueTimeoutMSecs () {
+	// returns 0 if there is no timeout configured; the event loop can infinite wait.
+	static int eventAllQueueTimeoutMSecs () {
 		uint res = uint.max;
 		foreach (SimpleWindow sw; SimpleWindow.nativeMapping.byValue) {
 			if (sw is null || sw.closed) continue;
@@ -4589,11 +4583,8 @@ struct EventLoop {
 	}
 
 	static void quitApplication() {
-		static if(use_arsd_core) {
-			import arsd.core;
-			ICoreEventLoop.exitApplication();
-		}
-		EventLoop.get().exit();
+		import arsd.core;
+		ICoreEventLoop.exitApplication();
 	}
 
 	private __gshared static SynchronizableObject monitor = new SynchronizableObject(); // deliberate CTFE usage here fyi
@@ -4646,10 +4637,8 @@ struct EventLoop {
 		assert(impl !is null);
 		impl.notExited = false;
 
-		static if(use_arsd_core) {
-			import arsd.core;
-			ICoreEventLoop.exitApplication();
-		}
+		import arsd.core;
+		ICoreEventLoop.exitApplication();
 	}
 
 	version(linux)
@@ -4827,6 +4816,8 @@ struct EventLoopImpl {
 			}
 		} else version(Posix) {
 			prepareEventLoop();
+			auto display = XDisplayConnection.get;
+			displayFd = display.fd;
 			if (customEventFDRead == -1) {
 				int[2] bfr;
 				import core.sys.posix.unistd;
@@ -4840,7 +4831,7 @@ struct EventLoopImpl {
 
 		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
 
-		version(linux) {
+		version(Posix) {
 			this.mtLock();
 			scope(exit) this.mtUnlock();
 			version(X11)
@@ -4925,7 +4916,7 @@ struct EventLoopImpl {
 	ref auto customEventH() { return SimpleWindow.customEventH; }
 
 	version(X11) {
-		bool doXPending() {
+		bool doXPending(ref bool didAnything) {
 			bool done = false;
 
 			this.mtLock();
@@ -4933,12 +4924,15 @@ struct EventLoopImpl {
 			//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
 			while(!done && XPending(display)) {
 				done = doXNextEvent(this.display);
+				didAnything = true;
 			}
 
 			return done;
 		}
-		void doXNextEventVoid() {
-			doXPending();
+		bool doXNextEventReturningDidAnything() {
+			bool didAnything;
+			doXPending(didAnything);
+			return didAnything;
 		}
 	}
 
@@ -4960,14 +4954,14 @@ struct EventLoopImpl {
 			insideXEventLoop = true;
 			scope(exit) insideXEventLoop = false;
 
-			static if(use_arsd_core) {
+			static if(true) { // forcing arsd core now
 				import arsd.core;
 				auto el = getThisThreadEventLoop(EventLoopType.Ui);
 
 				if(!loopInitialized) {
-					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? -1 : cast(int)wto); };
-					unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventVoid, 3);
-					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+					el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
+					unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
+					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
 
 					if(customSignalFD != -1)
 					unregisters ~= el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
@@ -5023,7 +5017,7 @@ struct EventLoopImpl {
 					}));
 
 					// FIXME: posix fds
-					// FIXME up?
+					// FIXME hup?
 
 
 					loopInitialized = true;
@@ -5034,6 +5028,7 @@ struct EventLoopImpl {
 
 				el.run(() => !whileCondition());
 			} else version(linux) {
+				// FIXME: i want to delete this block just need to ensure i didn't miss anything in the arsd.core transition
 				while(!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					bool forceXPending = false;
 					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
@@ -5151,165 +5146,31 @@ struct EventLoopImpl {
 					// if we won't call `XPending()` here, libX may delay some internal event delivery.
 					// i.e. we HAVE to repeatedly call `XPending()` even if libX fd wasn't signalled!
 					xpending:
+					bool didAnything;
 					if (!done && forceXPending) {
-						done = doXPending();
-					}
-				}
-			} else {
-				// Generic fallback: yes to simple pulse support,
-				// but NO timer support!
-
-				// FIXME: we could probably support the POSIX timer_create
-				// signal-based option, but I'm in no rush to write it since
-				// I prefer the fd-based functions.
-				while (!done && (whileCondition is null || whileCondition() == true) && notExited) {
-
-					import core.sys.posix.poll;
-
-					pollfd[] pfds;
-					pollfd[32] pfdsBuffer;
-					auto len = PosixFdReader.mapping.length + 2;
-					// FIXME: i should just reuse the buffer
-					if(len < pfdsBuffer.length)
-						pfds = pfdsBuffer[0 .. len];
-					else
-						pfds = new pollfd[](len);
-
-					pfds[0].fd = display.fd;
-					pfds[0].events = POLLIN;
-					pfds[0].revents = 0;
-
-					int slot = 1;
-
-					if(customEventFDRead != -1) {
-						pfds[slot].fd = customEventFDRead;
-						pfds[slot].events = POLLIN;
-						pfds[slot].revents = 0;
-
-						slot++;
-					}
-
-					foreach(fd, obj; PosixFdReader.mapping) {
-						if(!obj.enabled) continue;
-						pfds[slot].fd = fd;
-						pfds[slot].events = POLLIN;
-						pfds[slot].revents = 0;
-
-						slot++;
-					}
-
-					auto ret = poll(pfds.ptr, slot, pulseTimeout > 0 ? cast(int) pulseTimeout : -1);
-					if(ret == -1) throw new Exception("poll");
-
-					if(ret == 0) {
-						// FIXME it may not necessarily time out if events keep coming
-						if(handlePulse !is null)
-							handlePulse();
-					} else {
-						foreach(s; 0 .. slot) {
-							if(pfds[s].revents == 0) continue;
-
-							if(pfds[s].fd == display.fd) {
-								while(!done && XPending(display)) {
-									this.mtLock();
-									scope(exit) this.mtUnlock();
-									done = doXNextEvent(this.display);
-								}
-							} else if(customEventFDRead != -1 && pfds[s].fd == customEventFDRead) {
-
-								import core.sys.posix.unistd : read;
-								ulong n;
-								read(customEventFDRead, &n, n.sizeof);
-								SimpleWindow.processAllCustomEvents();
-							} else {
-								auto obj = PosixFdReader.mapping[pfds[s].fd];
-								if(pfds[s].revents & POLLNVAL) {
-									obj.dispose();
-								} else {
-									obj.ready(pfds[s].revents);
-								}
-							}
-
-							ret--;
-							if(ret == 0) break;
-						}
+						done = doXPending(didAnything);
 					}
 				}
 			}
 		} else
 		version(Windows) {
-
-			static if(use_arsd_core) {
-				import arsd.core;
-				auto el = getThisThreadEventLoop(EventLoopType.Ui);
-				if(!loopInitialized) {
-					el.getTimeout = () { auto wto = SimpleWindow.eventAllQueueTimeoutMSecs(); return (wto == 0 || wto >= int.max ? INFINITE : cast(int)wto); };
-					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
-					unregisters ~= el.addDelegateOnLoopIteration(function() { eventLoopRound++; }, 3);
-					loopInitialized = true;
-				}
-				el.run(() {
-					if(whileCondition is null)
-						return false;
-					return !whileCondition();
-				});
-			} else {
-				int ret = -1;
-				MSG message;
-				while(ret != 0 && (whileCondition is null || whileCondition() == true) && notExited) {
-					eventLoopRound++;
-					auto wto = SimpleWindow.eventAllQueueTimeoutMSecs();
-					auto waitResult = MsgWaitForMultipleObjectsEx(
-						cast(int) handles.length, handles.ptr,
-						(wto == 0 ? INFINITE : wto), /* timeout */
-						0x04FF, /* QS_ALLINPUT */
-						0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
-
-					SimpleWindow.processAllCustomEvents(); // anyway
-					enum WAIT_OBJECT_0 = 0;
-					if(waitResult >= WAIT_OBJECT_0 && waitResult < handles.length + WAIT_OBJECT_0) {
-						auto h = handles[waitResult - WAIT_OBJECT_0];
-						if(auto e = h in WindowsHandleReader.mapping) {
-							(*e).ready();
-						}
-					} else if(waitResult == handles.length + WAIT_OBJECT_0) {
-						// message ready
-						int count;
-						while(PeekMessage(&message, null, 0, 0, PM_NOREMOVE)) { // need to peek since sometimes MsgWaitForMultipleObjectsEx returns even though GetMessage can block. tbh i don't fully understand it but the docs say it is foreground activation
-							ret = GetMessage(&message, null, 0, 0);
-							if(ret == -1)
-								throw new WindowsApiException("GetMessage", GetLastError());
-							TranslateMessage(&message);
-							DispatchMessage(&message);
-
-							count++;
-							if(count > 10)
-								break; // take the opportunity to catch up on other events
-
-							if(ret == 0) { // WM_QUIT
-								EventLoop.quitApplication();
-								break;
-							}
-						}
-					} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
-						SleepEx(0, true); // I call this to give it a chance to do stuff like async io
-					} else if(waitResult == 258L /* WAIT_TIMEOUT */) {
-						// timeout, should never happen since we aren't using it
-					} else if(waitResult == 0xFFFFFFFF) {
-							// failed
-							throw new WindowsApiException("MsgWaitForMultipleObjectsEx", GetLastError());
-					} else {
-						// idk....
-					}
-				}
+			import arsd.core;
+			auto el = getThisThreadEventLoop(EventLoopType.Ui);
+			if(!loopInitialized) {
+				el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
+				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
+				unregisters ~= el.addDelegateOnLoopIteration(function bool() { eventLoopRound++; return false; });
+				loopInitialized = true;
 			}
+			el.run(() {
+				if(whileCondition is null)
+					return false;
+				return !whileCondition();
+			});
 
 			// return message.wParam;
 			return 0;
 		} version (OSXCocoa) {
-
-			static assert(use_arsd_core);
-
 			/+
 			if (handlePulse !is null && pulseTimeout != 0) {
 				NSTimer timer = NSTimer.schedule(pulseTimeout*1e-3,
@@ -5325,7 +5186,8 @@ struct EventLoopImpl {
 			import arsd.core;
 			auto el = getThisThreadEventLoop(EventLoopType.Ui);
 			if(!loopInitialized) {
-				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents, 3);
+				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
+				el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
 				loopInitialized = true;
 				sdpyPrintDebugString("one");
 				NSApp.run();
@@ -6322,11 +6184,42 @@ Pixmap transparencyMaskFromMemoryImage(MemoryImage i, Window window) {
 		slow could lock up the event loop. It now guarantees other things will
 		get a chance to run between timer calls, even if that means not keeping up
 		with the requested interval.
+
+		On October 27, 2026, it changed to wrap an [arsd.core.UserModeTimer] instead
+		of using operating system facilities. This should generally have little effect
+		because it was all single threaded waitable timers anyway and thus they'd run
+		at the same time.
 */
-version(with_timer) {
-static if(use_arsd_core) {
-	alias Timer = arsd.core.Timer; // FIXME should probably wrap it for a stable api
-} else
+class Timer {
+	private arsd.core.UserModeTimer umt;
+	private void delegate() onPulse;
+
+	/++
+	+/
+	this(int intervalInMilliseconds, void delegate() onPulse) @trusted {
+		this.onPulse = onPulse;
+		changeTime(intervalInMilliseconds);
+	}
+
+	alias dispose = destroy;
+
+	/// Stop and destroy the timer object.
+	void destroy() {
+		if(umt)
+			umt.cancel();
+		umt = null;
+	}
+
+	/++
+	+/
+	void changeTime(int intervalInMilliseconds) {
+		if(umt)
+			umt.cancel();
+		import core.time : msecs;
+		umt = new UserModeTimer(intervalInMilliseconds.msecs, onPulse, true);
+	}
+}
+version(none)
 class Timer {
 // FIXME: needs pause and unpause
 	// FIXME: I might add overloads for ones that take a count of
@@ -6531,7 +6424,6 @@ class Timer {
 	} else version(OSXCocoa) {
 	} else static assert(0, "timer not supported");
 }
-}
 
 version(Windows)
 private int eventLoopRound;
@@ -6549,33 +6441,16 @@ class WindowsHandleReader {
 		enable();
 	}
 
-	static if(use_arsd_core)
-		ICoreEventLoop.UnregisterToken unregisterToken;
+	ICoreEventLoop.UnregisterToken unregisterToken;
 
 	///
 	void enable() {
-		static if(use_arsd_core) {
-			unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnHandleReady(handle, new CallbackHelper(&ready));
-		} else {
-			auto el = EventLoop.get().impl;
-			el.handles ~= handle;
-		}
+		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnHandleReady(handle, new CallbackHelper(&ready));
 	}
 
 	///
 	void disable() {
-		static if(use_arsd_core) {
-			unregisterToken.unregister();
-		} else {
-			auto el = EventLoop.get().impl;
-			for(int i = 0; i < el.handles.length; i++) {
-				if(el.handles[i] is handle) {
-					el.handles[i] = el.handles[$-1];
-					el.handles = el.handles[0 .. $-1];
-					return;
-				}
-			}
-		}
+		unregisterToken.unregister();
 	}
 
 	void dispose() {
@@ -6629,33 +6504,18 @@ class PosixFdReader {
 	bool captureReads;
 	bool captureWrites;
 
-	static if(use_arsd_core) {
-		import arsd.core;
-		ICoreEventLoop.UnregisterToken unregisterToken;
-	}
+	import arsd.core;
+	ICoreEventLoop.UnregisterToken unregisterToken;
 
 	version(with_eventloop) {} else
 	///
 	void enable() @system {
 		enabled = true;
 
-		static if(use_arsd_core) {
-			unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnFdReadable(fd, new CallbackHelper(
-				() { onReady(fd, true, false); }
-			));
-			// FIXME: what if it is writeable?
-
-		} else version(linux) {
-			prepareEventLoop();
-			static import ep = core.sys.linux.epoll;
-			ep.epoll_event ev = void;
-			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-			// writeln("enable ", fd, " ", captureReads, " ", captureWrites);
-			ev.data.fd = fd;
-			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
-		} else {
-
-		}
+		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnFdReadable(fd, new CallbackHelper(
+			() { onReady(fd, true, false); }
+		));
+		// FIXME: what if it is writeable?
 	}
 
 	version(with_eventloop) {} else
@@ -6663,18 +6523,7 @@ class PosixFdReader {
 	void disable() @system {
 		enabled = false;
 
-		static if(use_arsd_core) {
-			unregisterToken.unregister();
-		} else
-		version(linux) {
-			prepareEventLoop();
-			static import ep = core.sys.linux.epoll;
-			ep.epoll_event ev = void;
-			ev.events = (captureReads ? ep.EPOLLIN : 0) | (captureWrites ? ep.EPOLLOUT : 0);
-			// writeln("disable ", fd, " ", captureReads, " ", captureWrites);
-			ev.data.fd = fd;
-			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
-		}
+		unregisterToken.unregister();
 	}
 
 	version(with_eventloop) {} else
@@ -11287,7 +11136,8 @@ void runInGuiThreadAsync(void delegate() dg, void delegate(Exception) nothrow ha
 	}
 }
 
-private void runPendingRunInGuiThreadDelegates() {
+private bool runPendingRunInGuiThreadDelegates() {
+	bool didAnything;
 	more:
 	RunQueueMember* next;
 	synchronized(runInGuiThreadLock) {
@@ -11302,6 +11152,7 @@ private void runPendingRunInGuiThreadDelegates() {
 	if(next) {
 		try {
 			next.dg();
+			didAnything = true;
 			next.thrown = null;
 		} catch(Throwable t) {
 			next.thrown = t;
@@ -11312,6 +11163,8 @@ private void runPendingRunInGuiThreadDelegates() {
 
 		goto more;
 	}
+
+	return didAnything;
 }
 
 private void claimGuiThread() nothrow {
