@@ -62,15 +62,6 @@ unittest {
 	version(arsd_http2_integration_test) main(); // exclude from docs
 }
 
-/+
-// arsd core is now default but you can opt out for a lil while
-version(no_arsd_core) {
-
-} else {
-	version=use_arsd_core;
-}
-+/
-
 static import arsd.core;
 import arsd.uri;
 public import arsd.uri : Uri;
@@ -878,12 +869,18 @@ class HttpRequest {
 
 	/// Sends the request asynchronously.
 	void send() {
-		sendPrivate(true);
+		sendPrivate();
 	}
 
-	private void sendPrivate(bool advance) {
+	private void sendPrivate() {
 		if(state != State.unsent && state != State.aborted)
 			return; // already sent
+
+		if(assignedSocket) {
+			activeRequestOnSocket.remove(assignedSocket);
+			this.assignedSocket = null;
+			debug(arsd_http2_verbose) writeln("null 1");
+		}
 
 		if(cache !is null) {
 			auto res = cache.getCachedResponse(this.requestParameters);
@@ -987,6 +984,8 @@ class HttpRequest {
 			headers ~= "Accept-Encoding: gzip\r\n";
 		if(requestParameters.keepAlive)
 			headers ~= "Connection: keep-alive\r\n";
+		else
+			headers ~= "Connection: close\r\n";
 
 		string cookieHeader;
 		foreach(name, value; requestParameters.cookies) {
@@ -1019,7 +1018,7 @@ class HttpRequest {
 
 		headers ~= "\r\n";
 
-		// FIXME: separate this for 100 continue
+		// FIXME: separate this for 100 continue, tho i never Expect: it...
 		sendBuffer = cast(ubyte[]) headers ~ bodyToSend;
 
 		// import std.stdio; writeln("******* ", cast(string) sendBuffer);
@@ -1028,20 +1027,58 @@ class HttpRequest {
 		responseData.requestParameters = requestParameters;
 		bodyBytesSent = 0;
 		bodyBytesReceived = 0;
-		state = State.pendingAvailableConnection;
 
-		bool alreadyPending = false;
-		foreach(req; pending)
-			if(req is this) {
-				alreadyPending = true;
-				break;
+		if(assignedSocket is null) {
+			state = State.pendingAvailableConnection;
+
+			Socket socket;
+			auto pc = this;
+
+			try {
+				// FIXME: the proxy connection should prolly be async too since send is not supposed to block
+				socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath, pc.verifyPeer);
+			} catch(ProxyException e) {
+				// connection refused or timed out (I should disambiguate somehow)...
+				abortPrivate(2, e.msg ~ " from " ~ pc.proxy);
+				return;
+			} catch(SocketException e) {
+				// connection refused or timed out (I should disambiguate somehow)...
+				abortPrivate(2, pc.proxy.length ? ("connection failed to proxy " ~ pc.proxy) : "connection failed");
+				return;
+			} catch(Exception e) {
+				// connection failed due to other user error or SSL (i should disambiguate somehow)...
+				abortPrivate(2, e.msg);
+				return;
 			}
-		if(!alreadyPending) {
-			pending ~= this;
-		}
 
-		if(advance)
-			HttpRequest.advanceConnections(0.seconds);//requestParameters.timeoutFromInactivity); // doing async so no block here
+			if(socket !is null) {
+				activeRequestOnSocket[socket] = pc;
+				pc.assignedSocket = socket;
+				assert(pc.sendBuffer.length);
+				pc.state = State.connecting;
+				resetTimeout();
+
+				pollReusableSocket(this.assignedSocket);
+			} else {
+				bool alreadyPending = false;
+				foreach(req; pending)
+					if(req is this) {
+						alreadyPending = true;
+						break;
+					}
+				if(!alreadyPending) {
+					pending ~= this;
+				}
+				assert(state == State.pendingAvailableConnection);
+			}
+		} else {
+			debug(arsd_http2_verbose) writeln("REUSING");
+			// already has an assigned socket left over from a previous redirection or something,
+			// we can just reuse that (assuming it is still alive...)
+			state = State.sendingHeaders;
+
+			pollReusableSocket(this.assignedSocket);
+		}
 	}
 
 
@@ -1071,10 +1108,36 @@ class HttpRequest {
 
 	/// Aborts this request.
 	void abort() {
+		abortPrivate(1, "request.abort called");
+	}
+
+	private Socket assignedSocket;
+
+	private void abortPrivate(int code, string codeText) {
+		auto beforeState = this.state;
 		this.state = State.aborted;
-		this.responseData.code = 1;
-		this.responseData.codeText = "request.abort called";
-		// the actual cancellation happens in the event loop
+		this.responseData.code = code;
+		this.responseData.codeText = codeText;
+
+		// it is on a socket, we need to close it
+		if(assignedSocket) {
+			assignedSocket.close(); // abruptly so it sends RST
+			loseSocket(this.requestParameters.host, this.requestParameters.port, this.requestParameters.ssl, assignedSocket);
+
+			activeRequestOnSocket[assignedSocket] = null;
+			assignedSocket = null;
+			debug(arsd_http2_verbose) writeln("null 2");
+
+			// notify the listener that things changed
+			if(this.onDataReceived)
+				this.onDataReceived(this);
+		}
+	}
+
+	private {
+		static void arsdCorePrepNewSocket(EventCapableSocket s) {
+		}
+
 	}
 
 	HttpRequestParameters requestParameters; ///
@@ -1230,7 +1293,7 @@ class HttpRequest {
 
 		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
 			Socket openNewConnection() {
-				Socket socket;
+				EventCapableSocket socket;
 				if(ssl) {
 					version(with_openssl) {
 						loadOpenSsl();
@@ -1239,7 +1302,7 @@ class HttpRequest {
 					} else
 						throw new Exception("SSL not compiled in");
 				} else {
-					socket = new Socket(family(unixSocketPath), SocketType.STREAM);
+					socket = new EventCapableSocket(family(unixSocketPath), SocketType.STREAM);
 					socket.blocking = false;
 				}
 
@@ -1247,7 +1310,7 @@ class HttpRequest {
 
 				// FIXME: connect timeout?
 				if(unixSocketPath) {
-					import std.stdio; writeln(cast(ubyte[]) unixSocketPath);
+					debug(arsd_http2_verbose) { import std.stdio; writeln(cast(ubyte[]) unixSocketPath); }
 					socket.connect(new UnixAddress(unixSocketPath));
 				} else {
 					// FIXME: i should prolly do ipv6 if available too.
@@ -1328,6 +1391,9 @@ class HttpRequest {
 
 				debug(arsd_http2) writeln("opening to ", host, ":", port, " ", cast(void*) socket, " ssl=", ssl);
 				assert(socket.handle() !is socket_t.init);
+
+				arsdCorePrepNewSocket(socket);
+
 				return socket;
 			}
 
@@ -1383,8 +1449,6 @@ class HttpRequest {
 		}
 
 		// stuff used by advanceConnections
-		SocketSet readSet;
-		SocketSet writeSet;
 		private ubyte[] reusableBuffer;
 
 		/+
@@ -1444,375 +1508,9 @@ class HttpRequest {
 				any other value should be considered a non-recoverable error if you want to be forward compatible as I reserve the right to add more values later.
 		+/
 		public int advanceConnections(Duration maximumTimeout = 10.seconds, bool automaticallyRetryOnInterruption = false) {
-			debug(arsd_http2_verbose) writeln("advancing");
-			if(readSet is null)
-				readSet = new SocketSet();
-			if(writeSet is null)
-				writeSet = new SocketSet();
-
-			if(reusableBuffer is null)
-				reusableBuffer = new ubyte[](32 * 1024);
-			ubyte[] buffer = reusableBuffer;
-
-			HttpRequest[16] removeFromPending;
-			size_t removeFromPendingCount = 0;
-
-			bool hadAbortedRequest;
-
-			// are there pending requests? let's try to send them
-			foreach(idx, pc; pending) {
-				if(removeFromPendingCount == removeFromPending.length)
-					break;
-
-				if(pc.state == HttpRequest.State.aborted) {
-					removeFromPending[removeFromPendingCount++] = pc;
-					hadAbortedRequest = true;
-					continue;
-				}
-
-				Socket socket;
-
-				try {
-					socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath, pc.verifyPeer);
-				} catch(ProxyException e) {
-					// connection refused or timed out (I should disambiguate somehow)...
-					pc.state = HttpRequest.State.aborted;
-
-					pc.responseData.code = 2;
-					pc.responseData.codeText = e.msg ~ " from " ~ pc.proxy;
-
-					hadAbortedRequest = true;
-
-					removeFromPending[removeFromPendingCount++] = pc;
-					continue;
-
-				} catch(SocketException e) {
-					// connection refused or timed out (I should disambiguate somehow)...
-					pc.state = HttpRequest.State.aborted;
-
-					pc.responseData.code = 2;
-					pc.responseData.codeText = pc.proxy.length ? ("connection failed to proxy " ~ pc.proxy) : "connection failed";
-
-					hadAbortedRequest = true;
-
-					removeFromPending[removeFromPendingCount++] = pc;
-					continue;
-				} catch(Exception e) {
-					// connection failed due to other user error or SSL (i should disambiguate somehow)...
-					pc.state = HttpRequest.State.aborted;
-
-					pc.responseData.code = 2;
-					pc.responseData.codeText = e.msg;
-
-					hadAbortedRequest = true;
-
-					removeFromPending[removeFromPendingCount++] = pc;
-					continue;
-
-				}
-
-				if(socket !is null) {
-					activeRequestOnSocket[socket] = pc;
-					assert(pc.sendBuffer.length);
-					pc.state = State.connecting;
-
-					removeFromPending[removeFromPendingCount++] = pc;
-				}
-			}
-
-			import std.algorithm : remove;
-			foreach(rp; removeFromPending[0 .. removeFromPendingCount]) {
-				if(rp.onDataReceived) rp.onDataReceived(rp);
-				pending = pending.remove!((a) => a is rp)();
-			}
-
-			tryAgain:
-
-			Socket[16] inactive;
-			int inactiveCount = 0;
-			void killInactives() {
-				foreach(s; inactive[0 .. inactiveCount]) {
-					debug(arsd_http2) writeln("removing socket from active list ", cast(void*) s);
-					activeRequestOnSocket.remove(s);
-					cachedSockets++;
-				}
-			}
-
-
-			readSet.reset();
-			writeSet.reset();
-
-			bool hadOne = false;
-
-			auto minTimeout = maximumTimeout;
-			auto now = MonoTime.currTime;
-
-			// active requests need to be read or written to
-			foreach(sock, request; activeRequestOnSocket) {
-
-				if(request.state == State.aborted) {
-					inactive[inactiveCount++] = sock;
-					sock.close();
-					loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-					hadAbortedRequest = true;
-					if(request.onDataReceived) request.onDataReceived(request);
-					continue;
-				}
-
-				// check the other sockets just for EOF, if they close, take them out of our list,
-				// we'll reopen if needed upon request.
-				readSet.add(sock);
-				hadOne = true;
-
-				Duration timeo;
-				if(request.timeoutFromInactivity <= now)
-					timeo = 0.seconds;
-				else
-					timeo = request.timeoutFromInactivity - now;
-
-				if(timeo < minTimeout)
-					minTimeout = timeo;
-
-				if(request.state == State.connecting || request.state == State.sslConnectPendingWrite || request.state == State.sendingHeaders || request.state == State.sendingBody) {
-					writeSet.add(sock);
-					hadOne = true;
-				}
-			}
-
-			if(!hadOne) {
-				if(hadAbortedRequest) {
-					killInactives();
-					return 0; // something got aborted, that's progress
-				}
-				return 2; // automatic timeout, nothing to do
-			}
-
-			auto selectGot = Socket.select(readSet, writeSet, null, minTimeout);
-			if(selectGot == 0) { /* timeout */
-				now = MonoTime.currTime;
-				bool anyWorkDone = false;
-				foreach(sock, request; activeRequestOnSocket) {
-
-					if(request.timeoutFromInactivity <= now) {
-						request.state = HttpRequest.State.aborted;
-						request.responseData.code = 5;
-						if(request.state == State.connecting)
-							request.responseData.codeText = "Connect timed out";
-						else
-							request.responseData.codeText = "Request timed out";
-
-						inactive[inactiveCount++] = sock;
-						sock.close();
-						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-						anyWorkDone = true;
-
-						if(request.onDataReceived) request.onDataReceived(request);
-					}
-				}
-				killInactives();
-				return anyWorkDone ? 0 : 1;
-				// return 1; was an error to time out but now im making it on the individual request
-			} else if(selectGot == -1) { /* interrupted */
-				/*
-				version(Posix) {
-					import core.stdc.errno;
-					if(errno != EINTR)
-						throw new Exception("select error: " ~ to!string(errno));
-				}
-				*/
-				if(automaticallyRetryOnInterruption)
-					goto tryAgain;
-				else
-					return 3;
-			} else { /* ready */
-
-				void sslProceed(HttpRequest request, SslClientSocket s) {
-					try {
-						auto code = s.do_ssl_connect();
-						switch(code) {
-							case 0:
-								request.state = State.sendingHeaders;
-							break;
-							case SSL_ERROR_WANT_READ:
-								request.state = State.sslConnectPendingRead;
-							break;
-							case SSL_ERROR_WANT_WRITE:
-								request.state = State.sslConnectPendingWrite;
-							break;
-							default:
-								assert(0);
-						}
-					} catch(Exception e) {
-						request.state = State.aborted;
-
-						request.responseData.code = 2;
-						request.responseData.codeText = e.msg;
-						inactive[inactiveCount++] = s;
-						s.close();
-						loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, s);
-						if(request.onDataReceived) request.onDataReceived(request);
-					}
-				}
-
-
-				foreach(sock, request; activeRequestOnSocket) {
-					// always need to try to send first in part because http works that way but
-					// also because openssl will sometimes leave something ready to read even if we haven't
-					// sent yet (probably leftover data from the crypto negotiation) and if that happens ssl
-					// is liable to block forever hogging the connection and not letting it send...
-					if(request.state == State.connecting)
-					if(writeSet.isSet(sock) || readSet.isSet(sock)) {
-						import core.stdc.stdint;
-						int32_t error;
-						int retopt = sock.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
-						if(retopt < 0 || error != 0) {
-							request.state = State.aborted;
-
-							request.responseData.code = 2;
-							try {
-								request.responseData.codeText = "connection failed - " ~ formatSocketError(error);
-							} catch(Exception e) {
-								request.responseData.codeText = "connection failed";
-							}
-							inactive[inactiveCount++] = sock;
-							sock.close();
-							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-							if(request.onDataReceived) request.onDataReceived(request);
-							continue;
-						} else {
-							if(auto s = cast(SslClientSocket) sock) {
-								sslProceed(request, s);
-								continue;
-							} else {
-								request.state = State.sendingHeaders;
-							}
-						}
-					}
-
-					if(request.state == State.sslConnectPendingRead)
-					if(readSet.isSet(sock)) {
-						sslProceed(request, cast(SslClientSocket) sock);
-						continue;
-					}
-					if(request.state == State.sslConnectPendingWrite)
-					if(writeSet.isSet(sock)) {
-						sslProceed(request, cast(SslClientSocket) sock);
-						continue;
-					}
-
-					if(request.state == State.sendingHeaders || request.state == State.sendingBody)
-					if(writeSet.isSet(sock)) {
-						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
-						assert(request.sendBuffer.length);
-						auto sent = sock.send(request.sendBuffer);
-						debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
-						if(sent <= 0) {
-							if(wouldHaveBlocked())
-								continue;
-
-							request.state = State.aborted;
-
-							request.responseData.code = 3;
-							request.responseData.codeText = "send failed to server: " ~ lastSocketError(sock);
-							inactive[inactiveCount++] = sock;
-							sock.close();
-							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-							if(request.onDataReceived) request.onDataReceived(request);
-							continue;
-
-						}
-						request.sendBuffer = request.sendBuffer[sent .. $];
-						if(request.sendBuffer.length == 0) {
-							request.state = State.waitingForResponse;
-
-							debug(arsd_http2_verbose) writeln("all sent");
-						}
-						if(request.onDataReceived) request.onDataReceived(request);
-					}
-
-
-					if(readSet.isSet(sock)) {
-						keep_going:
-						request.timeoutFromInactivity = MonoTime.currTime + request.requestParameters.timeoutFromInactivity;
-						auto got = sock.receive(buffer);
-						debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError(sock)); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
-						if(got < 0) {
-							if(wouldHaveBlocked())
-								continue;
-							debug(arsd_http2) writeln("receive error");
-							if(request.state != State.complete) {
-								request.state = State.aborted;
-
-								request.responseData.code = 3;
-								request.responseData.codeText = "receive error from server: " ~ lastSocketError(sock);
-							}
-							inactive[inactiveCount++] = sock;
-							sock.close();
-							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-						} else if(got == 0) {
-							// remote side disconnected
-							debug(arsd_http2) writeln("remote disconnect");
-							if(request.state != State.complete) {
-								request.state = State.aborted;
-
-								request.responseData.code = 3;
-								request.responseData.codeText = "server disconnected";
-							}
-							inactive[inactiveCount++] = sock;
-							sock.close();
-							loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-						} else {
-							// data available
-							bool stillAlive;
-
-							try {
-								stillAlive = request.handleIncomingData(buffer[0 .. got]);
-								/+
-									state needs to be set and public
-									requestData.content/contentText needs to be around
-									you need to be able to clear the content and keep processing for things like event sources.
-									also need to be able to abort it.
-
-									and btw it should prolly just have evnet source as a pre-packaged thing.
-								+/
-							} catch (Exception e) {
-								debug(arsd_http2_verbose) { import std.stdio; writeln(e); }
-								request.state = HttpRequest.State.aborted;
-								request.responseData.code = 4;
-								request.responseData.codeText = e.msg;
-
-								inactive[inactiveCount++] = sock;
-								sock.close();
-								loseSocket(request.requestParameters.host, request.requestParameters.port, request.requestParameters.ssl, sock);
-							}
-
-							if(!stillAlive || request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
-								//import std.stdio; writeln(cast(void*) sock, " ", stillAlive, " ", request.state);
-								inactive[inactiveCount++] = sock;
-							// reuse the socket for another pending request, if we can
-							}
-						}
-
-						if(request.onDataReceived)
-							request.onDataReceived(request);
-
-						version(with_openssl)
-						if(auto s = cast(SslClientSocket) sock) {
-							// select doesn't handle the case with stuff
-							// left in the ssl buffer so i'm checking it separately
-							if(s.dataPending()) {
-								goto keep_going;
-							}
-						}
-					}
-				}
-			}
-
-			killInactives();
-
-			// we've completed a request, are there any more pending connection? if so, send them now
-
-			return 0;
+			import arsd.core;
+			auto ret = getThisThreadEventLoop().runOnce(maximumTimeout);
+			return 0; // FIXME
 		}
 	}
 
@@ -1851,7 +1549,7 @@ class HttpRequest {
 	const(ubyte)[] leftoverDataFromLastTime;
 
 	bool handleIncomingData(scope const ubyte[] dataIn) {
-		bool stillAlive = true;
+		bool wasRedirected = false;
 		debug(arsd_http2) writeln("handleIncomingData, state: ", state);
 		if(state == State.waitingForResponse) {
 			state = State.readingHeaders;
@@ -1963,10 +1661,11 @@ class HttpRequest {
 							continue; // still doing headers
 						}
 
-						if(this.requestParameters.method == HttpVerb.HEAD)
-							state = State.complete;
-						else
+						if(this.requestParameters.method == HttpVerb.HEAD) {
+							this.markComplete();
+						} else {
 							state = State.readingBody;
+						}
 						//writeln(state, bodyReadingState);//responseData.headers);
 
 						position++; // skip the terminating \n
@@ -2217,10 +1916,10 @@ class HttpRequest {
 							client.populateCookies(this); // they might have changed in the previous redirection cycle!
 						}
 						state = State.unsent;
-						stillAlive = false;
-						sendPrivate(false);
+						wasRedirected = true;
+						sendPrivate();
 					} else {
-						state = State.complete;
+						this.markComplete();
 						// FIXME
 						//if(closeSocketWhenComplete)
 							//socket.close();
@@ -2234,10 +1933,306 @@ class HttpRequest {
 		else
 			leftoverDataFromLastTime = null;
 
-		return stillAlive;
+		return wasRedirected;
 	}
 
 	}
+
+	private void markComplete() {
+		state = State.complete;
+		cancelTimeout();
+		if(this.assignedSocket) {
+			if(closeSocketWhenComplete) {
+				this.assignedSocket.close();
+				loseSocket(this.requestParameters.host, this.requestParameters.port, this.requestParameters.ssl, assignedSocket);
+			} else {
+				// FIXME: unregister from event loop or something? it is waiting for US to use it again, or for it to be closed remotely.
+			}
+			activeRequestOnSocket.remove(this.assignedSocket);
+			this.assignedSocket = null;
+			debug(arsd_http2_verbose) writeln("null 3");
+		}
+	}
+
+	private arsd.core.UserModeTimer timeout;
+	private void markTimedOut() {
+		if(this.state == State.aborted || this.state == State.complete)
+			return;
+		abortPrivate(5, (this.state == State.connecting) ?  this.responseData.codeText = "Connect timed out" : this.responseData.codeText = "Request timed out");
+	}
+
+	private void cancelTimeout() {
+		if(this.timeout)
+			this.timeout.cancel();
+	}
+
+	private void resetTimeout() {
+		cancelTimeout();
+		this.timeout = new arsd.core.UserModeTimer(requestParameters.timeoutFromInactivity, &markTimedOut, false);
+	}
+
+	private void nowReadable() {
+		if(assignedSocket)
+		handleSocketStateChange(assignedSocket, true, false);
+	}
+
+	private void nowWritable() {
+		debug(arsd_http2_verbose) writeln("now writabe ", cast(void*) assignedSocket);
+		if(assignedSocket)
+		handleSocketStateChange(assignedSocket, false, true);
+	}
+
+	private void pollReusableSocket(Socket sock) {
+		assert(sock is assignedSocket);
+		auto readset = new SocketSet();
+		auto writeset = new SocketSet();
+		readset.add(sock);
+		writeset.add(sock);
+		auto got = Socket.select(readset, writeset, null, 0.msecs);
+		if(got < 0)
+			throw new Exception("select");
+		bool isReadable;
+		bool isWritable;
+		if(got > 0) {
+			isReadable = readset.isSet(sock) ? true : false;
+			isWritable = writeset.isSet(sock) ? true : false;
+		}
+
+		handleSocketStateChange(sock, isReadable, isWritable);
+	}
+
+	private void handleSocketStateChange(Socket sock, bool isReadable, bool isWriteable) {
+		try
+			handleSocketStateChangeImpl(sock, isReadable, isWriteable);
+		catch(Throwable t)
+			abortPrivate(2, t.msg);
+	}
+
+	private void handleSocketStateChangeImpl(Socket sock, bool isReadable, bool isWriteable) {
+		auto request = this;
+		debug(arsd_http2_verbose) writeln(request.state, " on ", cast(void*) assignedSocket, " ", isReadable, "/", isWriteable);
+
+		keep_processing:
+		if(request.state == State.aborted)
+			return;
+
+		if(!isReadable && !isWriteable) {
+			// when connect first returns EINPROGRESS, we need to wait for a write event,
+			// before that comes in it will not even report any other error if you explicitly check
+			if(request.state == State.connecting)
+				goto registerWriteable;
+			return;
+		}
+
+		// FIXME: if it is readable and we get a eof or error, how we handle?
+
+		if(request.state == State.connecting) {
+			// if either read OR write ready...
+			import core.stdc.stdint;
+			int32_t error;
+			int retopt = sock.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
+			debug(arsd_http2_verbose) writeln("ERROR: ", retopt, " / ", error);
+			if(retopt < 0 || error != 0) {
+				string msg;
+				try {
+					msg = "connection failed - " ~ formatSocketError(error);
+				} catch(Exception e) {
+					msg = "connection failed";
+				}
+
+				abortPrivate(2, msg);
+				return;
+			} else {
+				if(auto s = cast(SslClientSocket) sock) {
+					sslProceed(request, s, isReadable, isWriteable);
+					goto keep_processing; // sslProceed changes state in all paths from here
+				} else {
+					request.state = State.sendingHeaders;
+				}
+			}
+		}
+
+		if(request.state == State.sslConnectPendingRead) {
+			if(isReadable) {
+				sslProceed(request, cast(SslClientSocket) sock, isReadable, isWriteable);
+				if(!isReadable)
+					goto registerReadable;
+				goto keep_processing;
+			} else {
+				registerReadable:
+				if(auto ecs = cast(EventCapableSocket) sock) {
+					version(Posix) ecs.eventToken.subscribeToEvents(true, false, false, &nowReadable);
+					return;
+				}
+			}
+		}
+		if(request.state == State.sslConnectPendingWrite) {
+			if(isWriteable) {
+				sslProceed(request, cast(SslClientSocket) sock, isReadable, isWriteable);
+				if(!isWriteable)
+					goto registerWriteable;
+				goto keep_processing;
+			} else {
+				registerWriteable:
+				if(auto ecs = cast(EventCapableSocket) sock) {
+					version(Posix) ecs.eventToken.subscribeToEvents(false, true, false, &nowWritable);
+					return;
+				}
+
+			}
+		}
+
+		if(request.state == State.sendingHeaders || request.state == State.sendingBody) {
+			if(isWriteable) {
+				send_more:
+				resetTimeout();
+
+				assert(request.sendBuffer.length);
+				auto sent = sock.send(request.sendBuffer);
+				debug(arsd_http2_verbose) writeln(cast(void*) sock, "<send>", cast(string) request.sendBuffer, "</send>");
+				if(sent <= 0) {
+					if(wouldHaveBlocked()) {
+						if(auto ecs = cast(EventCapableSocket) sock) {
+							version(Posix) ecs.eventToken.subscribeToEvents(false, true, false, &nowWritable);
+						}
+
+						return;
+					}
+
+					abortPrivate(3, "send failed to server: " ~ lastSocketError(sock));
+					return;
+				}
+				request.sendBuffer = request.sendBuffer[sent .. $];
+				if(request.sendBuffer.length == 0) {
+					request.state = State.waitingForResponse;
+
+					debug(arsd_http2_verbose) writeln("all sent");
+				} else {
+					goto send_more;
+				}
+				if(request.onDataReceived)
+					request.onDataReceived(request);
+			} else {
+				if(auto ecs = cast(EventCapableSocket) sock) {
+					version(Posix) ecs.eventToken.subscribeToEvents(false, true, false, &nowWritable);
+					return;
+				}
+			}
+		}
+
+
+		if(isReadable) {
+			keep_going:
+			resetTimeout();
+
+			if(reusableBuffer is null)
+				reusableBuffer = new ubyte[](32 * 1024);
+			auto buffer = reusableBuffer;
+
+			auto got = sock.receive(buffer);
+			debug(arsd_http2_verbose) { if(got < 0) writeln(lastSocketError(sock)); else writeln("====PACKET ",got,"=====",cast(string)buffer[0 .. got],"===/PACKET==="); }
+			if(got < 0) {
+				if(wouldHaveBlocked()) {
+					// FIXME: register with event loop for read
+					if(auto ecs = cast(EventCapableSocket) sock) {
+						version(Posix) ecs.eventToken.subscribeToEvents(true, false, false, &nowReadable);
+					}
+
+					return;
+				}
+
+				debug(arsd_http2) writeln("receive error");
+				if(request.state != State.complete) {
+					abortPrivate(3, "receive error from server: " ~ lastSocketError(sock));
+					return;
+				}
+			} else if(got == 0) {
+				// remote side disconnected
+				debug(arsd_http2) writeln("remote disconnect");
+
+				// should we still abort if it is already complete? FIXME
+				abortPrivate(3, "server disconnected");
+			} else {
+				// data available
+				bool wasRedirected;
+
+				try {
+					wasRedirected = request.handleIncomingData(buffer[0 .. got]);
+					/+
+						state needs to be set and public
+						requestData.content/contentText needs to be around
+						you need to be able to clear the content and keep processing for things like event sources.
+						also need to be able to abort it.
+
+						and btw it should prolly just have evnet source as a pre-packaged thing.
+					+/
+				} catch (Exception e) {
+					debug(arsd_http2_verbose) { import std.stdio; writeln("handle incoming data exception: " , e); }
+
+					abortPrivate(4, e.msg);
+				}
+
+				if(request.state == HttpRequest.State.complete || request.state == HttpRequest.State.aborted) {
+					//import std.stdio; writeln(cast(void*) sock, " ", stillAlive, " ", request.state);
+					if(assignedSocket) {
+						activeRequestOnSocket.remove(this.assignedSocket);
+						this.assignedSocket = null;
+						debug(arsd_http2_verbose) writeln("null 4 ", request.state);
+					}
+				// reuse the socket for another pending request, if we can
+				} else {
+					goto keep_going; // hasn't blocked yet, we want to keep reading until it does
+				}
+			}
+
+			if(request.onDataReceived)
+				request.onDataReceived(request);
+
+			version(with_openssl)
+			if(auto s = cast(SslClientSocket) sock) {
+				// select doesn't handle the case with stuff
+				// left in the ssl buffer so i'm checking it separately
+				if(s.dataPending()) {
+					goto keep_going;
+				}
+			}
+		} else {
+			if(auto ecs = cast(EventCapableSocket) sock) {
+				version(Posix) ecs.eventToken.subscribeToEvents(true, false, false, &nowReadable);
+				return;
+			}
+		}
+
+	}
+
+	private static void sslProceed(HttpRequest request, SslClientSocket s, ref bool isReadable, ref bool isWriteable) {
+		try {
+			auto code = s.do_ssl_connect();
+			switch(code) {
+				case 0:
+					request.state = State.sendingHeaders;
+				break;
+				case SSL_ERROR_WANT_READ:
+					request.state = State.sslConnectPendingRead;
+					isReadable = false; // if it wants more it stands to reason we cannot provide it
+				break;
+				case SSL_ERROR_WANT_WRITE:
+					request.state = State.sslConnectPendingWrite;
+					isWriteable = false;
+				break;
+				default:
+					assert(0);
+			}
+		} catch(Exception e) {
+			request.abortPrivate(2, e.msg);
+		}
+	}
+
+	private void isReadable() {
+		if(timeout)
+			timeout.cancel();
+	}
+
 }
 
 unittest {
@@ -3261,6 +3256,92 @@ string lastSocketError(Socket sock) {
 	return std.socket.lastSocketError();
 }
 
+class EventCapableSocket : Socket {
+
+	// so on Windows ima prolly have to call WSAEventSelect unless i rewrite the openssl code to avoid its wrapper thing and i feed it the data (good idea anyway tbh)
+	// but sigh so much boring work to set up.
+
+	this(AddressFamily af, SocketType type = SocketType.STREAM) {
+		version(Windows) __traits(getMember, this, "_blocking") = true; // lol longstanding phobos bug setting this to false on init
+		super(af, type);
+
+		version(Windows) {
+			readinessEvent = arsd.core.Win32Enforce!CreateEvent(null, true, false, null);
+			auto ret = WSAEventSelect(this.handle, readinessEvent, 1/*FD_READ*/ | 2/*FD_WRITE*/ | 0x10/*FD_CONNECT*/ | 0x20 /* FD_CLOSE */);
+			if(ret == SOCKET_ERROR)
+				throw new arsd.core.WindowsApiException("WSAEventSelect", GetLastError());
+
+			eventToken = arsd.core.getThisThreadEventLoop().addCallbackOnHandleReady(readinessEvent, new arsd.core.CallbackHelper(&readinessEventSet));
+		}
+
+		version(Posix)
+		eventToken = arsd.core.getThisThreadEventLoop().registerFd(this.handle);
+	}
+
+	version(Windows) {
+		import core.sys.windows.windows;
+		HANDLE readinessEvent;
+
+		void readinessEventSet() {
+			if(!this.handle)
+				return; // must be already closed and just arriving late due to async stuff, we can ignore
+			try {
+				WSANETWORKEVENTS ne;
+				//import arsd.core; writeln(cast(void*) this.handle);
+				auto ret = WSAEnumNetworkEvents(this.handle, readinessEvent, &ne);
+				if(ret)
+					throw new arsd.core.WindowsApiException("WSAEnumNetworkEvents", GetLastError());
+				bool isReadable = (ne.lNetworkEvents & (1 | 0x10 | 0x20)) ? true : false;
+				bool isWritable = (ne.lNetworkEvents & (2 | 0x10 | 0x20)) ? true : false;
+				//arsd.core.writeln(cast(void*) this, " signaled ", isReadable, " ", isWritable, " ", ne.lNetworkEvents, " ", ne.iErrorCode[]);
+
+				if(!isReadable && !isWritable) {
+					// idk why it is 0 but we'll just pretend we got what we need
+					// it will return if the call would block anyway
+					isReadable = true;
+					isWritable = true;
+				}
+
+				if(this.associatedWebsocket) {
+					this.associatedWebsocket.handleSocketStateChange(isReadable, isWritable);
+				} else if(auto preq = this in HttpRequest.activeRequestOnSocket) {
+					auto req = *preq;
+
+					req.handleSocketStateChange(this, isReadable, isWritable);
+				}
+			} catch(Throwable t) {
+				if(this.associatedWebsocket) {
+					this.associatedWebsocket.markError(t);
+				} else if(auto preq = this in HttpRequest.activeRequestOnSocket) {
+					auto req = *preq;
+					req.abortPrivate(2, t.msg);
+				}
+			}
+		}
+	}
+
+	override void close() scope nothrow @nogc @trusted {
+		(cast(void delegate() @nogc nothrow scope @trusted) &closeLol)();
+	}
+
+	void closeLol() {
+		if(eventToken) {
+			eventToken.unregister();
+			eventToken = typeof(eventToken).init;
+		}
+		version(Windows) {
+			if(readinessEvent) {
+				arsd.core.Win32Enforce!CloseHandle(readinessEvent);
+				readinessEvent = null;
+			}
+		}
+		super.close();
+	}
+
+	arsd.core.ICoreEventLoop.UnregisterToken eventToken;
+	WebSocket associatedWebsocket;
+}
+
 // From sslsocket.d, but this is the maintained version!
 version(use_openssl) {
 	alias SslClientSocket = OpenSslSocket;
@@ -3644,7 +3725,7 @@ version(use_openssl) {
 		}
 	}
 
-	class OpenSslSocket : Socket {
+	class OpenSslSocket : EventCapableSocket {
 		private SSL* ssl;
 		private SSL_CTX* ctx;
 		private void initSsl(bool verifyPeer, string hostname) {
@@ -3804,11 +3885,6 @@ version(use_openssl) {
 			if(ssl) OpenSSL.SSL_shutdown(ssl);
 			super.close();
 			freeSsl();
-		}
-
-		this(socket_t sock, AddressFamily af, string hostname, bool verifyPeer = true) {
-			super(sock, af);
-			initSsl(verifyPeer, hostname);
 		}
 
 		void freeSsl() @nogc nothrow {
@@ -4387,8 +4463,50 @@ class WebSocket : arsd.core.WebSocketBase {
 	private ushort port;
 	private bool ssl;
 
-	private MonoTime timeoutFromInactivity;
-	private MonoTime nextPing;
+	private arsd.core.UserModeTimer timeoutFromInactivity;
+	private arsd.core.UserModeTimer nextPing;
+	private void resetTimeoutFromInactivity() {
+		if(timeoutFromInactivity)
+			timeoutFromInactivity.cancel();
+		timeoutFromInactivity = new arsd.core.UserModeTimer(this.config.timeoutFromInactivity, &markTimedOut, false);
+	}
+	private void markTimedOut() {
+		if(this.onerror)
+			this.onerror();
+
+		if(this.onclose)
+			this.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, null));
+
+		this.readyState_ = CLOSED;
+		llclose();
+	}
+
+	private Throwable error_;
+
+	private void markError(Throwable t) {
+		error_ = t;
+		if(this.onerror)
+			this.onerror();
+
+		this.readyState_ = CLOSED;
+		llclose();
+	}
+	// FIXME: call this in more places in the blocking api
+	// and also maybe make connect() be a wait for completion for the ocnnect event and implicitly start it on construction
+	private void rethrowError() {
+		if(error_)
+			throw error_;
+	}
+	void cancelTimers() {
+		if(nextPing) {
+			nextPing.cancel();
+			nextPing = null;
+		}
+		if(timeoutFromInactivity) {
+			timeoutFromInactivity.cancel();
+			timeoutFromInactivity = null;
+		}
+	}
 
 	/++
 		wss://echo.websocket.org
@@ -4414,64 +4532,55 @@ class WebSocket : arsd.core.WebSocketBase {
 			} else
 				throw new Exception("SSL not compiled in");
 		} else
-			socket = new Socket(family(uri.unixSocketPath), SocketType.STREAM);
-
-		socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-		cookies = config.cookies;
-	}
-
-	/++
-
-	+/
-	/// Group: foundational
-	void connect() {
-		this.isClient = true;
+			socket = new EventCapableSocket(family(uri.unixSocketPath), SocketType.STREAM);
 
 		socket.blocking = false;
+		socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+		socket.associatedWebsocket = this;
+		cookies = config.cookies;
+		this.isClient = true;
+	}
 
-		if(uri.unixSocketPath)
-			socket.connect(new UnixAddress(uri.unixSocketPath));
-		else
-			socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
+	private void isNowReadable() {
+		handleSocketStateChange(true, false);
+	}
 
+	private void isNowWritable() {
+		handleSocketStateChange(false, true);
+	}
 
-		auto readSet = new SocketSet();
-		auto writeSet = new SocketSet();
-
-		readSet.reset();
-		writeSet.reset();
-
-		readSet.add(socket);
-		writeSet.add(socket);
-
-		auto selectGot = Socket.select(readSet, writeSet, null, config.timeoutFromInactivity);
-		if(selectGot == -1) {
-			// interrupted
-
-			throw new Exception("Websocket connection interrupted - retry might succeed");
-		} else if(selectGot == 0) {
-			// time out
-			socket.close();
-			throw new Exception("Websocket connection timed out");
+	private void handleSocketStateChange(bool isReadable, bool isWritable) {
+		//import arsd.core; writeln("handleSocketStateChange ", cast(void*) this);
+		if(this.readyState == CONNECTING) {
+			workOnConnect(isReadable, isWritable);
 		} else {
-			if(writeSet.isSet(socket) || readSet.isSet(socket)) {
-				import core.stdc.stdint;
-				int32_t error;
-				int retopt = socket.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
-				if(retopt < 0 || error != 0) {
-					socket.close();
-					throw new Exception("Websocket connection failed - " ~ formatSocketError(error));
-				} else {
-					// FIXME: websocket handshake could and really should be async too.
-					socket.blocking = true; // just convenience
-					if(auto s = cast(SslClientSocket) socket) {
-						s.do_ssl_connect();
-					} else {
-						// we're ready
-					}
-				}
+			readyToRead(this);
+			if(wouldHaveBlocked()) {
+				waitForRead();
+				return;
 			}
+			llsend(null);
 		}
+	}
+
+	private void waitForRead() {
+		if(socket is null || socket.eventToken is arsd.core.ICoreEventLoop.UnregisterToken.init)
+			return;
+		// import arsd.core; writeln("waitForRead");
+		version(Posix) socket.eventToken.subscribeToEvents(true, false, false, &isNowReadable);
+	}
+	private void waitForWrite() {
+		if(socket is null || socket.eventToken is arsd.core.ICoreEventLoop.UnregisterToken.init)
+			return;
+		// import arsd.core; writeln("waitForWrite");
+		version(Posix) socket.eventToken.subscribeToEvents(false, true, false, &isNowWritable);
+	}
+
+	private int connectionWorkState;
+
+	private ubyte[] sendBuffer;
+	private void prepareInitialSendBuffer() {
+		connectionWorkState = 4;
 
 		auto uri = this.uri.path.length ? this.uri.path : "/";
 		if(this.uri.query.length) {
@@ -4481,8 +4590,7 @@ class WebSocket : arsd.core.WebSocketBase {
 
 		// the headers really shouldn't be bigger than this, at least
 		// the chunks i need to process
-		ubyte[4096] bufferBacking = void;
-		ubyte[] buffer = bufferBacking[];
+		ubyte[] buffer = new ubyte[](4096);
 		size_t pos;
 
 		void append(in char[][] items...) {
@@ -4535,39 +4643,41 @@ class WebSocket : arsd.core.WebSocketBase {
 
 		append("\r\n");
 
-		auto remaining = buffer[0 .. pos];
-		//import std.stdio; writeln(host, " " , port, " ", cast(string) remaining);
-		while(remaining.length) {
-			auto r = socket.send(remaining);
-			if(r < 0)
-				throw new Exception(lastSocketError(socket));
+		sendBuffer = buffer[0 .. pos];
+	}
+	private ubyte[] connectHandshakeBuffer;
+	private ubyte[] connectHandshakeBufferUsed;
+	private void tryToReceiveHandshake() {
+		// import arsd.core; writeln("tryToReceiveHandshake");
+		const(ubyte)[] used = connectHandshakeBufferUsed;
+
+		bool more() {
+			if(connectHandshakeBufferUsed.length + 1024 >= connectHandshakeBuffer.length)
+				connectHandshakeBuffer.length += 4096;
+			auto r = socket.receive(connectHandshakeBuffer[connectHandshakeBufferUsed.length .. $]);
+
+			if(r < 0) {
+				if(wouldHaveBlocked())
+					return true;
+				else
+					throw new Exception(lastSocketError(socket));
+			}
 			if(r == 0)
 				throw new Exception("unexpected connection termination");
-			remaining = remaining[r .. $];
+			//import std.stdio;writef("%s", cast(string) connectHandshakeBuffer[connectHandshakeBufferUsed.length .. connectHandshakeBufferUsed.length + r]);
+
+			connectHandshakeBufferUsed = connectHandshakeBuffer[0 .. connectHandshakeBufferUsed.length + r];
+			used = connectHandshakeBufferUsed;
+
+			return false;
 		}
 
-		// the response shouldn't be especially large at this point, just
-		// headers for the most part. gonna try to get it in the stack buffer.
-		// then copy stuff after headers, if any, to the frame buffer.
-		ubyte[] used;
-
-		void more() {
-			auto r = socket.receive(buffer[used.length .. $]);
-
-			if(r < 0)
-				throw new Exception(lastSocketError(socket));
-			if(r == 0)
-				throw new Exception("unexpected connection termination");
-			//import std.stdio;writef("%s", cast(string) buffer[used.length .. used.length + r]);
-
-			used = buffer[0 .. used.length + r];
-		}
-
-		more();
+		if(used.length <  12)
+			if(more()) return;
 
 		import std.algorithm;
 		if(!used.startsWith(cast(ubyte[]) "HTTP/1.1 101"))
-			throw new Exception("didn't get a websocket answer");
+			throw new Exception("didn't get a websocket answer");// ~ cast(string) used[0..4]);
 		// skip the status line
 		while(used.length && used[0] != '\n')
 			used = used[1 .. $];
@@ -4576,14 +4686,14 @@ class WebSocket : arsd.core.WebSocketBase {
 			throw new Exception("Remote server disconnected or didn't send enough information");
 
 		if(used.length < 1)
-			more();
+			if(more()) return;
 
 		used = used[1 .. $]; // skip the \n
 
 		if(used.length == 0)
-			more();
+			if(more()) return;
 
-		// checks on the protocol from ehaders
+		// checks on the protocol from headers
 		bool isWebsocket;
 		bool isUpgrade;
 		const(ubyte)[] protocol;
@@ -4598,17 +4708,17 @@ class WebSocket : arsd.core.WebSocketBase {
 			while(idxColon < used.length && used[idxColon] != ':')
 				idxColon++;
 			if(idxColon == used.length)
-				more();
+				if(more()) return;
 			auto idxStart = idxColon + 1;
 			while(idxStart < used.length && used[idxStart] == ' ')
 				idxStart++;
 			if(idxStart == used.length)
-				more();
+				if(more()) return;
 			auto idxEnd = idxStart;
 			while(idxEnd < used.length && used[idxEnd] != '\r')
 				idxEnd++;
 			if(idxEnd == used.length)
-				more();
+				if(more()) return;
 
 			auto headerName = used[0 .. idxColon];
 			auto headerValue = used[idxStart .. idxEnd];
@@ -4632,16 +4742,16 @@ class WebSocket : arsd.core.WebSocketBase {
 			}
 
 			if(!used.length) {
-				more();
+				if(more()) return;
 			}
 		}
 
+		connectionWorkState++; // now invalid
 
 		if(!isWebsocket)
 			throw new Exception("didn't answer as websocket");
 		if(!isUpgrade)
 			throw new Exception("didn't answer as upgrade");
-
 
 		// FIXME: check protocol if config requested one
 		// FIXME: check accept for the right hash
@@ -4654,8 +4764,123 @@ class WebSocket : arsd.core.WebSocketBase {
 		if(onopen)
 			onopen();
 
-		nextPing = MonoTime.currTime + config.pingFrequency.msecs;
-		timeoutFromInactivity = MonoTime.currTime + config.timeoutFromInactivity;
+		nextPing = new arsd.core.UserModeTimer(config.pingFrequency.msecs, &pingNoArgs, true);
+
+		resetTimeoutFromInactivity();
+		// registerActiveSocket(this); // i did it at the beginning instead
+
+		if(receiveBufferUsedLength)
+			readyToRead(this);
+	}
+	private void pingNoArgs() { ping(); }
+	private void workOnConnect(bool isReadable, bool isWritable) {
+		// import arsd.core;writeln(connectionWorkState);
+
+		assert(readyState_ == CONNECTING);
+
+		moreWork:
+		switch(connectionWorkState) {
+			case 0: // not supposed to happen, user hasn't called connect() yet, but might be a spurious wakeup so not gonna throw
+			break;
+			case 1: // waiting for connection notification from kernel
+				if(isWritable) {
+					{
+						import core.stdc.stdint;
+						int32_t error;
+						int retopt = socket.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
+						if(retopt < 0 || error != 0) {
+							socket.close();
+							throw new Exception("Websocket connection failed - " ~ formatSocketError(error));
+						}
+					}
+					sslConnectionWork:
+					if(auto s = cast(SslClientSocket) socket) {
+						auto code = s.do_ssl_connect();
+						switch(code) {
+							case 0:
+								prepareInitialSendBuffer();
+								goto moreWork;
+							break;
+							case SSL_ERROR_WANT_READ:
+								connectionWorkState = 2;
+								waitForRead();
+								return;
+							case SSL_ERROR_WANT_WRITE:
+								connectionWorkState = 3;
+								waitForWrite();
+								return;
+							default:
+								assert(0);
+						}
+
+					} else {
+						// we're ready
+						prepareInitialSendBuffer();
+						goto moreWork;
+					}
+				}
+			break;
+			case 2: // waiting for read for ssl
+				goto sslConnectionWork;
+			case 3: // waiting for write for ssl
+				goto sslConnectionWork;
+			case 4: // trying to write our part of the handshake
+				while(sendBuffer.length) {
+					auto r = socket.send(sendBuffer);
+					if(r == -1) {
+						if(wouldHaveBlocked()) {
+							waitForWrite();
+							return;
+						} else {
+							throw new Exception(lastSocketError(socket));
+						}
+					} else if(r == 0) {
+						throw new Exception("unexpected write failure by eof while sending websocket handshake");
+					} else {
+						sendBuffer = sendBuffer[r .. $];
+					}
+
+				}
+				if(sendBuffer.length == 0) {
+					sendBuffer = null;
+					connectionWorkState = 5;
+					goto moreWork;
+				}
+			break;
+			case 5: // trying to read the handshake reply
+				tryToReceiveHandshake();
+				waitForRead();
+			break;
+			default: assert(0);
+		}
+	}
+
+	/++
+		Waits for the websocket to connect. You do not have to call this; you can use the [onopen] callback instead.
+
+		History:
+			Prior to October 26, 2026, calling this $(I was) required, as it actually did the connection. Since then, it automatically connects asynchronously, starting in the constructor, whether this function is called or not.
+	+/
+	/// Group: foundational
+	void connect() {
+		if(readyState_ == CONNECTING && connectionWorkState == 0)
+			connectPrivate();
+		arsd.core.getThisThreadEventLoop().run(() => readyState_ != CONNECTING);
+		rethrowError();
+	}
+
+	private void connectPrivate() {
+		assert(readyState == CONNECTING); // should be the initial value
+		assert(connectionWorkState == 0); // not already called
+
+		connectionWorkState++;
+
+		if(uri.unixSocketPath)
+			socket.connect(new UnixAddress(uri.unixSocketPath));
+		else
+			socket.connect(new InternetAddress(host, port)); // FIXME: ipv6 support...
+
+		waitForWrite();
 
 		registerActiveSocket(this);
 	}
@@ -4703,23 +4928,30 @@ class WebSocket : arsd.core.WebSocketBase {
 	}
 
 	protected override void llsend(ubyte[] d) {
+		if(d is null && sendBuffer.length == 0)
+			return;
+
 		if(readyState == CONNECTING)
 			throw new Exception("WebSocket not connected when trying to send. Did you forget to call connect(); ?");
 			//connect();
 			//import std.stdio; writeln("LLSEND: ", d);
+
+		if(sendBuffer.length) {
+			d = sendBuffer ~ d;
+			sendBuffer = null;
+		}
+
 		while(d.length) {
 			auto r = socket.send(d);
 			if(r < 0 && wouldHaveBlocked()) {
-				// FIXME: i should register for a write wakeup
-				version(use_arsd_core) assert(0);
-				import core.thread;
-				Thread.sleep(1.msecs);
-				continue;
+				sendBuffer = d;
+				waitForWrite();
+				return;
 			}
 			//import core.stdc.errno; import std.stdio; writeln(errno);
 			if(r <= 0) {
 				// import std.stdio; writeln(GetLastError());
-				throw new Exception("Socket send failed");
+				throw new Exception("Socket send failed:" ~ lastSocketError(socket));
 			}
 			d = d[r .. $];
 		}
@@ -4728,10 +4960,16 @@ class WebSocket : arsd.core.WebSocketBase {
 	protected override void llshutdown() {
 		// import std.stdio; writeln("LLCLOSE");
 		socket.shutdown(SocketShutdown.SEND);
+		if(nextPing) {
+			nextPing.cancel();
+			nextPing = null;
+		}
 	}
 
 	protected override void llclose() {
 		socket.close();
+		cancelTimers();
+		unregisterAsActiveSocket();
 	}
 
 	protected override void unregisterAsActiveSocket() {
@@ -4746,14 +4984,6 @@ class WebSocket : arsd.core.WebSocketBase {
 	protected override bool connectionClosedInMiddleOfMessage() {
 		return false;
 	}
-
-	private void autoprocess() {
-		// FIXME
-		do {
-			processOnce();
-		} while(lowLevelReceive());
-	}
-
 
 	/++
 		Waits for more data off the low-level socket and adds it to the pending buffer.
@@ -4786,11 +5016,11 @@ class WebSocket : arsd.core.WebSocketBase {
 		return true;
 	}
 
-	private Socket socket;
+	private EventCapableSocket socket;
 
 	// returns true if still active
 	private static bool readyToRead(WebSocket sock) {
-		sock.timeoutFromInactivity = MonoTime.currTime + sock.config.timeoutFromInactivity;
+		sock.resetTimeoutFromInactivity();
 		if(!sock.lowLevelReceive()) {
 			sock.readyState_ = CLOSED;
 
@@ -4800,44 +5030,10 @@ class WebSocket : arsd.core.WebSocketBase {
 			if(sock.onclose)
 				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection lost", false, lastSocketError(sock.socket)));
 
-			unregisterActiveSocket(sock);
-			sock.socket.close();
+			sock.llclose();
 			return false;
 		}
-		while(sock.processOnce().populated) {}
-		return true;
-	}
-
-	// returns true if still active, false if not
-	private static bool timeoutAndPingCheck(WebSocket sock, MonoTime now, Duration* minimumTimeoutForSelect) {
-		auto diff = sock.timeoutFromInactivity - now;
-		if(diff <= 0.msecs) {
-			// it timed out
-			if(sock.onerror)
-				sock.onerror();
-
-			if(sock.onclose)
-				sock.onclose(CloseEvent(CloseEvent.StandardCloseCodes.abnormalClosure, "Connection timed out", false, null));
-
-			sock.readyState_ = CLOSED;
-			unregisterActiveSocket(sock);
-			sock.socket.close();
-			return false;
-		}
-
-		if(minimumTimeoutForSelect && diff < *minimumTimeoutForSelect)
-			*minimumTimeoutForSelect = diff;
-
-		diff = sock.nextPing - now;
-
-		if(diff <= 0.msecs) {
-			//sock.send(`{"action": "ping"}`);
-			sock.ping();
-			sock.nextPing = now + sock.config.pingFrequency.msecs;
-		} else {
-			if(minimumTimeoutForSelect && diff < *minimumTimeoutForSelect)
-				*minimumTimeoutForSelect = diff;
-		}
+		while(sock.processOnce().populated) { }
 
 		return true;
 	}
@@ -4871,60 +5067,13 @@ class WebSocket : arsd.core.WebSocketBase {
 					loopExited = false; // reset it so we can reenter
 			}
 
-			version(use_arsd_core) {
-				loopExited = false;
+			loopExited = false;
 
-				import arsd.core;
-				getThisThreadEventLoop().run(() => WebSocket.activeSockets.length == 0 || loopExited || (localLoopExited !is null && *localLoopExited == true));
-			} else {
-				static SocketSet readSet;
-
-				if(readSet is null)
-					readSet = new SocketSet();
-
-				loopExited = false;
-
-				outermost: while(!loopExited && (localLoopExited is null || (*localLoopExited == false))) {
-					readSet.reset();
-
-					Duration timeout = 3.seconds;
-
-					auto now = MonoTime.currTime;
-					bool hadAny;
-					foreach(sock; activeSockets) {
-						if(!timeoutAndPingCheck(sock, now, &timeout))
-							continue outermost;
-
-						readSet.add(sock.socket);
-						hadAny = true;
-					}
-
-					if(!hadAny) {
-						// import std.stdio; writeln("had none");
-						return;
-					}
-
-					tryAgain:
-						// import std.stdio; writeln(timeout);
-					auto selectGot = Socket.select(readSet, null, null, timeout);
-					if(selectGot == 0) { /* timeout */
-						// timeout
-						continue; // it will be handled at the top of the loop
-					} else if(selectGot == -1) { /* interrupted */
-						goto tryAgain;
-					} else {
-						foreach(sock; activeSockets) {
-							if(readSet.isSet(sock.socket)) {
-								if(!readyToRead(sock))
-									continue outermost;
-								selectGot--;
-								if(selectGot <= 0)
-									break;
-							}
-						}
-					}
-				}
-			}
+			import arsd.core;
+			getThisThreadEventLoop().run(() {
+				// writeln(WebSocket.activeSockets);
+				return WebSocket.activeSockets.length == 0 || loopExited || (localLoopExited !is null && *localLoopExited == true);
+			});
 		}
 
 		private static shared(int) numberOfEventLoops;
@@ -4952,16 +5101,10 @@ class WebSocket : arsd.core.WebSocketBase {
 			s.activeSocketArrayIndex = activeSockets.length;
 			activeSockets ~= s;
 			s.registered = true;
-			version(use_arsd_core) {
-				version(Posix)
-				s.unregisterToken = arsd.core.getThisThreadEventLoop().addCallbackOnFdReadable(s.socket.handle, new arsd.core.CallbackHelper(() { s.readyToRead(s); }));
-			}
+			//version(Posix) s.socket.eventToken.subscribeToEvents(true, false, false, () { s.readyToRead(s); });
 		}
 		void unregisterActiveSocket(WebSocket s) {
-			version(use_arsd_core) {
-				s.unregisterToken.unregister();
-			}
-
+			s.cancelTimers();
 			auto i = s.activeSocketArrayIndex;
 			assert(activeSockets[i] is s);
 
@@ -4975,101 +5118,15 @@ class WebSocket : arsd.core.WebSocketBase {
 
 	private bool registered;
 	private size_t activeSocketArrayIndex;
-	version(use_arsd_core) {
-		static import arsd.core;
-		arsd.core.ICoreEventLoop.UnregisterToken unregisterToken;
-	}
-}
-
-private template imported(string mod) {
-	mixin(`import imported = ` ~ mod ~ `;`);
+	static import arsd.core;
 }
 
 /++
 	Warning: you should call this AFTER websocket.connect or else it might throw on connect because the function sets nonblocking mode and the connect function doesn't handle that well (it throws on the "would block" condition in that function. easier to just do that first)
 +/
-template addToSimpledisplayEventLoop() {
-	import arsd.simpledisplay;
-	void addToSimpledisplayEventLoop(WebSocket ws, imported!"arsd.simpledisplay".SimpleWindow window) {
-		version(use_arsd_core)
-			return; // already done implicitly
-
-		version(Windows)
-		auto event = WSACreateEvent();
-		// FIXME: supposed to close event too
-
-		void midprocess() {
-			version(Windows)
-				ResetEvent(event);
-			if(!ws.lowLevelReceive()) {
-				ws.readyState_ = WebSocket.CLOSED;
-				WebSocket.unregisterActiveSocket(ws);
-				ws.socket.close();
-				return;
-			}
-			while(ws.processOnce().populated) {}
-		}
-
-		version(Posix) {
-			auto reader = new PosixFdReader(&midprocess, ws.socket.handle);
-		} else version(none) {
-			if(WSAAsyncSelect(ws.socket.handle, window.hwnd, WM_USER + 150, FD_CLOSE | FD_READ))
-				throw new Exception("WSAAsyncSelect");
-
-                        window.handleNativeEvent = delegate int(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-                                if(hwnd !is window.impl.hwnd)
-                                        return 1; // we don't care...
-                                switch(msg) {
-                                        case WM_USER + 150: // socket activity
-                                                switch(LOWORD(lParam)) {
-                                                        case FD_READ:
-                                                        case FD_CLOSE:
-								midprocess();
-                                                        break;
-                                                        default:
-                                                                // nothing
-                                                }
-                                        break;
-                                        default: return 1; // not handled, pass it on
-                                }
-                                return 0;
-                        };
-
-		} else version(Windows) {
-			ws.socket.blocking = false; // the WSAEventSelect does this anyway and doing it here lets phobos know about it.
-			//CreateEvent(null, 0, 0, null);
-			if(!event) {
-				throw new Exception("WSACreateEvent");
-			}
-			if(WSAEventSelect(ws.socket.handle, event, 1/*FD_READ*/ | (1<<5)/*FD_CLOSE*/)) {
-				//import std.stdio; writeln(WSAGetLastError());
-				throw new Exception("WSAEventSelect");
-			}
-
-			auto handle = new WindowsHandleReader(&midprocess, event);
-
-			/+
-			static class Ready {}
-
-			Ready thisr = new Ready;
-
-			justCommunication.addEventListener((Ready r) {
-				if(r is thisr)
-					midprocess();
-			});
-
-			import core.thread;
-			auto thread = new Thread({
-				while(true) {
-					WSAWaitForMultipleEvents(1, &event, true, -1/*WSA_INFINITE*/, false);
-					justCommunication.postEvent(thisr);
-				}
-			});
-			thread.isDaemon = true;
-			thread.start;
-			+/
-
-		} else static assert(0, "unsupported OS");
+deprecated("You don't need to call this anymore; just delete your call to it. It automatically integrates now as of October 2026.") template addToSimpledisplayEventLoop() {
+	void addToSimpledisplayEventLoop(WebSocket ws, Object window) {
+		return; // already done implicitly
 	}
 }
 
@@ -5083,6 +5140,16 @@ version(none) {
         enum int FD_CLOSE = 1 << 5;
         enum int FD_READ = 1 << 0;
         enum int WM_USER = 1024;
+}
+
+version(Windows) {
+	import core.stdc.config;
+	struct WSANETWORKEVENTS {
+		c_long lNetworkEvents;
+		int[32] iErrorCode;
+	}
+	extern(Windows)
+	int WSAEnumNetworkEvents(SOCKET, HANDLE, WSANETWORKEVENTS*);
 }
 
 version(Windows) {
