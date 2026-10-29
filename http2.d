@@ -4390,49 +4390,82 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 }
 
 /++
+	A client for a HTTP Server-Sent Event (SSE) source.
+
+	See_Also:
+		[arsd.cgi.EventSourceServer]
+
 	History:
 		Added October 29, 2026
 +/
 class EventSource {
+	/++
+	+/
 	enum ReadyState {
 		CONNECTING,
 		OPEN,
 		CLOSED
 	}
+	/// ditto
+	ReadyState readyState() const { return readyState_; }
+
 	private ReadyState readyState_;
 	private Uri url_;
 
 	private HttpRequest request;
 
-	ReadyState readyState() const { return readyState_; }
+	/++
+	+/
 	Uri url() const { return url_; }
+	/++
+		Always returns true right now since the client here doesn't bother with CORS.
+	+/
 	bool withCredentials() const { return true; }
 
+	/++
+	+/
 	void close() {
-
+		ourError = Error(-1, null);
+		request.abort();
 	}
 
+	/++
+	+/
 	void delegate() onopen;
+	/// ditto
 	void delegate(Message) onmessage;
+	/// ditto
 	void delegate(Error) onerror;
+	/// ditto
 	void delegate(Message) onevent;
 
+	/++
+		The data sent to your [onerror] handler.
+	+/
 	static struct Error {
 		int code;
 		string message;
 	}
 
+	/++
+		The data sent to your [onmessage] or [onevent] handlers.
+
+		When sent to onmessage, the eventName will always be "message".
+	+/
 	static struct Message {
 		string lastEventId;
 		string eventName;
 		string data;
 	}
 
-	this(string uri, Duration timeout = 10.minutes) {
+	/++
+	+/
+	this(string uri, Duration timeout = 30.seconds) {
 		this(Uri(uri), timeout);
 	}
 
-	this(Uri uri, Duration timeout = 10.minutes) {
+	/// ditto
+	this(Uri uri, Duration timeout = 30.seconds) {
 		this.url_ = uri;
 
 		ourError = Error.init;
@@ -4556,6 +4589,9 @@ class EventSource {
 				this.readyState_ = ReadyState.CLOSED;
 
 				if(this.onerror) {
+					if(ourError.code == -1) // intentionally closed by the user, no error to report
+						return;
+
 					// FIXME: auto-reconnect?
 					if(ourError !is Error.init)
 						onerror(ourError);
