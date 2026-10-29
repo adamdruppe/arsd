@@ -755,6 +755,8 @@ class HttpRequest {
 
 	private ICache cache;
 
+	private bool forceNewConnection;
+
 	/++
 		Proxy to use for this request. It should be a URL or `null`.
 
@@ -1036,7 +1038,7 @@ class HttpRequest {
 
 			try {
 				// FIXME: the proxy connection should prolly be async too since send is not supposed to block
-				socket = getOpenSocketOnHost(pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath, pc.verifyPeer);
+				socket = getOpenSocketOnHost(forceNewConnection, pc.proxy, pc.requestParameters.host, pc.requestParameters.port, pc.requestParameters.ssl, pc.requestParameters.unixSocketPath, pc.verifyPeer);
 			} catch(ProxyException e) {
 				// connection refused or timed out (I should disambiguate somehow)...
 				abortPrivate(2, e.msg ~ " from " ~ pc.proxy);
@@ -1291,7 +1293,7 @@ class HttpRequest {
 			loseSocketByKey(key, s);
 		}
 
-		Socket getOpenSocketOnHost(string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
+		Socket getOpenSocketOnHost(bool forceNewConnection, string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
 			Socket openNewConnection() {
 				EventCapableSocket socket;
 				if(ssl) {
@@ -1401,51 +1403,55 @@ class HttpRequest {
 			if(cachedSockets > connectionCacheSize)
 				cleanOldSockets();
 
-			import std.string;
-			auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
+			if(forceNewConnection) {
+				return openNewConnection();
+			} else {
+				import std.string;
+				auto key = format("http%s://%s:%s", ssl ? "s" : "", host, port);
 
-			if(auto hostListing = key in socketsPerHost) {
-				// try to find an available socket that is already open
-				foreach(socket; *hostListing) {
-					if(socket !in activeRequestOnSocket) {
-						// let's see if it has closed since we last tried
-						// e.g. a server timeout or something. If so, we need
-						// to lose this one and immediately open a new one.
-						static SocketSet readSet = null;
-						if(readSet is null)
-							readSet = new SocketSet();
-						readSet.reset();
-						assert(socket !is null);
-						assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
-						readSet.add(socket);
-						auto got = Socket.select(readSet, null, null, 0.msecs /* timeout, want it small since we just checking for eof */);
-						if(got > 0) {
-							// we can read something off this... but there aren't
-							// any active requests. Assume it is EOF and open a new one
+				if(auto hostListing = key in socketsPerHost) {
+					// try to find an available socket that is already open
+					foreach(socket; *hostListing) {
+						if(socket !in activeRequestOnSocket) {
+							// let's see if it has closed since we last tried
+							// e.g. a server timeout or something. If so, we need
+							// to lose this one and immediately open a new one.
+							static SocketSet readSet = null;
+							if(readSet is null)
+								readSet = new SocketSet();
+							readSet.reset();
+							assert(socket !is null);
+							assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
+							readSet.add(socket);
+							auto got = Socket.select(readSet, null, null, 0.msecs /* timeout, want it small since we just checking for eof */);
+							if(got > 0) {
+								// we can read something off this... but there aren't
+								// any active requests. Assume it is EOF and open a new one
 
-							socket.close();
-							loseSocket(host, port, ssl, socket);
-							goto openNew;
+								socket.close();
+								loseSocket(host, port, ssl, socket);
+								goto openNew;
+							}
+							cachedSockets--;
+							return socket;
 						}
-						cachedSockets--;
-						return socket;
 					}
+
+					// if not too many already open, go ahead and do a new one
+					if((*hostListing).length < 6) {
+						auto socket = openNewConnection();
+						(*hostListing) ~= socket;
+						return socket;
+					} else
+						return null; // too many, you'll have to wait
 				}
 
-				// if not too many already open, go ahead and do a new one
-				if((*hostListing).length < 6) {
-					auto socket = openNewConnection();
-					(*hostListing) ~= socket;
-					return socket;
-				} else
-					return null; // too many, you'll have to wait
+				openNew:
+
+				auto socket = openNewConnection();
+				socketsPerHost[key] ~= socket;
+				return socket;
 			}
-
-			openNew:
-
-			auto socket = openNewConnection();
-			socketsPerHost[key] ~= socket;
-			return socket;
 		}
 
 		// stuff used by advanceConnections
@@ -1789,6 +1795,9 @@ class HttpRequest {
 							//else
 								responseData.content ~= newData;
 
+							if(this.onDataReceived)
+								this.onDataReceived(this);
+
 							bodyReadingState.contentLengthRemaining -= newData.length;
 							debug(arsd_http2_verbose) writeln("clr: ", bodyReadingState.contentLengthRemaining, " " , a, " ", can);
 							assert(bodyReadingState.contentLengthRemaining >= 0);
@@ -2005,7 +2014,7 @@ class HttpRequest {
 		try
 			handleSocketStateChangeImpl(sock, isReadable, isWriteable);
 		catch(Throwable t)
-			abortPrivate(2, t.msg);
+			abortPrivate(2, t.toString);
 	}
 
 	private void handleSocketStateChangeImpl(Socket sock, bool isReadable, bool isWriteable) {
@@ -4378,6 +4387,183 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 	}
 
 	return true;
+}
+
+/++
+	History:
+		Added October 29, 2026
++/
+class EventSource {
+	enum ReadyState {
+		CONNECTING,
+		OPEN,
+		CLOSED
+	}
+	private ReadyState readyState_;
+	private Uri url_;
+
+	private HttpRequest request;
+
+	ReadyState readyState() const { return readyState_; }
+	Uri url() const { return url_; }
+	bool withCredentials() const { return true; }
+
+	void close() {
+
+	}
+
+	void delegate() onopen;
+	void delegate(Message) onmessage;
+	void delegate(Error) onerror;
+	void delegate(Message) onevent;
+
+	static struct Error {
+		int code;
+		string message;
+	}
+
+	static struct Message {
+		string lastEventId;
+		string eventName;
+		string data;
+	}
+
+	this(string uri, Duration timeout = 10.minutes) {
+		this(Uri(uri), timeout);
+	}
+
+	this(Uri uri, Duration timeout = 10.minutes) {
+		this.url_ = uri;
+
+		ourError = Error.init;
+		request = new HttpRequest(uri, HttpVerb.GET, null, timeout);
+
+		// don't want to reuse it at all since this is kinda long lived
+		request.forceNewConnection = true;
+		request.closeSocketWhenComplete = true;
+
+		request.onDataReceived = &this.onDataReceived;
+		// Last-Event-ID header tells it where we left off
+
+		request.send();
+	}
+
+	private void resetBufferedEvent() {
+		bufferedEvent.data = null;
+		bufferedEvent.eventName = "message";
+	}
+
+	private string lastEventId;
+	private Error ourError;
+	private Message bufferedEvent;
+	private void dispatchBufferedEvent() {
+		if(onevent)
+			onevent(bufferedEvent);
+		if(onmessage && bufferedEvent.eventName == "message")
+			onmessage(bufferedEvent);
+		resetBufferedEvent();
+	}
+
+	private void onDataReceived(HttpRequest r) {
+		// FIXME: 204 No Content is the server telling us to stop trying to reconnect
+		if(r.state == HttpRequest.State.readingBody) {
+			// at this point, all headers are available, so we need to do initial check
+			// then start reading those events.
+			if(this.readyState_ == ReadyState.CONNECTING) {
+				if(r.responseData.contentType == "text/event-stream") {
+					// lastEventId???
+					this.readyState_ = ReadyState.OPEN;
+					if(this.onopen)
+						this.onopen();
+				} else {
+					ourError =  Error(0, "Didn't get the event type, got " ~ r.responseData.contentType);
+					// let the abort handler actually issue the message...
+					r.abort();
+				}
+			} else if(this.readyState_ == ReadyState.CLOSED) {
+				// straggling data prolly, we don't care
+			} else {
+				void processItem(scope const(char)[] key, scope const(char)[] value) {
+					switch(key) {
+						case "event":
+							// set the event
+							bufferedEvent.eventName = value.idup;
+						break;
+						case "id":
+							// set the last event id value
+							bufferedEvent.lastEventId = value.idup;
+						break;
+						case "data":
+							// append buffered data + \n
+							bufferedEvent.data ~= value;
+							bufferedEvent.data ~= "\n";
+						break;
+						case "retry":
+							// if it is just digits, set reconnect time. otherwise, ignore
+							// FIXME
+						default:
+							// ignore it
+					}
+				}
+
+				void processLine(scope const(char)[] line) {
+					import arsd.core;
+					auto colon = line.indexOf(":");
+					if(colon == 0)
+						return; // comment line, no work
+					if(colon == -1) {
+						if(line.length)
+							processItem(line, null);
+						else
+							dispatchBufferedEvent();
+					} else {
+						auto key = line[0 .. colon];
+						auto value = line[colon + 1 .. $];
+						if(value.length && value[0] == ' ')
+							value = value[1 ..$];
+						processItem(key, value);
+					}
+
+				}
+				// FIXME: i need to confirm that this works if it is encrypted and/or compressed too
+				const(char)[] sofar = cast(const(char)[]) request.responseData.content;
+				size_t sol;
+				bool justSawCr;
+				foreach(idx, ch; sofar) {
+					if(ch == 13) {
+						processLine(sofar[sol .. idx]);
+						sol = idx + 1;
+						justSawCr = true;
+					} else if(ch == 10) {
+						if(!justSawCr)
+							processLine(sofar[sol .. idx]);
+						sol = idx + 1;
+						justSawCr = false;
+					} else {
+						justSawCr = false;
+					}
+				}
+				request.responseData.content = request.responseData.content[sol .. $];
+			}
+		} else if(r.state == HttpRequest.State.complete) {
+				this.readyState_ = ReadyState.CLOSED;
+
+				if(this.onerror) {
+					onerror(Error(0, "Connection closed by server"));
+					// FIXME: auto-reconnect?
+				}
+		} else if(r.state == HttpRequest.State.aborted) {
+				this.readyState_ = ReadyState.CLOSED;
+
+				if(this.onerror) {
+					// FIXME: auto-reconnect?
+					if(ourError !is Error.init)
+						onerror(ourError);
+					else
+						onerror(Error(r.responseData.code, r.responseData.codeText));
+				}
+		}
+	}
 }
 
 public import arsd.core : WebSocketOpcode, WebSocketFrame;
