@@ -1986,6 +1986,24 @@ enum CornerStyle {
 	roundedSlightly,
 }
 
+private struct EventLoopAnchor {
+	int refcount;
+	void addRef() {
+		if(refcount == 0) {
+			getThisThreadEventLoop(EventLoopType.Ui).addAnchor("arsd.simpledisplay");
+		}
+
+		refcount++;
+	}
+
+	void detach() {
+		refcount = 0;
+
+		getThisThreadEventLoop().removeAnchor("arsd.simpledisplay");
+	}
+}
+private EventLoopAnchor eventLoopAnchor;
+
 /++
 	The flagship window class.
 
@@ -2300,6 +2318,8 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 
 		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild || (customizationFlags & WindowFlags.transient))
 			beingOpenKeepsAppOpen = false;
+		else
+			eventLoopAnchor.addRef();
 	}
 
 	/// ditto
@@ -3059,29 +3079,16 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	{
 		setEventHandlers(eventHandlers);
 
-		version(with_eventloop) {
-			// delegates event loop to my other module
-			version(X11)
-				XFlush(display);
+		EventLoop el = EventLoop(pulseTimeout, handlePulse);
 
-			import arsd.eventloop;
-			auto handle = setInterval(handlePulse, cast(int) pulseTimeout);
-			scope(exit) clearInterval(handle);
-
-			loop();
+		if((blockingMode & BlockingMode.onlyIfNotNested) && el.impl.refcount > 1)
 			return 0;
-		} else {
-			EventLoop el = EventLoop(pulseTimeout, handlePulse);
 
-			if((blockingMode & BlockingMode.onlyIfNotNested) && el.impl.refcount > 1)
-				return 0;
-
-			return el.run(
-				((blockingMode & 0x0f) == BlockingMode.untilApplicationQuits) ?
-					null :
-					&this.notClosed
-			);
-		}
+		return el.run(
+			((blockingMode & 0x0f) == BlockingMode.untilApplicationQuits) ?
+				null :
+				&this.notClosed
+		);
 	}
 
 	/++
@@ -3862,32 +3869,17 @@ public:
 private:
 	private import core.time : MonoTime;
 
-	version(Posix) {
-		__gshared int customEventFDRead = -1;
-		__gshared int customEventFDWrite = -1;
-		__gshared int customSignalFD = -1;
-	} else version(Windows) {
-		__gshared HANDLE customEventH = null;
-	}
-
 	// wake up event processor
 	static bool eventWakeUp () {
-		version(X11) {
-			import core.sys.posix.unistd : write;
-			ulong n = 1;
-			if (customEventFDWrite >= 0) write(customEventFDWrite, &n, n.sizeof);
-			return true;
-		} else version(Windows) {
-			if (customEventH !is null) SetEvent(customEventH);
-			return true;
-		} else version(OSXCocoa) {
+		arsd.core.getThisThreadEventLoop(arsd.core.EventLoopType.Ui).wake();
+		return true;
+		/+
+		version(OSXCocoa) {
 			if(globalAppDelegate)
 				globalAppDelegate.performSelectorOnMainThread(sel_registerName("sdpyCustomEventWakeup:"), null, false);
 			return true;
-		} else {
-			// not implemented for other OSes
-			return false;
 		}
+		+/
 	}
 
 	static struct QueuedEvent {
@@ -4641,12 +4633,6 @@ struct EventLoop {
 		ICoreEventLoop.exitApplication();
 	}
 
-	version(linux)
-	ref void delegate(int) signalHandler() {
-		assert(impl !is null);
-		return impl.signalHandler;
-	}
-
 	__gshared static EventLoopImpl* impl;
 }
 
@@ -4671,7 +4657,6 @@ struct EventLoopImpl {
 	bool notExited = true;
 
 	version(Emscripten) {
-		void delegate(int) signalHandler;
 		static import unix = core.sys.posix.unistd;
 		static import err = core.stdc.errno;
 	} else
@@ -4680,23 +4665,11 @@ struct EventLoopImpl {
 		static import unix = core.sys.posix.unistd;
 		static import err = core.stdc.errno;
 		import core.sys.linux.timerfd;
-
-		void delegate(int) signalHandler;
 	}
 	else
 	version(Posix) {
 		static import unix = core.sys.posix.unistd;
 	}
-
-	version(X11) {
-		int pulseFd = -1;
-		version(Emscripten) {} else
-		version(linux) ep.epoll_event[16] events = void;
-	} else version(Windows) {
-		Timer pulser;
-		HANDLE[] handles;
-	}
-
 
 	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
 	/// to call this, as it's not recommended to share window between threads.
@@ -4717,43 +4690,14 @@ struct EventLoopImpl {
 		}
 	}
 
-	version(with_eventloop)
-	void initialize(long pulseTimeout) {}
-	else
+	Timer pulser;
+
 	void initialize(long pulseTimeout) @system {
-		version(Windows) {
-			if(pulseTimeout && handlePulse !is null)
-				pulser = new Timer(cast(int) pulseTimeout, handlePulse);
+		if(pulseTimeout && handlePulse !is null)
+			pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
-			if (customEventH is null) {
-				customEventH = CreateEvent(null, FALSE/*autoreset*/, FALSE/*initial state*/, null);
-				if (customEventH !is null) {
-					handles ~= customEventH;
-				} else {
-					// this is something that should not be; better be safe than sorry
-					throw new Exception("can't create eventfd for custom event processing");
-				}
-			}
-
-			SimpleWindow.processAllCustomEvents(); // process events added before event object creation
-		}
-
-		version(Emscripten) {
-
-		} else version(linux) {
-			prepareEventLoop();
-			{
-				auto display = XDisplayConnection.get;
-				// adding Xlib file
-				ep.epoll_event ev = void;
-				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-				ev.events = ep.EPOLLIN;
-				ev.data.fd = display.fd;
-				if(ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, display.fd, &ev) == -1)
-					throw new Exception("add x fd");// ~ to!string(epollFd));
-				displayFd = display.fd;
-			}
-
+		version(none) {
+			/+
 			if(pulseTimeout && handlePulse !is null) {
 				pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
 				if(pulseFd == -1)
@@ -4768,38 +4712,18 @@ struct EventLoopImpl {
 
 				if(timerfd_settime(pulseFd, 0, &value, null) == -1)
 					throw new Exception("couldn't make pulse timer");
-
-				ep.epoll_event ev = void;
-				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-				ev.events = ep.EPOLLIN;
-				ev.data.fd = pulseFd;
-				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, pulseFd, &ev);
 			}
+			+/
 
-			// eventfd for custom events
-			if (customEventFDWrite == -1) {
-				customEventFDWrite = eventfd(0, 0);
-				customEventFDRead = customEventFDWrite;
-				if (customEventFDRead >= 0) {
-					ep.epoll_event ev = void;
-					{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-					ev.events = ep.EPOLLIN;
-					ev.data.fd = customEventFDRead;
-					ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customEventFDRead, &ev);
-				} else {
-					// this is something that should not be; better be safe than sorry
-					throw new Exception("can't create eventfd for custom event processing");
-				}
-			}
-
+			/+
 			if (customSignalFD == -1) {
 				import core.sys.linux.sys.signalfd;
 
 				sigset_t sigset;
 				auto err = sigemptyset(&sigset);
 				assert(!err);
-				err = sigaddset(&sigset, SIGINT);
-				assert(!err);
+				//err = sigaddset(&sigset, SIGINT);
+				//assert(!err);
 				err = sigaddset(&sigset, SIGHUP);
 				assert(!err);
 				err = sigprocmask(SIG_BLOCK, &sigset, null);
@@ -4814,22 +4738,10 @@ struct EventLoopImpl {
 				ev.data.fd = customSignalFD;
 				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, customSignalFD, &ev);
 			}
-		} else version(Posix) {
-			prepareEventLoop();
-			auto display = XDisplayConnection.get;
-			displayFd = display.fd;
-			if (customEventFDRead == -1) {
-				int[2] bfr;
-				import core.sys.posix.unistd;
-				auto ret = pipe(bfr);
-				if(ret == -1) throw new Exception("pipe");
-				customEventFDRead = bfr[0];
-				customEventFDWrite = bfr[1];
-			}
-
+			+/
 		}
 
-		SimpleWindow.processAllCustomEvents(); // process events added before event FD creation
+		SimpleWindow.processAllCustomEvents(); // process events added before loop creation
 
 		version(Posix) {
 			this.mtLock();
@@ -4842,14 +4754,9 @@ struct EventLoopImpl {
 	}
 
 	bool disposed = true;
-	version(X11)
-		int displayFd = -1;
 
 	ICoreEventLoop.UnregisterToken[] unregisters;
 
-	version(with_eventloop)
-	void dispose() {}
-	else
 	void dispose() @system {
 		disposed = true;
 		loopInitialized = false;
@@ -4858,38 +4765,9 @@ struct EventLoopImpl {
 			urt.unregister();
 		unregisters = null;
 
-		version(X11) {
-			if(pulseFd != -1) {
-				import unix = core.sys.posix.unistd;
-				unix.close(pulseFd);
-				pulseFd = -1;
-			}
-			if(customSignalFD != -1) {
-				import unix = core.sys.posix.unistd;
-				unix.close(customSignalFD);
-				customSignalFD = -1;
-			}
-
-			version(Emscripten) {} else
-			version(linux)
-			if(displayFd != -1) {
-				// clean up xlib fd when we exit, in case we come back later e.g. X disconnect and reconnect with new FD, don't want to still keep the old one around
-				ep.epoll_event ev = void;
-				{ import core.stdc.string : memset; memset(&ev, 0, ev.sizeof); } // this makes valgrind happy
-				ev.events = ep.EPOLLIN;
-				ev.data.fd = displayFd;
-				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, displayFd, &ev);
-				displayFd = -1;
-			}
-		} else version(Windows) {
-			if(pulser !is null) {
-				pulser.destroy();
-				pulser = null;
-			}
-			if (customEventH !is null) {
-				CloseHandle(customEventH);
-				customEventH = null;
-			}
+		if(pulser) {
+			pulser.destroy();
+			pulser = null;
 		}
 	}
 
@@ -4905,15 +4783,6 @@ struct EventLoopImpl {
 	~this() {
 		dispose();
 	}
-
-	version(Posix)
-	ref int customEventFDRead() { return SimpleWindow.customEventFDRead; }
-	version(Posix)
-	ref int customEventFDWrite() { return SimpleWindow.customEventFDWrite; }
-	version(Posix)
-	ref int customSignalFD() { return SimpleWindow.customSignalFD; }
-	version(Windows)
-	ref auto customEventH() { return SimpleWindow.customEventH; }
 
 	version(X11) {
 		bool doXPending(ref bool didAnything) {
@@ -4938,14 +4807,6 @@ struct EventLoopImpl {
 
 	static bool loopInitialized = false;
 
-	version(with_eventloop) {
-		int loopHelper(bool delegate() whileCondition) {
-			// FIXME: whileCondition
-			import arsd.eventloop;
-			loop();
-			return 0;
-		}
-	} else
 	int loopHelper(bool delegate() whileCondition) {
 		version(X11) {
 			bool done = false;
@@ -4963,26 +4824,8 @@ struct EventLoopImpl {
 					unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
 					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
 
-					if(customSignalFD != -1)
-					unregisters ~= el.addCallbackOnFdReadable(customSignalFD, new CallbackHelper(() {
-						version(linux) {
-							import core.sys.linux.sys.signalfd;
-							import core.sys.posix.unistd : read;
-							signalfd_siginfo info;
-							read(customSignalFD, &info, info.sizeof);
-
-							auto sig = info.ssi_signo;
-
-							if(EventLoop.get.signalHandler !is null) {
-								EventLoop.get.signalHandler()(sig);
-							} else {
-								EventLoop.get.exit();
-							}
-						}
-					}));
-
-					if(displayFd != -1)
-					unregisters ~= el.addCallbackOnFdReadable(displayFd, new CallbackHelper(() {
+					if(XDisplayConnection.get.fd != -1)
+					unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
 						this.mtLock();
 						scope(exit) this.mtUnlock();
 						while(!done && XPending(display)) {
@@ -4990,35 +4833,8 @@ struct EventLoopImpl {
 						}
 					}));
 
-					if(pulseFd != -1)
-					unregisters ~= el.addCallbackOnFdReadable(pulseFd, new CallbackHelper(() {
-						long expirationCount;
-						// if we go over the count, I ignore it because i don't want the pulse to go off more often and eat tons of cpu time...
-
-						handlePulse();
-
-						// read just to clear the buffer so poll doesn't trigger again
-						// BTW I read AFTER the pulse because if the pulse handler takes
-						// a lot of time to execute, we don't want the app to get stuck
-						// in a loop of timer hits without a chance to do anything else
-						//
-						// IOW handlePulse happens at most once per pulse interval.
-						unix.read(pulseFd, &expirationCount, expirationCount.sizeof);
-					}));
-
-					if(customEventFDRead != -1)
-					unregisters ~= el.addCallbackOnFdReadable(customEventFDRead, new CallbackHelper(() {
-						// we have some custom events; process 'em
-						import core.sys.posix.unistd : read;
-						ulong n;
-						read(customEventFDRead, &n, n.sizeof); // reset counter value to zero again
-						//{ import core.stdc.stdio; printf("custom event! count=%u\n", eventQueueUsed); }
-						//SimpleWindow.processAllCustomEvents();
-					}));
-
 					// FIXME: posix fds
 					// FIXME hup?
-
 
 					loopInitialized = true;
 				}
@@ -5027,7 +4843,7 @@ struct EventLoopImpl {
 					whileCondition = () => true;
 
 				el.run(() => !whileCondition());
-			} else version(linux) {
+			}/+ else version(linux) {
 				// FIXME: i want to delete this block just need to ensure i didn't miss anything in the arsd.core transition
 				while(!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					bool forceXPending = false;
@@ -5151,7 +4967,7 @@ struct EventLoopImpl {
 						done = doXPending(didAnything);
 					}
 				}
-			}
+			}+/
 		} else
 		version(Windows) {
 			import arsd.core;
@@ -6219,6 +6035,7 @@ class Timer {
 		umt = new UserModeTimer(intervalInMilliseconds.msecs, onPulse, true);
 	}
 }
+/+
 version(none)
 class Timer {
 // FIXME: needs pause and unpause
@@ -6265,17 +6082,10 @@ class Timer {
 			if(timerfd_settime(fd, 0, &value, null) == -1)
 				throw new Exception("couldn't make pulse timer");
 
-			version(with_eventloop) {
-				import arsd.eventloop;
-				addFileEventListeners(fd, &trigger, null, null);
-			} else {
-				prepareEventLoop();
-
-				ep.epoll_event ev = void;
-				ev.events = ep.EPOLLIN;
-				ev.data.fd = fd;
-				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
-			}
+			ep.epoll_event ev = void;
+			ev.events = ep.EPOLLIN;
+			ev.data.fd = fd;
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_ADD, fd, &ev);
 		} else featureNotImplemented();
 	}
 
@@ -6314,16 +6124,11 @@ class Timer {
 			import unix = core.sys.posix.unistd;
 			static import ep = core.sys.linux.epoll;
 
-			version(with_eventloop) {
-				import arsd.eventloop;
-				removeFileEventListeners(fd);
-			} else {
-				ep.epoll_event ev = void;
-				ev.events = ep.EPOLLIN;
-				ev.data.fd = fd;
+			ep.epoll_event ev = void;
+			ev.events = ep.EPOLLIN;
+			ev.data.fd = fd;
 
-				ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
-			}
+			ep.epoll_ctl(epollFd, ep.EPOLL_CTL_DEL, fd, &ev);
 			unix.close(fd);
 			mapping.remove(fd);
 		}
@@ -6424,6 +6229,7 @@ class Timer {
 	} else version(OSXCocoa) {
 	} else static assert(0, "timer not supported");
 }
++/
 
 version(Windows)
 private int eventLoopRound;
@@ -6493,12 +6299,7 @@ class PosixFdReader {
 
 		mapping[fd] = this;
 
-		version(with_eventloop) {
-			import arsd.eventloop;
-			addFileEventListeners(fd, &readyel);
-		} else {
-			enable();
-		}
+		enable();
 	}
 
 	bool captureReads;
@@ -6507,7 +6308,6 @@ class PosixFdReader {
 	import arsd.core;
 	ICoreEventLoop.UnregisterToken unregisterToken;
 
-	version(with_eventloop) {} else
 	///
 	void enable() @system {
 		enabled = true;
@@ -6518,7 +6318,6 @@ class PosixFdReader {
 		// FIXME: what if it is writeable?
 	}
 
-	version(with_eventloop) {} else
 	///
 	void disable() @system {
 		enabled = false;
@@ -6526,7 +6325,6 @@ class PosixFdReader {
 		unregisterToken.unregister();
 	}
 
-	version(with_eventloop) {} else
 	///
 	void dispose() {
 		if(enabled)
@@ -6537,11 +6335,6 @@ class PosixFdReader {
 	}
 
 	void delegate(int, bool, bool) onReady;
-
-	version(with_eventloop)
-	void readyel() {
-		onReady(fd, true, true);
-	}
 
 	void ready(uint flags) {
 		version(Emscripten) {
@@ -13365,6 +13158,7 @@ version(Windows) {
 							break;
 						}
 					if(!anyImportant) {
+						eventLoopAnchor.detach();
 						PostQuitMessage(0);
 					}
 				break;
@@ -15448,10 +15242,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				Bool sup;
 				XkbSetDetectableAutoRepeat(display, 1, &sup); // so we will not receive KeyRelease until key is really released
 				createXIM();
-				version(with_eventloop) {
-					import arsd.eventloop;
-					addFileEventListeners(display.fd, &eventListener, null, null);
-				}
 			}
 
 			return display;
@@ -15460,16 +15250,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		extern(C)
 		static int x11ioerrCB(Display* dpy) {
 			throw new XDisconnectException(false);
-		}
-
-		version(with_eventloop) {
-			import arsd.eventloop;
-			static void eventListener(OsFileHandle fd) {
-				//this.mtLock();
-				//scope(exit) this.mtUnlock();
-				while(XPending(display))
-					doXNextEvent(display);
-			}
 		}
 
 		// close connection on program exit -- we need this to properly free all images
@@ -15486,11 +15266,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		static void close() {
 			if(display is null)
 				return;
-
-			version(with_eventloop) {
-				import arsd.eventloop;
-				removeFileEventListeners(display.fd);
-			}
 
 			// now remove all registered images to prevent shared memory leaks
 			freeImages();
@@ -16330,21 +16105,6 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 		*/
 
 		void closeWindow() {
-			// I can't close this or a child window closing will
-			// break events for everyone. So I'm just leaking it right
-			// now and that is probably perfectly fine...
-			version(none)
-			if (customEventFDRead != -1) {
-				import core.sys.posix.unistd : close;
-				auto same = customEventFDRead == customEventFDWrite;
-
-				close(customEventFDRead);
-				if(!same)
-					close(customEventFDWrite);
-				customEventFDRead = -1;
-				customEventFDWrite = -1;
-			}
-
 			version(without_opengl) {} else
 			if(glc !is null) {
 				glXDestroyContext(display, glc);
@@ -16487,9 +16247,6 @@ version(X11) {
 			XRefreshKeyboardMapping(&e.xmapping);
 			return false;
 		}
-
-		version(with_eventloop)
-			import arsd.eventloop;
 
 		if(SimpleWindow.handleNativeGlobalEvent !is null) {
 			// see windows impl's comments
@@ -16987,6 +16744,7 @@ version(X11) {
 						break;
 					}
 				if(!anyImportant) {
+					eventLoopAnchor.detach();
 					EventLoop.quitApplication();
 					done = true;
 				}
@@ -16995,9 +16753,6 @@ version(X11) {
 			if(window in CapableOfHandlingNativeEvent.nativeHandleMapping)
 				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(window);
 
-			version(with_eventloop) {
-				if(done) exit();
-			}
 		  break;
 
 		  case EventType.MotionNotify:
@@ -17027,9 +16782,6 @@ version(X11) {
 					}
 				}
 			}
-
-		  	version(with_eventloop)
-				send(mouse);
 		  break;
 		  case EventType.ButtonPress:
 		  case EventType.ButtonRelease:
@@ -17078,8 +16830,6 @@ version(X11) {
 					(*win).handleMouseEvent(mouse);
 				}
 			}
-			version(with_eventloop)
-				send(mouse);
 		  break;
 
 		  case EventType.GenericEvent:
@@ -17240,9 +16990,6 @@ version(X11) {
 						win.handleCharEvent(ch);
 				}
 			}
-
-			version(with_eventloop)
-				send(ke);
 		  break;
 		  default:
 		}
@@ -19461,6 +19208,7 @@ struct Visual
 						break;
 					}
 				if(!anyImportant) {
+					eventLoopAnchor.detach();
 					EventLoop.quitApplication();
 				}
 
@@ -21377,25 +21125,6 @@ private string typeToGl(T)() {
 }
 
 
-}
-
-version(Emscripten) {
-
-} else version(linux) {
-	version(with_eventloop) {} else {
-		private int epollFd = -1;
-		void prepareEventLoop() {
-			if(epollFd != -1)
-				return; // already initialized, no need to do it again
-			import ep = core.sys.linux.epoll;
-
-			epollFd = ep.epoll_create1(ep.EPOLL_CLOEXEC);
-			if(epollFd == -1)
-				throw new Exception("epoll create failure");
-		}
-	}
-} else version(Posix) {
-	void prepareEventLoop() {}
 }
 
 version(X11) {
