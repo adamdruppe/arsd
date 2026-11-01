@@ -1986,24 +1986,6 @@ enum CornerStyle {
 	roundedSlightly,
 }
 
-private struct EventLoopAnchor {
-	int refcount;
-	void addRef() {
-		if(refcount == 0) {
-			getThisThreadEventLoop(EventLoopType.Ui).addAnchor("arsd.simpledisplay");
-		}
-
-		refcount++;
-	}
-
-	void detach() {
-		refcount = 0;
-
-		getThisThreadEventLoop().removeAnchor("arsd.simpledisplay");
-	}
-}
-private EventLoopAnchor eventLoopAnchor;
-
 /++
 	The flagship window class.
 
@@ -2278,7 +2260,33 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 	private DropHandler dropHandler;
 
 	SimpleWindow _parent;
-	bool beingOpenKeepsAppOpen = true;
+
+	private bool beingOpenKeepsAppOpen_;
+	bool beingOpenKeepsAppOpen() const {
+		return beingOpenKeepsAppOpen_;
+	}
+	bool beingOpenKeepsAppOpen(bool yes) {
+		if(yes == beingOpenKeepsAppOpen_)
+			return yes;
+		beingOpenKeepsAppOpen_ = yes;
+		if(yes) {
+			getThisThreadEventLoop(EventLoopType.Ui).addAnchor(this);
+		} else {
+			getThisThreadEventLoop(EventLoopType.Ui).removeAnchor(this);
+		}
+		return yes;
+	}
+
+	// hopefully obsolete
+	static bool anyImportantWindowsStillOpen() {
+		bool anyImportant = false;
+		foreach(SimpleWindow w; SimpleWindow.nativeMapping)
+			if(w.beingOpenKeepsAppOpen)
+				return true;
+		return false;
+	}
+
+
 	/++
 		This creates a window with the given options. The window will be visible and able to receive input as soon as you start your event loop. You may draw on it immediately after creating the window, without needing to wait for the event loop to start if you want.
 
@@ -2319,7 +2327,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 		if(windowType == WindowTypes.dropdownMenu || windowType == WindowTypes.popupMenu || windowType == WindowTypes.nestedChild || (customizationFlags & WindowFlags.transient))
 			beingOpenKeepsAppOpen = false;
 		else
-			eventLoopAnchor.addRef();
+			beingOpenKeepsAppOpen = true;
 	}
 
 	/// ditto
@@ -4607,6 +4615,7 @@ struct EventLoop {
 			impl.dispose();
 			if(thisIsGuiThread)
 				guiThreadFinalize();
+			quitApplication(); // tell worker threads to exit too
 		}
 
 	}
@@ -4625,6 +4634,7 @@ struct EventLoop {
 	}
 
 	/// Exits the event loop, but allows you to reenter it again later (in contrast with quitApplication, which tries to terminate the program)
+	/// FIXME: this now tries to quit too.......
 	void exit() {
 		assert(impl !is null);
 		impl.notExited = false;
@@ -4741,6 +4751,42 @@ struct EventLoopImpl {
 			+/
 		}
 
+
+
+		if(!loopInitialized) {
+			import arsd.core;
+			auto el = getThisThreadEventLoop(EventLoopType.Ui);
+
+			version(X11) {
+				unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
+
+				if(XDisplayConnection.get.fd != -1)
+				unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
+					this.mtLock();
+					scope(exit) this.mtUnlock();
+					bool done = false;
+					while(!done && XPending(display)) {
+						done = doXNextEvent(this.display);
+					}
+				}));
+
+				// FIXME: posix fds
+				// FIXME hup?
+			} else
+			version(Windows) {
+				unregisters ~= el.addDelegateOnLoopIteration(function bool() { eventLoopRound++; return false; });
+			} else
+			version (OSXCocoa) {
+				NSApp.run(); // this will exit once things are initialized, then the arsd.core event pump can take over
+			}
+
+			el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
+			unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
+
+			loopInitialized = true;
+		}
+
+
 		SimpleWindow.processAllCustomEvents(); // process events added before loop creation
 
 		version(Posix) {
@@ -4808,42 +4854,36 @@ struct EventLoopImpl {
 	static bool loopInitialized = false;
 
 	int loopHelper(bool delegate() whileCondition) {
+		import arsd.core;
+		auto el = getThisThreadEventLoop(EventLoopType.Ui);
+
 		version(X11) {
 			bool done = false;
 
 			XFlush(display);
 			insideXEventLoop = true;
 			scope(exit) insideXEventLoop = false;
+		}
 
-			static if(true) { // forcing arsd core now
-				import arsd.core;
-				auto el = getThisThreadEventLoop(EventLoopType.Ui);
+		if(whileCondition)
+			el.run(() => !whileCondition());
+		else
+			el.run();
 
-				if(!loopInitialized) {
-					el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
-					unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
-					unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
+		return 0;
+			/+
+			version(OSXCocoa) {
+				if (handlePulse !is null && pulseTimeout != 0) {
+					NSTimer timer = NSTimer.schedule(pulseTimeout*1e-3,
+						cast(NSid) view, sel_registerName("simpledisplay_pulse:"),
+						null, true);
 
-					if(XDisplayConnection.get.fd != -1)
-					unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
-						this.mtLock();
-						scope(exit) this.mtUnlock();
-						while(!done && XPending(display)) {
-							done = doXNextEvent(this.display);
-						}
-					}));
-
-					// FIXME: posix fds
-					// FIXME hup?
-
-					loopInitialized = true;
+				if(timer)
+					timer.invalidate();
 				}
+			}
 
-				if(whileCondition is null)
-					whileCondition = () => true;
-
-				el.run(() => !whileCondition());
-			}/+ else version(linux) {
+			else version(linux) {
 				// FIXME: i want to delete this block just need to ensure i didn't miss anything in the arsd.core transition
 				while(!done && (whileCondition is null || whileCondition() == true) && notExited) {
 					bool forceXPending = false;
@@ -4967,62 +5007,8 @@ struct EventLoopImpl {
 						done = doXPending(didAnything);
 					}
 				}
-			}+/
-		} else
-		version(Windows) {
-			import arsd.core;
-			auto el = getThisThreadEventLoop(EventLoopType.Ui);
-			if(!loopInitialized) {
-				el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
-				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
-				unregisters ~= el.addDelegateOnLoopIteration(function bool() { eventLoopRound++; return false; });
-				loopInitialized = true;
-			}
-			el.run(() {
-				if(whileCondition is null)
-					return false;
-				return !whileCondition();
-			});
-
-			// return message.wParam;
-			return 0;
-		} version (OSXCocoa) {
-			/+
-			if (handlePulse !is null && pulseTimeout != 0) {
-				NSTimer timer = NSTimer.schedule(pulseTimeout*1e-3,
-					cast(NSid) view, sel_registerName("simpledisplay_pulse:"),
-					null, true);
-
-
-			if(timer)
-				timer.invalidate();
 			}
 			+/
-
-			import arsd.core;
-			auto el = getThisThreadEventLoop(EventLoopType.Ui);
-			if(!loopInitialized) {
-				unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
-				el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
-				loopInitialized = true;
-				sdpyPrintDebugString("one");
-				NSApp.run();
-				sdpyPrintDebugString("here");
-			}
-
-				sdpyPrintDebugString("arsd.core loop starting");
-				el.run(() {
-					if(whileCondition is null)
-						return false;
-					return !whileCondition();
-				});
-
-				sdpyPrintDebugString("kiio all done");
-
-			return 0;
-		} else {
-			return 0;
-		}
 	}
 
 	int run(bool delegate() whileCondition = null) {
@@ -13150,17 +13136,7 @@ version(Windows) {
 					if (this.onDestroyed !is null) try { this.onDestroyed(); } catch (Exception e) {} // sorry
 					SimpleWindow.nativeMapping.remove(hwnd);
 					CapableOfHandlingNativeEvent.nativeHandleMapping.remove(hwnd);
-
-					bool anyImportant = false;
-					foreach(SimpleWindow w; SimpleWindow.nativeMapping)
-						if(w.beingOpenKeepsAppOpen) {
-							anyImportant = true;
-							break;
-						}
-					if(!anyImportant) {
-						eventLoopAnchor.detach();
-						PostQuitMessage(0);
-					}
+					this.beingOpenKeepsAppOpen = false; // to unregister it from the event loop
 				break;
 				case 0x02E0 /*WM_DPICHANGED*/:
 					this.actualDpi_ = LOWORD(wParam); // hiword is the y param but it is the same per docs
@@ -16737,17 +16713,14 @@ version(X11) {
 					win.xic = null; // just in case
 				}
 				SimpleWindow.nativeMapping.remove(e.xdestroywindow.window);
-				bool anyImportant = false;
-				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
-					if(w.beingOpenKeepsAppOpen) {
-						anyImportant = true;
-						break;
-					}
-				if(!anyImportant) {
-					eventLoopAnchor.detach();
+				win.beingOpenKeepsAppOpen = false; // to unregister it from the event loop
+
+				/+
+				if(!SimpleWindow.anyImportantWindowsStillOpen) {
 					EventLoop.quitApplication();
 					done = true;
 				}
+				+/
 			}
 			auto window = e.xdestroywindow.window;
 			if(window in CapableOfHandlingNativeEvent.nativeHandleMapping)
@@ -19200,18 +19173,7 @@ struct Visual
 				SimpleWindow.nativeMapping.remove(window);
 				// FIXME: this makes a ref to typeinfo apparently
 				CapableOfHandlingNativeEvent.nativeHandleMapping.remove(window);
-
-				bool anyImportant = false;
-				foreach(SimpleWindow w; SimpleWindow.nativeMapping)
-					if(w.beingOpenKeepsAppOpen) {
-						anyImportant = true;
-						break;
-					}
-				if(!anyImportant) {
-					eventLoopAnchor.detach();
-					EventLoop.quitApplication();
-				}
-
+				sw.beingOpenKeepsAppOpen = false; // to unregister it from the event loop
 			}
 		}
 
@@ -22449,7 +22411,7 @@ private int doDragDropX11(SimpleWindow window, X11SetSelectionHandler handler, D
 		window.releaseInputGrab();
 
 
-	EventLoop.get.run(() => dnding);
+	EventLoop.get.run(() => dnding); // FIXME? nested event loop trouble under the new system
 
 	return 0;
 }

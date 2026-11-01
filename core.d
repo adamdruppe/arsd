@@ -26,6 +26,8 @@
 +/
 module arsd.core;
 
+// FIXME: can i use the UnregisterToken as the callback GC root? make its dtor cancel the event and we should be reasonably sure there's a reference safe somewhere but idk for sure. could also do a double linked list of them amongst each other too
+
 /+
 	Intended to be Supported OSes:
 		* Windows (at least Vista, MAYBE XP)
@@ -239,16 +241,18 @@ version(Emscripten)  {
 	// THIS FILE DOESN'T ACTUALLY EXIST, WE NEED TO MAKE IT
 	import core.sys.openbsd.sys.event;
 } else version(OSX) {
+	version=Arsd_core_kqueue;
 	version(ArsdNoCocoa) {
-		version=Arsd_core_kqueue;
 	} else {
 		version=Arsd_core_dispatch;
 	}
 
 	import core.sys.darwin.sys.event;
 } else version(iOS) {
+	// NOT ACTUALLY TESTED
+	version=Arsd_core_kqueue;
+
 	version(ArsdNoCocoa) {
-		version=Arsd_core_kqueue;
 	} else {
 		version=Arsd_core_dispatch;
 	}
@@ -3880,8 +3884,17 @@ enum ThreadToRunIn {
 /++
 	Initializes the arsd core event loop and creates its worker threads. You don't actually have to call this, since the first use of an arsd.core function that requires it will call it implicitly, but calling it yourself gives you a chance to control the configuration more explicitly if you want to.
 +/
-void arsd_core_init(int numberOfWorkers = 0) {
+void arsd_core_init(int numberOfWorkers = 0, int maxNumberOfHelpers = 0) {
+	getThisThreadEventLoop(EventLoopType.Ui);
+	CoreWorkerThread.setup(numberOfWorkers, maxNumberOfHelpers);
+}
 
+/++
+
++/
+void arsd_core_run() {
+	getThisThreadEventLoop(EventLoopType.Ui).run(() => false);
+	getThisThreadEventLoop().exitApplication; // to ensure the workers are all closed
 }
 
 version(Windows)
@@ -3902,10 +3915,15 @@ interface ICoreEventLoop {
 	/++
 		Runs the event loop for this thread until the `until` delegate returns `true`.
 	+/
-	final void run(scope bool delegate() until) {
+	final void run(scope bool delegate() until = null) {
 		exitApplicationRequested = false;
-		while(!exitApplicationRequested && !until()) {
-			runOnce();
+		while(!exitApplicationRequested && (until is null || !until())) {
+			RunOnceResult ror = runOnce();
+			if(ror.result == RunOnceResult.Possibilities.NoWorkToDo) {
+				if(until is null)
+					exitApplication();
+				return;
+			}
 		}
 	}
 
@@ -3917,19 +3935,35 @@ interface ICoreEventLoop {
 	+/
 	void onNextTick(void delegate() dg);
 
+	/// ditto
+	final void onNextTick(void function() fn) {
+		onNextTick(toDelegate(fn));
+	}
+
+	/++
+		Commands the loop to wake up and start another round.
+	+/
 	void wake();
+
+	static void addTask(SchedulableTask task) {
+		CoreEventLoopImplementation.ensureGlobalsInitialized();
+		CoreEventLoopImplementation.runInTaskRunnerQueue.enqueue(UserModeCallback(&task.callWithRethrow));
+	}
 
 	package static int function() getTimeout;
 	private __gshared bool exitApplicationRequested;
 
-	final static void exitApplication() {
+	final static void exitApplication(int code = 0) {
 		exitApplicationRequested = true;
 		CoreWorkerThread.cancelAll();
 		if(!cast(CoreWorkerThread) Thread.getThis()) {
 			auto el = getThisThreadEventLoop();
 			el.wake();
 		}
+		version(Windows)
+			PostQuitMessage(code);
 	}
+
 
 	/++
 		Returns details from a call to [runOnce]. Use the named methods here for details, or it can be used in a `while` loop directly thanks to its `opCast` automatic conversion to `bool`.
@@ -3940,7 +3974,7 @@ interface ICoreEventLoop {
 	static struct RunOnceResult {
 		enum Possibilities {
 			CarryOn,
-			LocalExit,
+			NoWorkToDo,
 			GlobalExit,
 			Interrupted
 
@@ -3990,27 +4024,25 @@ interface ICoreEventLoop {
 		Adds a delegate to be called on each loop iteration, called based on the `timingFlags`.
 
 
-		The order in which the delegates are called is undefined and may change with each iteration of the loop. Additionally, when and how many times a loop iterates is undefined; multiple events might be handled by each iteration, or sometimes, nothing will be handled and it woke up spuriously. Your delegates need to be ok with all of this.
+		The order in which the delegates are called is undefined and may change with each iteration of the loop. Additionally, when and how many times a loop iterates is undefined; multiple events might be handled by each iteration, or sometimes, nothing will be handled and it woke up spuriously. Your delegates need to be ok with all of this and should run as quickly as possible, and you should add as few delegates as possible.
+
+		It is an assert fail to add the same delegate to the loop more than once.
+
+		The delegate must return `true` if it did any actual work, and `false` if it did not. Returning true will trigger an immediate next run of the loop, so do NOT return true if you didn't actually do anything as you don't want to spin cpu unnecessarily.
+
+		The order in which your delegates are run relative to each other may change without notice, but relative to the main loop, they are run before user mode timers, OS events, and queued callbacks.
 
 		Parameters:
 			dg = the delegate to call
-			timingFlags =
-				0: never actually run the function; it can assert error if you pass this
-				1: run before each loop OS wait call
-				2: run after each loop OS wait call
-				3: run both before and after each OS wait call
-				4: single shot? NOT IMPLEMENTED
-				8: no-coalesce? NOT IMPLEMENTED (if after was just run, it will skip the before loops unless this flag is set)
-
-		FIXME: it should return a handle you can use to unregister it
 	+/
-	UnregisterToken addDelegateOnLoopIteration(void delegate() dg, uint timingFlags);
+	UnregisterToken addDelegateOnLoopIteration(bool delegate() dg);
 
-	final UnregisterToken addDelegateOnLoopIteration(void function() dg, uint timingFlags) {
-		if(timingFlags == 0)
-			assert(0, "would never run");
-		return addDelegateOnLoopIteration(toDelegate(dg), timingFlags);
+	final UnregisterToken addDelegateOnLoopIteration(bool function() dg) {
+		return addDelegateOnLoopIteration(toDelegate(dg));
 	}
+
+	void addAnchor(Object name);
+	void removeAnchor(Object name);
 
 	// to send messages between threads, i'll queue up a function that just call dispatchMessage. can embed the arg inside the callback helper prolly.
 	// tho i might prefer to actually do messages w/ run payloads so it is easier to deduplicate i can still dedupe by insepcting the call args so idk
@@ -4021,7 +4053,7 @@ interface ICoreEventLoop {
 			private CoreEventLoopImplementation impl;
 			private int fd = -1;
 			private CallbackHelper cb;
-			private void delegate() dg;
+			private bool delegate() dg;
 
 			/++
 				Unregisters the file descriptor from the event loop and releases the reference to the callback held by the event loop (which will probably free it).
@@ -4032,15 +4064,30 @@ interface ICoreEventLoop {
 				assert(impl !is null, "Cannot reuse unregister token");
 
 				if(dg !is null)
-					impl.unregisterDg(dg);
+					impl.unregisterLoopIterationDelegate(dg);
 
 				version(Arsd_core_epoll) {
-					if(fd != -1)
-						impl.unregisterFd(fd);
-				} else version(Arsd_core_dispatch) {
-					throw new NotYetImplementedException();
+					import core.sys.linux.epoll;
+					if(fd != -1) {
+						epoll_event event;
+						if(epoll_ctl(impl.epollfd, EPOLL_CTL_DEL, fd, &event) == -1)
+							throw new ErrnoApiException("epoll_ctl", errno);
+					}
 				} else version(Arsd_core_kqueue) {
-					// intentionally blank - all registrations are one-shot there
+					version(Arsd_core_dispatch) {
+						if(readDispatchSource) {
+							dispatch_source_cancel(readDispatchSource);
+							dispatch_release(readDispatchSource);
+							readDispatchSource = null;
+						}
+						if(writeDispatchSource) {
+							dispatch_source_cancel(writeDispatchSource);
+							dispatch_release(writeDispatchSource);
+							writeDispatchSource = null;
+						}
+					}
+
+					// main kqueue intentionally blank - all registrations are one-shot there (.... not really tho...? FIXME)
 					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
 				} else version(EmptyCoreEvent) {
 
@@ -4049,52 +4096,124 @@ interface ICoreEventLoop {
 
 				if(cb)
 					cb.release();
+				impl.subtractRegisteredItem(fd);
 				this = typeof(this).init;
 			}
-		}
-
-		@mustuse
-		static struct RearmToken {
-			private bool readable;
-			private CoreEventLoopImplementation impl;
-			private int fd;
-			private CallbackHelper cb;
-			private uint flags;
 
 			/++
-				Calls [UnregisterToken.unregister]
+				History:
+					Added October 24, 2026
 			+/
-			void unregister() {
-				assert(impl !is null, "cannot reuse rearm token after unregistering it");
-
+			void subscribeToEvents(bool readable, bool writable, bool recurring, CallbackHelper cb) {
 				version(Arsd_core_epoll) {
-					impl.unregisterFd(fd);
-				} else version(Arsd_core_dispatch) {
-					throw new NotYetImplementedException();
-				} else version(Arsd_core_kqueue) {
-					// intentionally blank - all registrations are one-shot there
-					// FIXME: actually it might not have gone off yet, in that case we do need to delete the filter
-				} else version(EmptyCoreEvent) {
+					import core.sys.linux.epoll;
+					epoll_event event;
+					if(this.cb)
+						this.cb.release();
+					this.cb = cb;
+					event.data.ptr = cast(void*) cb;
+					// EPOLLEXCLUSIVE can only be used on add, then it disables mod. so joy. that should be used on the multi-thread events but not here
+					// i'll have to find it later tbh
+					event.events = EPOLLERR;// | EPOLLEXCLUSIVE;
+					if(readable)
+						event.events |= EPOLLIN;
+					if(writable)
+						event.events |= EPOLLOUT;
+					if(!recurring)
+						event.events |= EPOLLONESHOT;
 
-				} else static assert(0);
+					if(epoll_ctl(impl.epollfd, EPOLL_CTL_MOD, fd, &event) == -1)
+						throw new ErrnoApiException("epoll_ctl", errno);
+				}
 
-				cb.release();
-				this = typeof(this).init;
+				version(Arsd_core_dispatch) {
+					if(impl.eventLoopType == EventLoopType.Ui) {
+						if(readable) {
+							// FIXME: i need to store in the callback if it is supposed to be recurring
+							// since rn it dispatch_source_cancel's in there immediately to pretend it one off
+							auto input_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, dispatch_get_main_queue());
+							dispatch_source_set_event_handler(input_src, cb.asObjcBlockWithAutoCancel(&readDispatchSource));
+							dispatch_activate(input_src);
+							//dispatch_resume(input_src);
+
+							if(readDispatchSource) {
+								dispatch_source_cancel(readDispatchSource);
+								dispatch_release(readDispatchSource);
+							}
+
+							readDispatchSource = input_src;
+						}
+
+						if(writable) {
+							auto input_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_WRITE, fd, 0, dispatch_get_main_queue());
+							dispatch_source_set_event_handler(input_src, cb.asObjcBlockWithAutoCancel(&writeDispatchSource));
+							dispatch_activate(input_src);
+							//dispatch_resume(input_src);
+
+							if(writeDispatchSource) {
+								dispatch_source_cancel(writeDispatchSource);
+								dispatch_release(writeDispatchSource);
+							}
+
+							writeDispatchSource = input_src;
+						}
+
+						/+
+						, CallbackHelper cb) {
+							// dispatch_source_set_cancel_handler(input_src,  ^{ close(my_file); });
+						+/
+						return;
+					}
+				}
+
+				version(Arsd_core_kqueue) {
+					kevent_t ev;
+
+					short events;
+					if(readable)
+						events |= EVFILT_READ;
+					if(writable)
+						events |= EVFILT_WRITE;
+
+					EV_SET(&ev, fd, events, EV_ADD | EV_ENABLE | (recurring ? 0 : EV_ONESHOT), 0, 0, cast(void*) cb);
+
+					ErrnoEnforce!kevent(impl.kqueuefd, &ev, 1, null, 0, null);
+				}
 			}
 
-			/++
-				Rearms the event so you will get another callback next time it is ready.
-			+/
-			void rearm() {
-				assert(impl !is null, "cannot reuse rearm token after unregistering it");
-				impl.rearmFd(this);
+			void subscribeToEvents(bool readable, bool writable, bool recurring, void delegate() cb) {
+				return subscribeToEvents(readable, writable, recurring, new CallbackHelper(cb));
+			}
+
+			bool opCast(T:bool)() {
+				return impl !is null;
+			}
+
+			version(Arsd_core_dispatch) {
+				dispatch_source_t readDispatchSource;
+				dispatch_source_t writeDispatchSource;
 			}
 		}
 
-		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb);
-		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb);
-		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb);
+		// FIXME: audit all of these and see if they should use EPOLLEXCLUSIVE instead
+		final UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb, string file = __FILE__, size_t line = __LINE__) {
+			auto token = registerFd(fd, file, line);
+			token.subscribeToEvents(true, false, true, cb);
+			return token;
+		}
+
+		final UnregisterToken registerFd(int fd, string file = __FILE__, size_t line = __LINE__) {
+			auto token = registerFd_Platform(fd);
+			addRegisteredItem(fd, file, line);
+			return token;
+		}
+
+		UnregisterToken registerFd_Platform(int fd);
 	}
+
+	protected int getRegisteredItemCount();
+	protected void addRegisteredItem(size_t ident, string file, size_t line);
+	protected void subtractRegisteredItem(size_t ident);
 
 	version(Windows) {
 		@mustuse
@@ -4102,7 +4221,7 @@ interface ICoreEventLoop {
 			private CoreEventLoopImplementation impl;
 			private HANDLE handle;
 			private CallbackHelper cb;
-			private void delegate() dg;
+			private bool delegate() dg;
 
 			/++
 				Unregisters the handle from the event loop and releases the reference to the callback held by the event loop (which will probably free it).
@@ -4113,7 +4232,7 @@ interface ICoreEventLoop {
 				assert(impl !is null, "Cannot reuse unregister token");
 
 				if(dg !is null)
-					impl.unregisterDg(dg);
+					impl.unregisterLoopIterationDelegate(dg);
 
 				if(handle)
 					impl.unregisterHandle(handle, cb);
@@ -4121,6 +4240,10 @@ interface ICoreEventLoop {
 				if(cb)
 					cb.release();
 				this = typeof(this).init;
+			}
+
+			bool opCast(T:bool)() {
+				return impl !is null;
 			}
 		}
 
@@ -4133,9 +4256,16 @@ interface ICoreEventLoop {
 +/
 ICoreEventLoop getThisThreadEventLoop(EventLoopType type = EventLoopType.AdHoc) {
 	static ICoreEventLoop loop;
-	if(loop is null)
+	if(loop is null) {
+		if(type == EventLoopType.AdHoc && Thread.getThis.isMainThread)
+			type = EventLoopType.Ui; // assume the main thread is the ui thread if not otherwise specified
 		loop = new CoreEventLoopImplementation(type);
+	}
 	return loop;
+}
+
+void markAsUiThread() {
+	getThisThreadEventLoop(EventLoopType.Ui);
 }
 
 /++
@@ -4180,25 +4310,29 @@ package(arsd) enum EventLoopType {
 	Tasks are assigned to a worker thread and may share it with other tasks.
 +/
 
-/+
-private ThreadLocalGcRoots gcRoots;
 
-private struct ThreadLocalGcRoots {
-	// it actually would be kinda cool if i could tell the GC
-	// that only part of this array is actually used so it can skip
-	// scanning the rest. but meh.
-	const(void)*[] roots;
+private struct UserModeCallback {
+	// no need for a CallbackHelper because these are all kept in the user-mode queue,
+	// which is visible to the GC.
+	void delegate() dg;
 
-	void* add(const(void)* what) {
-		roots ~= what;
-		return &roots[$-1];
+	void call() {
+		dg();
 	}
 }
-+/
 
 // the GC may not be able to see this! remember, it can be hidden inside kernel buffers
 package(arsd) class CallbackHelper {
 	import core.memory;
+
+	version(Windows)
+	void callAfterBeingQueuedFromThreadpoolWait() {
+		call();
+
+		// keep it until it is explicitly unregistered
+		if(this.threadpoolWait && this.threadpoolWaitingOnHandle)
+			SetThreadpoolWait(this.threadpoolWait, this.threadpoolWaitingOnHandle, null);
+	}
 
 	void call() {
 		if(callback)
@@ -4218,11 +4352,18 @@ package(arsd) class CallbackHelper {
 		if(atomicOp!"-="(refcount, 1) <= 0) {
 			if(flags & 1)
 				GC.removeRoot(cast(void*) this);
+			version(Windows)
+			if(threadpoolWait) {
+				CloseThreadpoolWait(threadpoolWait);
+				threadpoolWait = null;
+			}
 		}
 	}
 
 	private shared(int) refcount;
 	private uint flags;
+
+	private CoreEventLoopImplementation targetLoop;
 
 	this(void function() callback) {
 		this( () { callback(); } );
@@ -4238,6 +4379,62 @@ package(arsd) class CallbackHelper {
 		this.addref();
 		this.callback = callback;
 	}
+
+	version(Windows) {
+		PTP_WAIT threadpoolWait;
+		HANDLE threadpoolWaitingOnHandle;
+	}
+
+	version(Arsd_core_dispatch) {
+		ObjCBlock!()* objcBlock;
+
+		ObjCBlock!()* asObjcBlockWithAutoCancel(dispatch_source_t* cancelWhat) {
+				objcBlock = block(() {
+					if(*cancelWhat) {
+						dispatch_source_cancel(*cancelWhat);
+						dispatch_release(*cancelWhat);
+						*cancelWhat = null;
+					}
+
+					try
+						this.call();
+					catch(Throwable t)
+						writeln(t.toString());
+
+					//writeln("post");
+					// it posts an event to wake the main loop, giving some waitForCompletion things a chance to see it
+					NSApp.postEvent(
+						NSEvent.otherEventWithType(
+							NSEventType.applicationDefined,
+							NSMakePoint(0, 0),
+							cast(NSEventModifierFlags) 0,
+							1.0, // FIXME: timestamp
+							0,
+							null,
+							0,
+							0,
+							0
+						),
+						false
+					);
+				});
+
+
+			return objcBlock;
+		}
+	}
+}
+
+version(Windows) {
+	private struct TP_WAIT;
+	private alias PTP_WAIT = TP_WAIT*;
+	private alias void* PTP_CALLBACK_INSTANCE;
+	private alias DWORD TP_WAIT_RESULT;
+	extern(Windows)
+	private alias void function(PTP_CALLBACK_INSTANCE, PVOID, PTP_WAIT, TP_WAIT_RESULT) PTP_WAIT_CALLBACK;
+	private extern(Windows) PTP_WAIT CreateThreadpoolWait(PTP_WAIT_CALLBACK, void*, void*);
+	private extern(Windows) void CloseThreadpoolWait(PTP_WAIT);
+	private extern(Windows) void SetThreadpoolWait(PTP_WAIT, HANDLE, PFILETIME);
 }
 
 inout(char)[] trimSlashesRight(inout(char)[] txt) {
@@ -5744,6 +5941,20 @@ version(HasFile) class AbstractFile {
 		}
 	}
 
+	/++
+		Returns true if [close] has already been called on it.
+
+		History:
+			Added October 20, 2026
+	+/
+	bool isClosed() {
+		version(Windows) {
+			return handle is null;
+		} else version(Posix) {
+			return handle == -1;
+		}
+	}
+
 	NativeFileHandle nativeHandle() {
 		return this.handle;
 	}
@@ -5802,10 +6013,26 @@ version(HasFile) class AsyncFile : AbstractFile {
 	this(FilePath filename, OpenMode mode = OpenMode.readOnly, RequirePreexisting require = RequirePreexisting.no, uint specialFlags = 0, uint permissionMask = 0) {
 		// FIXME: implement permissionMask
 		super(true, filename, mode, require, specialFlags);
+
+		version(Posix) {
+			eventRegistration = getThisThreadEventLoop().registerFd(this.handle);
+		}
 	}
 
 	package(arsd) this(NativeFileHandle adoptPreSetup) {
 		super(adoptPreSetup);
+
+		version(Posix) {
+			eventRegistration = getThisThreadEventLoop().registerFd(this.handle);
+		}
+	}
+
+	override void close() {
+		version(Posix) {
+			if(eventRegistration)
+				eventRegistration.unregister();
+		}
+		super.close();
 	}
 
 	///
@@ -5817,6 +6044,9 @@ version(HasFile) class AsyncFile : AbstractFile {
 	AsyncWriteRequest write(const(void)[] buffer, long offset = 0) {
 		return new AsyncWriteRequest(this, cast(ubyte[]) buffer, offset);
 	}
+
+	version(Posix)
+	ICoreEventLoop.UnregisterToken eventRegistration;
 
 }
 else class AsyncFile {
@@ -6186,6 +6416,114 @@ package(arsd) __gshared CleanupQueue cleanupQueue;
 
 
 
+package(arsd) struct MinHeap(T) {
+	private void swap(ref T a, ref T b) {
+		T c = a;
+		a = b;
+		b = c;
+	}
+
+	private T[] buffer;
+	private int pos;
+
+	size_t length() const {
+		return pos;
+	}
+
+	@property bool empty() const {
+		return pos == 0;
+	}
+
+	/++
+	+/
+	void add(T value) {
+		if(pos >= buffer.length) {
+			if(buffer.length == 0)
+				buffer.length = 16;
+			else
+				buffer.length *= 2;
+		}
+		size_t i = pos;
+		buffer[pos++] = value;
+
+		while(i > 0) {
+			size_t parent = (i - 1) / 2;
+
+			if(!(buffer[i] < buffer[parent]))
+				break;
+
+			swap(buffer[i], buffer[parent]);
+			i = parent;
+		}
+	}
+
+	/++
+	+/
+	inout(T) peek() inout {
+		assert(!empty);
+		return buffer[0];
+	}
+
+	/++
+	+/
+	T getAndRemoveNext() {
+		assert(!empty);
+
+		T result = buffer[0];
+		swap(buffer[0], buffer[pos - 1]);
+		pos--;
+
+		if(empty)
+			return result;
+
+		size_t i = 0;
+
+		while(i < pos / 2) {
+			size_t left = 2 * i + 1;
+			size_t right = left + 1;
+			size_t smallest = left;
+
+			if(right < pos && buffer[right] < buffer[left])
+				smallest = right;
+
+			if(!(buffer[smallest] < buffer[i]))
+				break;
+
+			swap(buffer[i], buffer[smallest]);
+			i = smallest;
+		}
+
+		return result;
+	}
+}
+
+unittest {
+	MinHeap!int heap;
+	heap.add(8);
+	heap.add(5);
+	heap.add(6);
+	heap.add(10);
+	heap.add(5);
+	assert(heap.peek() == 5);
+	heap.add(4);
+	heap.add(9);
+
+	assert(heap.length() == 7);
+	assert(heap.peek() == 4);
+	assert(heap.getAndRemoveNext() == 4);
+	assert(heap.getAndRemoveNext() == 5);
+	assert(heap.getAndRemoveNext() == 5);
+	assert(heap.getAndRemoveNext() == 6);
+	assert(heap.getAndRemoveNext() == 8);
+	heap.add(5);
+	assert(heap.getAndRemoveNext() == 5);
+	assert(heap.getAndRemoveNext() == 9);
+	assert(heap.getAndRemoveNext() == 10);
+	assert(heap.empty());
+}
+
+
+
 
 /++
 	A timer that will trigger your function on a given interval.
@@ -6195,7 +6533,7 @@ package(arsd) __gshared CleanupQueue cleanupQueue;
 	to fire on the interval until it is destroyed.
 
 	---
-	auto timer = new Timer(50, { it happened!; });
+	auto timer = new OperatingSystemTimer(50, { it happened!; });
 	timer.destroy();
 	---
 
@@ -6210,16 +6548,19 @@ package(arsd) __gshared CleanupQueue cleanupQueue;
 
 		Originally part of arsd.simpledisplay, this code was integrated into
 		arsd.core on May 26, 2024 (committed on June 10).
+
+		Its name was changed from `Timer` to `OperatingSystemTimer` on October 27, 2026
+		to distinguish itself form [UserModeTimer].
 +/
 version(HasTimer)
-class Timer {
+class OperatingSystemTimer {
 	// FIXME: absolute time vs relative time
 	// FIXME: real time?
 
 	// FIXME: I might add overloads for ones that take a count of
 	// how many elapsed since last time (on Windows, it will divide
 	// the ticks thing given, on Linux it is just available) and
-	// maybe one that takes an instance of the Timer itself too
+	// maybe one that takes an instance of the OperatingSystemTimer itself too
 
 
 	/++
@@ -7031,7 +7372,7 @@ version(HasSocket) class AsyncAcceptRequest : AsyncOperationRequest {
 			return "Receive";
 		}
 	}
-	mixin OverlappedIoRequest!(AsyncAcceptResponse, LowLevelOperation);
+	mixin OverlappedIoRequest!(AsyncAcceptResponse, LowLevelOperation, true, true);
 
 	this(AsyncSocket socket, ubyte[] buffer = null, SocketAddress* address = null) {
 		llo = LowLevelOperation(socket, buffer, address);
@@ -7100,7 +7441,7 @@ version(HasSocket) class AsyncReceiveRequest : AsyncOperationRequest {
 			return "Receive";
 		}
 	}
-	mixin OverlappedIoRequest!(AsyncReceiveResponse, LowLevelOperation);
+	mixin OverlappedIoRequest!(AsyncReceiveResponse, LowLevelOperation, true, false);
 
 	this(AsyncSocket socket, ubyte[] buffer, SocketAddress* address, int flags) {
 		llo = LowLevelOperation(socket, buffer, flags, address);
@@ -7162,7 +7503,7 @@ version(HasSocket) class AsyncSendRequest : AsyncOperationRequest {
 			return "Send";
 		}
 	}
-	mixin OverlappedIoRequest!(AsyncSendResponse, LowLevelOperation);
+	mixin OverlappedIoRequest!(AsyncSendResponse, LowLevelOperation, false, true);
 
 	this(AsyncSocket socket, const(ubyte)[] buffer, SocketAddress* address, int flags) {
 		llo = LowLevelOperation(socket, buffer, flags, address);
@@ -7716,7 +8057,7 @@ void main() {
 	auto w = new DirectoryWatcher(FilePath("."), "*", false, (path, op) {
 		writeln(path.path);
 	});
-	getThisThreadEventLoop().run(() => false);
+	getThisThreadEventLoop().run();
 }
 
 /++
@@ -7743,7 +8084,7 @@ void main() {
 /++
 	Implementation details of some requests. You shouldn't need to know any of this, the interface is all public.
 +/
-mixin template OverlappedIoRequest(Response, LowLevelOperation) {
+mixin template OverlappedIoRequest(Response, LowLevelOperation, bool readable, bool writable) {
 	private {
 		LowLevelOperation llo;
 
@@ -7768,7 +8109,6 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 		}
 
 		version(Posix) {
-			ICoreEventLoop.RearmToken eventRegistration;
 			CallbackHelper cb;
 
 			final CallbackHelper getCb() {
@@ -7833,10 +8173,9 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 
 			auto errno = errno;
 			if(ret == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) { // unable to complete right now, register and try when it is ready
-				if(eventRegistration is typeof(eventRegistration).init)
-					eventRegistration = getThisThreadEventLoop().addCallbackOnFdReadableOneShot(this.llo.file.handle, this.getCb);
-				else
-					eventRegistration.rearm();
+				assert(llo.file);
+				assert(llo.file.eventRegistration);
+				llo.file.eventRegistration.subscribeToEvents(readable, writable, false /* recurring */, getCb);
 			} else {
 				// i could set errors sync or async and since it couldn't even start, i think a sync exception is the right way
 				if(ret == -1)
@@ -7855,7 +8194,7 @@ mixin template OverlappedIoRequest(Response, LowLevelOperation) {
 			// Windows will notify us when the cancellation is complete, so we need to wait for that before updating the state
 		} else version(Posix) {
 			if(state_ != State.unused)
-				eventRegistration.unregister();
+				llo.file.eventRegistration.unregister();
 			markCompleted(-1, ECANCELED);
 		}
 	}
@@ -7943,7 +8282,7 @@ version(HasSocket) final class AsyncWriteRequest : AsyncOperationRequest {
 			return "Write";
 		}
 	}
-	mixin OverlappedIoRequest!(AsyncWriteResponse, LowLevelOperation);
+	mixin OverlappedIoRequest!(AsyncWriteResponse, LowLevelOperation, false, true);
 
 	this(AsyncFile file, ubyte[] buffer, long offset) {
 		this.llo = LowLevelOperation(file, buffer, offset);
@@ -8004,7 +8343,7 @@ version(HasSocket) final class AsyncReadRequest : AsyncOperationRequest {
 			return "Read";
 		}
 	}
-	mixin OverlappedIoRequest!(AsyncReadResponse, LowLevelOperation);
+	mixin OverlappedIoRequest!(AsyncReadResponse, LowLevelOperation, true, false);
 
 	/++
 		The file must have the overlapped flag enabled on Windows and the nonblock flag set on Posix.
@@ -8042,6 +8381,9 @@ class AsyncReadResponse : AsyncOperationResponse {
 }
 
 /+
+
+	NEVER call druntime's Fiber.yield. you will be left hanging!
+
 	Tasks:
 		startTask()
 		startSubTask() - what if it just did this when it knows it is being run from inside a task?
@@ -8049,7 +8391,24 @@ class AsyncReadResponse : AsyncOperationResponse {
 +/
 
 version(HasThread) class SchedulableTask : Fiber {
-	private void delegate() dg;
+	private void delegate(SchedulableTaskController controller) dg;
+
+	debug {
+		string file;
+		size_t line;
+		static struct DebugInfo {
+			string file;
+			size_t line;
+			bool onHold;
+		}
+		DebugInfo debugInfo() {
+			return DebugInfo(
+				file,
+				line,
+				state == State.HOLD,
+			);
+		}
+	}
 
 	// linked list stuff
 	private static SchedulableTask taskRoot;
@@ -8059,10 +8418,54 @@ version(HasThread) class SchedulableTask : Fiber {
 	// need the controlling thread to know how to wake it up if it receives a message
 	private Thread controllingThread;
 
+	private void delegate() onPostYield;
+
+	/++
+		Register for your next wakeup in the onPostYield method.
+
+		If you want it to be manual wakeup later, pass an empty function. Do NOT pass `null`.
+	+/
+	void yield(void delegate() onPostYield) {
+		assert(onPostYield !is null);
+		this.onPostYield = onPostYield;
+		Fiber.yield();
+		if(cancelled)
+			throw new TaskCancelledException();
+	}
+
+	private void call() {
+		Fiber.call(Rethrow.yes);
+		assert(this.onPostYield !is null, "Do NOT call Fiber.yield! It doesn't set up the recall. Use the method on SchedulableTask instead.");
+		onPostYield();
+		onPostYield = null;
+	}
+
+	void runOnThisThread() {
+		call();
+	}
+
+	void scheduleOnThisThread() {
+		getThisThreadEventLoop().onNextTick(&call);
+	}
+
+	void scheduleOnWorkerPool() {
+		CoreWorkerThread.ensureSetup();
+		CoreEventLoopImplementation.runInTaskRunnerQueue.enqueue(UserModeCallback(&call));
+	}
+
 	// the api
 
-	this(void delegate() dg, size_t stackSize = 4096 * 1000 /* 4 MB default */) {
+	this(void delegate() dg, size_t stackSize = 4096 * 1000 /* 4 MB default */, string file = __FILE__, size_t line = __LINE__) {
+		this((SchedulableTaskController ignored) {
+			dg();
+		}, stackSize, file, line);
+	}
+
+	this(void delegate(SchedulableTaskController controller) dg, size_t stackSize = 4096 * 1000 /* 4 MB default */, string file = __FILE__, size_t line = __LINE__) {
 		assert(dg !is null);
+
+		debug this.file = file;
+		debug this.line = line;
 
 		this.dg = dg;
 		super(&taskRunner, stackSize);
@@ -8098,7 +8501,10 @@ version(HasThread) class SchedulableTask : Fiber {
 
 	private void taskRunner() {
 		try {
-			dg();
+			if(auto controller = inSchedulableTask())
+				dg(controller);
+			else
+				assert(0); // how did we even get here???
 		} catch(TaskCancelledException tce) {
 			// this space intentionally left blank;
 			// the purpose of this exception is to just
@@ -8111,19 +8517,30 @@ version(HasThread) class SchedulableTask : Fiber {
 				taskUncaughtException(t);
 			}
 		} finally {
-			if(this is taskRoot) {
-				taskRoot = taskRoot.next;
-				if(taskRoot !is null)
-					taskRoot.previous = null;
-			} else {
-				assert(this.previous !is null);
-				assert(this.previous.next is this);
-				this.previous.next = this.next;
-				if(this.next !is null)
-					this.next.previous = this.previous;
-			}
+			assert(onPostYield is null);
+			onPostYield = &markTaskFinished;
 		}
 	}
+
+	private void markTaskFinished() {
+		assert(this.state == State.TERM);
+		if(this is taskRoot) {
+			taskRoot = taskRoot.next;
+			if(taskRoot !is null)
+				taskRoot.previous = null;
+		} else {
+			assert(this.previous !is null);
+			assert(this.previous.next is this);
+			this.previous.next = this.next;
+			if(this.next !is null)
+				this.next.previous = this.previous;
+		}
+
+		if(this.oncomplete)
+			this.oncomplete();
+	}
+
+	void delegate() oncomplete;
 }
 
 /++
@@ -8169,42 +8586,60 @@ version(HasThread) struct SchedulableTaskController {
 	}
 
 	/++
+		Yields the thread to check for cancellation and let other work proceed, but schedules it to start back up as soon as possible.
+	+/
+	void yield() {
+		fiber.yield(&fiber.scheduleOnThisThread);
+	}
+
+	/++
+	+/
+	void sleep(Duration howLong, string file = __FILE__, size_t line = __LINE__) {
+		fiber.yield(() {
+			auto umt = new UserModeTimer(howLong, &fiber.runOnThisThread, false, file, line);
+		});
+	}
+
+	// i don't like this one but it supports ae promises
+	void yieldWithUserDefinedWakeup(void delegate(SchedulableTask st) dg) {
+		fiber.yield(() { dg(fiber); });
+	}
+
+	/++
 
 	+/
 	version(Posix)
 	void yieldUntilReadable(NativeFileHandle handle) {
 		assert(fiber !is null);
 
-		auto cb = new CallbackHelper(() { fiber.call(); });
-		auto rearmToken = getThisThreadEventLoop().addCallbackOnFdReadableOneShot(handle, cb);
+		ICoreEventLoop.UnregisterToken unregisterToken;
+		// from the perspective of the fiber, this is only ever called after the callback...
+		scope(exit)
+			if(unregisterToken)
+				unregisterToken.unregister();
 
 		// FIXME: this is only valid if the fiber is only ever going to run in this thread!
-		fiber.yield();
-
-		rearmToken.unregister();
-
-		// what if there are other messages, like a ctrl+c?
-		if(fiber.cancelled)
-			throw new TaskCancelledException();
+		fiber.yield((){
+			auto cb = new CallbackHelper(() { fiber.call(); });
+			unregisterToken = getThisThreadEventLoop().registerFd(handle);
+			unregisterToken.subscribeToEvents(true, false, false, cb);
+		});
 	}
 
 	version(Windows)
 	void yieldUntilSignaled(NativeFileHandle handle) {
 		assert(fiber !is null);
 
-		auto cb = new CallbackHelper(() { fiber.call(); });
+		ICoreEventLoop.UnregisterToken unregisterToken;
+		// from the perspective of the fiber, this is only ever called after the callback...
+		scope(exit)
+			if(unregisterToken)
+				unregisterToken.unregister();
 
-		auto rearmToken = getThisThreadEventLoop().addCallbackOnHandleReady(handle, cb);
-
-		// FIXME: this is only valid if the fiber is only ever going to run in this thread!
-		fiber.yield();
-
-		rearmToken.unregister();
-
-		// what if there are other messages, like a ctrl+c?
-		if(fiber.cancelled)
-			throw new TaskCancelledException();
-
+		fiber.yield(() {
+			auto cb = new CallbackHelper(() { fiber.call(); });
+			unregisterToken = getThisThreadEventLoop().addCallbackOnHandleReady(handle, cb);
+		});
 	}
 }
 
@@ -8255,6 +8690,12 @@ version(HasThread) private class CoreWorkerThread : Thread {
 		scope(exit) {
 			atomicOp!"-="(runningCount, 1);
 		}
+
+		// this thread has no business intercepting signals from the main thread,
+		// so gonna block a couple of them
+		version(Posix)
+			(cast(CoreEventLoopImplementation) eventLoop).blockSignalsIntendedForUiThread();
+
 
 		eventLoop.run(() => cancelled);
 	}
@@ -8406,150 +8847,460 @@ version(HasThread) struct ArsdCoreApplication {
 	private bool alreadyRun;
 
 	void run() {
-		impl.run(() => false);
+		impl.run();
 		alreadyRun = true;
 	}
 }
 
+/++
+	A best-effort timer run with minimal support from the operating system; that is, one that runs in user mode. It works by scheduling function calls on the current thread's event loop some time on or after the specified timeout. It may run significantly later than you wanted if the event loop is busy, the computer goes to sleep, or the operating system schedules loop timeouts imprecisely.
+
+
+	See_Also:
+		[OperatingSystemTimer] for a timer backed by the operating system. An OS-backed timer may be more precise, use the real time clock, or be able to be handled by any available thread instead of just the same one that created it compared to a `UserModeTimer`.
++/
+class UserModeTimer {
+	private MonoTime dueTime;
+	private bool cancelled;
+	private Duration timeout;
+	private bool recurring;
+
+	private void delegate() onTrigger;
+
+	debug {
+		string file;
+		size_t line;
+		static struct DebugInfo {
+			string file;
+			size_t line;
+			Duration timeout;
+			bool cancelled;
+		}
+		DebugInfo debugInfo() {
+			DebugInfo di;
+			di.file = file;
+			di.line = line;
+			di.timeout = timeout;
+			di.cancelled = this.cancelled;
+			return di;
+		}
+	}
+
+	/++
+
+	+/
+	this(Duration timeout, void delegate() onTrigger, bool recurring, string file = __FILE__, size_t line = __LINE__) {
+		assert(onTrigger !is null);
+		assert(!recurring || timeout > msecs(0), "recurring timers cannot have timeout of zero or less");
+
+		debug this.file = file;
+		debug this.line = line;
+
+		this.timeout = timeout;
+		this.onTrigger = onTrigger;
+		this.cancelled = false;
+		this.dueTime = MonoTime.currTime + timeout;
+		this.recurring = recurring;
+		arm();
+	}
+
+	/++
+		If this is a recurring timer, it will never be scheduled to run in rapid succession. It will instead just miss one or more scheduled triggerings and call this delegate instead so you can make note of it.
+	+/
+	public void delegate(int count) onMissedTriggers;
+
+	private void arm() {
+		auto eli = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+		eli.userModeTimerQueue.add(this);
+		// writeln(eli.userModeTimerQueue.length);
+	}
+
+	/++
+		Cancels the timer immediately.
+	+/
+	void cancel() {
+		cancelled = true;
+	}
+
+	/++
+		Modifies the timer parameters. The new schedule will ONLY take effect AFTER the originally scheduled call. If you call `modify` from inside your trigger function, it will take effect immediately. If you want it to replace a currently scheduled call before it triggers, you must cancel the old timer and create a new one.
+	+/
+	void modify(Duration newTimeout, bool newRecurring) {
+		assert(!cancelled);
+		this.timeout = newTimeout;
+		this.recurring = newRecurring;
+	}
+
+	int opCmp(UserModeTimer rhs) {
+		assert(rhs !is null);
+		long diff = (this.dueTime - rhs.dueTime).total!"hnsecs";
+		if(diff > int.max)
+			return int.max;
+		if(diff < int.min)
+			return int.min;
+		return cast(int) diff;
+	}
+	alias opCmp = Object.opCmp;
+
+	private void trigger(MonoTime loopTime) {
+		onTrigger();
+		if(!cancelled && recurring) {
+			auto now = MonoTime.currTime;
+			int steps = 0;
+			while(dueTime <= now) {
+				dueTime += timeout;
+				steps++;
+			}
+			if(steps > 1 && onMissedTriggers !is null)
+				onMissedTriggers(steps - 1);
+			arm();
+		}
+	}
+
+	/++
+		Calls the timer on the next event loop iteration, even if it isn't scheduled to run yet.
+
+		This does not affect the schedule at all. All subsequent runs will still be triggered on the original schedule (if not cancelled).
+	+/
+	void callEarly() {
+		getThisThreadEventLoop().onNextTick(onTrigger);
+	}
+}
+
+/++
+	Represents a future value, which will be determined asynchronously.
+
+	History:
+		Added October 28, 2026
++/
+class Future(T) {
+	ResolutionStatus status;
+
+	T result;
+	Throwable exception;
+
+	void delegate() onresolution;
+
+	// do NOT call these from another thread. the promise needs to only be called from one thread at a time
+	// if it might be resolved from another thread than it is waiting (or if it waits on another thread it resolves),
+	// you need to handle that differently by sending a message back to its owning thread.
+	void fulfillWith(T result) {
+		this.result = result;
+		this.markResolved();
+	}
+
+	// do NOT call these from another thread
+	void rejectWith(Throwable exception) {
+		this.exception = exception;
+		this.markResolved();
+	}
+
+	private void markResolved() {
+		this.status = ResolutionStatus.resolved;
+		scheduleCall();
+		if(onresolution)
+			onresolution();
+	}
+
+	private void scheduleCall() {
+		if(taskAwaiting) {
+			// and FIXME: when i schedule the call, it probably should NOT be on this thread, but on whatever thread is awaiting it or the task prefers to be on
+			taskAwaiting.scheduleOnThisThread();
+			taskAwaiting = null;
+		}
+	}
+
+	private SchedulableTask taskAwaiting;
+
+	// do NOT call these from another thread
+	T waitForCompletion() {
+		if(auto controller = inSchedulableTask()) {
+			// if it is not already done, we need to yield and hold until it is done.
+			if(this.status == ResolutionStatus.pending) {
+				// is it possible to finish between the yield but before the onPostYield?
+				// on this thread, no, but what if some other thread fulfilled it?
+				// i think we should probably not allow that. even if the other thread fulfils it,
+				// it should send a message back to the task's owning thread to actually make it happen.
+				//
+				// note that no messages are processed on this thread in between yield and onPostYield.
+				controller.fiber.yield(() {
+					this.taskAwaiting = controller.fiber;
+				});
+			}
+			// it is already done, just return it without even bothering to yield
+			if(exception !is null)
+				throw exception;
+			return result;
+		} else {
+			return waitForCompletionSynchronously();
+		}
+	}
+
+	protected T waitForCompletionSynchronously() {
+		assert(0, "Don't call future.waitForCompletion outside of a async task.");
+	}
+}
+
+unittest {
+	Future!int calculateValueInOtherThread() {
+		auto future = new Future!int;
+		runInWorkerThreadAsync(
+			() shared {
+				// import core.thread; Thread.sleep(3.seconds);
+				return 42;
+			},
+			(int result) {
+				future.fulfillWith(result);
+			},
+			(Throwable error) {
+				future.rejectWith(error);
+			}
+		);
+		return future;
+	}
+
+	auto task = new SchedulableTask(() {
+		auto v = calculateValueInOtherThread();
+		v.waitForCompletion();
+		getThisThreadEventLoop.exitApplication;
+	});
+	task.scheduleOnThisThread();
+	getThisThreadEventLoop().run();
+}
+
+enum ResolutionStatus {
+	pending,
+	resolved
+}
 
 private class CoreEventLoopImplementation : ICoreEventLoop {
-	version(EmptyEventLoop) RunOnceResult runOnce(Duration timeout = Duration.max) { return RunOnceResult(RunOnceResult.Possibilities.LocalExit); }
-	version(EmptyCoreEvent)
-	{
-		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb){return typeof(return).init;}
-		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb){return typeof(return).init;}
-		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb){return typeof(return).init;}
-		private void rearmFd(RearmToken token) {}
+	private MinHeap!UserModeTimer userModeTimerQueue;
+	private CallbackQueueForOneThread thisThreadQueue;
+
+	private int registeredItemCount;
+	override int getRegisteredItemCount() { return registeredItemCount; }
+
+	debug static struct RegisteredItem {
+		size_t handle;
+		string file;
+		size_t line;
+	}
+	debug private RegisteredItem[size_t] registeredItems;
+
+	override void addRegisteredItem(size_t handle, string file = __FILE__, size_t line = __LINE__) {
+		registeredItemCount++;
+		debug registeredItems[handle] = RegisteredItem(handle, file, line);
+	}
+	override void subtractRegisteredItem(size_t handle) {
+		registeredItemCount--;
+		debug registeredItems.remove(handle);
+	}
+
+	Object[Object] anchors;
+	override void addAnchor(Object obj) {
+		anchors[obj] = obj;
+	}
+	override void removeAnchor(Object obj) {
+		anchors.remove(obj);
+		wake();
 	}
 
 	EventLoopType eventLoopType;
 
 	this(EventLoopType elt) {
+		ensureGlobalsInitialized();
+
 		this.eventLoopType = elt;
-		this();
+		thisThreadQueue = new CallbackQueueForOneThread("this thread", this);
+
+		initialize_Platform();
 	}
 
-	void wake() {
-		//int[1] a = 1; write(exitEventFd, a.ptr, a.length);
-		onNextTick(delegate() {});
+	void teardown() {
+		thisThreadQueue.teardown;
+		teardown_Platform();
+	}
+
+	version(assert) private bool inLoop;
+	RunOnceResult runOnce(Duration timeout = Duration.max) {
+		version(assert) {
+			assert(!inLoop, "You cannot reenter the event loop from inside the loop. Try moving your work to a callback or task instead.");
+			inLoop = true;
+			scope(exit)
+				inLoop = false;
+		}
+
+		scope(exit) eventLoopRound++;
+
+		auto hadAdditionalWork = runLoopIterationDelegates();
+		auto nextTimeout = processUserModeTimers(timeout, getTimeout ? getTimeout() : 0);
+		if(hadAdditionalWork)
+			nextTimeout = msecs(0);
+		RunOnceResult result;
+
+		if(loopIsFinished(nextTimeout)) {
+			// if runOnce_Platform will infinitely wait, and we are the main thread, that's an exit signal
+			// but what if there's worker threads still going?
+			// FIXME this should prolly be in the thing itself tbh
+			result = RunOnceResult(RunOnceResult.Possibilities.NoWorkToDo);
+		} else {
+			// FIXME: need a debug for "why won't this exit?" show the saved timeouts and registered fds
+			result = runOnce_Platform(nextTimeout);
+		}
+		thisThreadQueue.callback.call();
+		return result;
+	}
+
+	private bool loopIsFinished(Duration nextTimeout) {
+		if(eventLoopType == EventLoopType.TaskRunner || eventLoopType == EventLoopType.HelperWorker) {
+			// even if they have nothing on the queue right now, their reason for existing is to
+			// sit there and wait, so they shouldn't exist prematurely
+			return false;
+		}
+		if(anchors.length)
+			return false;
+		// don't need to check userModeTimerQueue.empty because if it wasn't empty, nextTimeout would be finite
+		// similarly, if a timer did go off just now, the nextTimeout would be 0, and if it added a call to the thread
+		// queue, it wouldn't be empty
+		return (nextTimeout == Duration.max && getRegisteredItemCount() == 0 && userModeTimerQueue.empty && thisThreadQueue.queue.isEmpty);
+	}
+
+	/++
+		Returns:
+			Duration.max when there is no timeout and you can wait infinitely
+
+			0 or less when you should timeout immediately
+
+			any other value, the duration between now and the target time, wait for as close as you can to this without going UNDER.
+	+/
+	private final Duration processUserModeTimers(Duration maxTimeout, uint timeoutSdpy) {
+		// timeoutSdpy is 0 when it doesn't have one and can thus be infinite
+		Duration timeoutSdpyAsDuration = timeoutSdpy ? msecs(timeoutSdpy) : Duration.max;
+
+		if(timeoutSdpyAsDuration < maxTimeout)
+			maxTimeout = timeoutSdpyAsDuration;
+
+		auto now = MonoTime.currTime;
+
+		while(!userModeTimerQueue.empty) {
+			auto next = userModeTimerQueue.peek();
+			if(next.cancelled) {
+				auto timer = userModeTimerQueue.getAndRemoveNext();
+			} else if(next.dueTime <= now) {
+				auto timer = userModeTimerQueue.getAndRemoveNext();
+				timer.trigger(now);
+				maxTimeout = 0.msecs; // if something actually ran, we want to go through another round of the loop since it might have changed the until state and we don't wanna be blocked in the OS loop before checking it again. but we also don't want timers triggering other timers immediately without at least checking the OS loop.
+			} else {
+				auto diff = next.dueTime - now;
+				if(diff < maxTimeout)
+					maxTimeout = diff;
+				break;
+			}
+		}
+
+		return maxTimeout;
+	}
+
+	version(EmptyEventLoop) RunOnceResult runOnce_Platform(Duration timeout = Duration.max) { return RunOnceResult(RunOnceResult.Possibilities.NoWorkToDo); }
+	version(EmptyCoreEvent)
+	{
+		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb){return typeof(return).init;}
+		UnregisterToken registerFd_Platform(int fd, CallbackHelper cb) { return typeof(return).init; }
 	}
 
 	void onNextTick(void delegate() dg) {
-		thisThreadQueue.enqueue(new CallbackHelper( dg ));
+		thisThreadQueue.enqueue(UserModeCallback( dg ));
 	}
 
 	private {
-		static struct LoopIterationDelegate {
-			void delegate() dg;
-			uint flags;
-		}
-		LoopIterationDelegate[] loopIterationDelegates;
+		bool delegate()[] loopIterationDelegates;
 
-		void runLoopIterationDelegates(bool isAfter) {
-			foreach(lid; loopIterationDelegates)
-				if((!isAfter && (lid.flags & 1)) || (isAfter && (lid.flags & 2)))
-					lid.dg();
+		bool runLoopIterationDelegates() {
+			bool didAny = false;
+			foreach(dg; loopIterationDelegates)
+				didAny = dg() || didAny;
+			return didAny;
 		}
 	}
 
-	override UnregisterToken addDelegateOnLoopIteration(void delegate() dg, uint timingFlags) {
-		loopIterationDelegates ~= LoopIterationDelegate(dg, timingFlags);
+	override UnregisterToken addDelegateOnLoopIteration(bool delegate() dg) {
+		loopIterationDelegates ~= dg;
 		UnregisterToken ut;
 		ut.impl = this;
 		ut.dg = dg;
 		return ut;
 	}
 
-	void unregisterDg(void delegate() dg) {
-		LoopIterationDelegate[] toKeep;
-		foreach(lid; loopIterationDelegates) {
-			if(lid.dg !is dg) {
-				toKeep ~= lid;
+	void unregisterLoopIterationDelegate(bool delegate() dg) {
+		foreach(idx, savedDg; loopIterationDelegates) {
+			if(savedDg is dg) {
+				loopIterationDelegates[idx] = loopIterationDelegates[$ - 1];
+				loopIterationDelegates = loopIterationDelegates[0 .. $ -1];
+				loopIterationDelegates.assumeSafeAppend();
+				break;
 			}
 		}
-		loopIterationDelegates = toKeep;
 	}
 
 	version(Arsd_core_dispatch) {
+		//private NSRunLoop ttrl;
 
-		private NSRunLoop ttrl;
-
-		private this() {
-			ttrl = NSRunLoop.currentRunLoop;
+		void initialize_PlatformUiThread() {
+			//ttrl = NSRunLoop.currentRunLoop;
 		}
 
-			// FIXME: this lies!! it runs until completion
-		RunOnceResult runOnce(Duration timeout = Duration.max) {
-			scope(exit) eventLoopRound++;
-
-			// FIXME: autorelease pool
-
-			if(false /*isWorker*/) {
-				runLoopIterationDelegates(false);
-
-				// FIXME: timeout is wrong
-				auto retValue = ttrl.runMode(NSDefaultRunLoopMode, /+beforeDate:+/ NSDate.distantFuture);
-				if(retValue == false)
-					throw new Exception("could not start run loop");
-
-				runLoopIterationDelegates(true);
-
-				// NSApp.run();
-				// exitApplication();
-				//return RunOnceResult(RunOnceResult.Possibilities.GlobalExit);
-				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
-			} else {
-				// ui thread needs to pump nsapp events...
-				runLoopIterationDelegates(false);
-
-				auto timeoutNs = NSDate.distantFuture; // FIXME timeout here, future means no timeout
-
-				again:
-				NSEvent event = NSApp.nextEventMatchingMask(
-					NSEventMask.NSEventMaskAny,
-					timeoutNs,
-					NSDefaultRunLoopMode,
-					true
-				);
-				if(event !is null) {
-					NSApp.sendEvent(event);
-					timeoutNs = NSDate.distantPast; // only keep going if it won't block; we just want to clear the queue
-					goto again;
-				}
-
-				runLoopIterationDelegates(true);
-				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
-			}
-		}
-
-		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb) {
-			auto input_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, dispatch_get_main_queue());
-			// FIXME: can the GC reap this prematurely?
-			auto b = block(() {
-				cb.call();
-			});
-			// FIXME: should prolly free it eventually idk
-			import core.memory;
-			GC.addRoot(b);
-
-			dispatch_source_set_event_handler(input_src, b);
-			// dispatch_source_set_cancel_handler(input_src,  ^{ close(my_file); });
-			dispatch_resume(input_src);
-
-			return UnregisterToken(this, fd, cb);
+		void teardown_PlatformUiThread() {
 
 		}
-		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb) {
-			throw new NotYetImplementedException();
+
+		void wake_PlatformUiThread() {
+			// FIXME: this only wakes the ui thread specifically, what about other threads with event loops like our workers?
+			NSApp.postEvent(
+				NSEvent.otherEventWithType(
+					NSEventType.applicationDefined,
+					NSMakePoint(0, 0),
+					cast(NSEventModifierFlags) 0,
+					1.0, // FIXME: timestamp
+					0,
+					null,
+					0,
+					0,
+					0
+				),
+				false
+			);
 		}
-		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb) {
-			throw new NotYetImplementedException();
-		}
-		private void rearmFd(RearmToken token) {
-			if(token.readable)
-				cast(void) addCallbackOnFdReadableOneShot(token.fd, token.cb);
+
+
+		RunOnceResult runOnce_PlatformUiThread(Duration timeout) {
+			NSDate nextTimeout;
+			if(timeout == Duration.max)
+				nextTimeout = NSDate.distantFuture;
+			else if(timeout <= msecs(0))
+				nextTimeout = NSDate.distantPast;
 			else
-				cast(void) addCallbackOnFdWritableOneShot(token.fd, token.cb);
+				nextTimeout = NSDate.alloc.initWithTimeIntervalSinceNow(cast(double) timeout.total!"msecs" / 1000.0);
+
+			// auto retValue = ttrl.runMode(NSDefaultRunLoopMode, /+beforeDate:+/ nextTimeout);
+			again:
+			NSEvent event = NSApp.nextEventMatchingMask(
+				NSEventMask.NSEventMaskAny,
+				nextTimeout,
+				NSDefaultRunLoopMode,
+				true
+			);
+			if(event !is null) {
+				NSApp.sendEvent(event);
+				nextTimeout = NSDate.distantPast; // only keep going if it won't block; we just want to clear the queue
+
+				goto again;
+			}
+
+			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+		}
+
+		UnregisterToken registerFd_PlatformUiThread(int fd) {
+			return UnregisterToken(this, fd);
 		}
 	}
 
@@ -8557,34 +9308,106 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		// this thread apc dispatches go as a custom event to the queue
 		// the other queues go through one byte at a time pipes (barf). freebsd 13 and newest nbsd have eventfd too tho so maybe i can use them but the other kqueue systems don't.
 
-		RunOnceResult runOnce(Duration timeout = Duration.max) {
-			scope(exit) eventLoopRound++;
+		private int kqueuefd = -1;
 
-			runLoopIterationDelegates(false);
+		void initialize_Platform() {
+			version(Arsd_core_dispatch)
+			if(this.eventLoopType == EventLoopType.Ui)
+				return initialize_PlatformUiThread();
+
+			kqueuefd = ErrnoEnforce!kqueue();
+			setCloExec(kqueuefd); // FIXME O_CLOEXEC
+
+			if(kqueueGlobalFd[0] == -1) {
+				import core.sys.posix.unistd;
+				pipe(kqueueGlobalFd);
+				setCloExec(kqueueGlobalFd[0]);
+				setCloExec(kqueueGlobalFd[1]);
+
+				makeNonBlocking(kqueueGlobalFd[0]);
+				makeNonBlocking(kqueueGlobalFd[1]);
+			}
+
+			kevent_t ev;
+
+			foreach(signum; speciallyHandledSignals) {
+				EV_SET(&ev, signum, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, null);
+				ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+			}
+
+			globalEventSent = new CallbackHelper(&readGlobalEvent);
+			EV_SET(&ev, kqueueGlobalFd[0], EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, cast(void*) globalEventSent);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+
+			EV_SET(&ev, 0 /* arbitrary id */, EVFILT_USER, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, null);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+
+			if(eventLoopType == EventLoopType.TaskRunner)
+				cast(void) addCallbackOnFdReadable(runInTaskRunnerQueue.fd[0], runInTaskRunnerQueue.callback);
+			else if(eventLoopType == EventLoopType.HelperWorker)
+				cast(void) addCallbackOnFdReadable(runInHelperThreadQueue.fd[0], runInHelperThreadQueue.callback);
+		}
+
+		void teardown_Platform() {
+			version(Arsd_core_dispatch)
+			if(this.eventLoopType == EventLoopType.Ui)
+				return teardown_PlatformUiThread();
+		}
+
+		void wake() {
+			version(Arsd_core_dispatch)
+			if(this.eventLoopType == EventLoopType.Ui)
+				return wake_PlatformUiThread();
+
+			kevent_t ev;
+
+			EV_SET(&ev, 0 /* arbitrary id */, EVFILT_USER, EV_ADD | EV_ENABLE | EV_DISPATCH, NOTE_TRIGGER, 0, null);
+			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
+		}
+
+		RunOnceResult runOnce_Platform(Duration timeout) {
+			version(Arsd_core_dispatch)
+			if(this.eventLoopType == EventLoopType.Ui)
+				return runOnce_PlatformUiThread(timeout);
+
+			timespec timespecBuffer;
+			timespec* nextTimeout;
+
+			if(timeout == Duration.max) {
+				nextTimeout = null;
+			} else if(timeout <= msecs(0)) {
+				timespecBuffer.tv_sec = 0;
+				timespecBuffer.tv_nsec = 0;
+				nextTimeout = &timespecBuffer;
+			} else {
+				auto msecs = timeout.total!"msecs";
+				timespecBuffer.tv_sec = msecs / 1000;
+				timespecBuffer.tv_nsec = (msecs % 1000) * 1_000_000;
+				nextTimeout = &timespecBuffer;
+			}
 
 			kevent_t[16] ev;
-			//timespec tout = timespec(1, 0);
-			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, null/*&tout*/);
+			auto nev = kevent(kqueuefd, null, 0, ev.ptr, ev.length, nextTimeout);
 			if(nev == -1) {
-				// FIXME: EINTR
-				throw new SystemApiException("kevent", errno);
+				if(errno == EINTR)
+					// we could check the signals here, but since we subscribed to them we'll check below when the filter comes through anyway
+					return RunOnceResult(RunOnceResult.Possibilities.Interrupted);
+				else
+					throw new SystemApiException("kevent", errno);
 			} else if(nev == 0) {
-				// timeout
+				// timeout, handled outside the platform loop so just return
 			} else {
 				foreach(event; ev[0 .. nev]) {
 					if(event.filter == EVFILT_SIGNAL) {
-						// FIXME: I could prolly do this better tbh
-						markSignalOccurred(cast(int) event.ident);
-						signalChecker();
+						signalReader();
 					} else {
 						// FIXME: event.filter more specific?
 						CallbackHelper cb = cast(CallbackHelper) event.udata;
-						cb.call();
+						if(cb)
+							cb.call();
 					}
 				}
 			}
-
-			runLoopIterationDelegates(true);
 
 			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 		}
@@ -8592,42 +9415,14 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 		// FIXME: idk how to make one event that multiple kqueues can listen to w/o being shared
 		// maybe a shared kqueue could work that the thread kqueue listen to (which i rejected for
 		// epoll cuz it caused thundering herd problems but maybe it'd work here)
+		// some newer bsds support the event_fd same as linux tho
 
-		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb) {
-			kevent_t ev;
+		UnregisterToken registerFd_Platform(int fd) {
+			version(Arsd_core_dispatch)
+			if(this.eventLoopType == EventLoopType.Ui)
+				return registerFd_PlatformUiThread(fd);
 
-			EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ENABLE/* | EV_ONESHOT*/, 0, 0, cast(void*) cb);
-
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-
-			return UnregisterToken(this, fd, cb);
-		}
-
-		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb) {
-			kevent_t ev;
-
-			EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ENABLE/* | EV_ONESHOT*/, 0, 0, cast(void*) cb);
-
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-
-			return RearmToken(true, this, fd, cb, 0);
-		}
-
-		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb) {
-			kevent_t ev;
-
-			EV_SET(&ev, fd, EVFILT_WRITE, EV_ADD | EV_ENABLE/* | EV_ONESHOT*/, 0, 0, cast(void*) cb);
-
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-
-			return RearmToken(false, this, fd, cb, 0);
-		}
-
-		private void rearmFd(RearmToken token) {
-			if(token.readable)
-				cast(void) addCallbackOnFdReadableOneShot(token.fd, token.cb);
-			else
-				cast(void) addCallbackOnFdWritableOneShot(token.fd, token.cb);
+			return UnregisterToken(this, fd);
 		}
 
 		private void triggerGlobalEvent() {
@@ -8635,33 +9430,6 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			import core.sys.posix.unistd;
 			write(kqueueGlobalFd[1], &a, 1);
 		}
-
-		private this() {
-			kqueuefd = ErrnoEnforce!kqueue();
-			setCloExec(kqueuefd); // FIXME O_CLOEXEC
-
-			if(kqueueGlobalFd[0] == 0) {
-				import core.sys.posix.unistd;
-				pipe(kqueueGlobalFd);
-				setCloExec(kqueueGlobalFd[0]);
-				setCloExec(kqueueGlobalFd[1]);
-
-				signal(SIGINT, SIG_IGN); // FIXME
-			}
-
-			kevent_t ev;
-
-			EV_SET(&ev, SIGCHLD, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, null);
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-			EV_SET(&ev, SIGINT, EVFILT_SIGNAL, EV_ADD | EV_ENABLE, 0, 0, null);
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-
-			globalEventSent = new CallbackHelper(&readGlobalEvent);
-			EV_SET(&ev, kqueueGlobalFd[0], EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, cast(void*) globalEventSent);
-			ErrnoEnforce!kevent(kqueuefd, &ev, 1, null, 0, null);
-		}
-
-		private int kqueuefd = -1;
 
 		private CallbackHelper globalEventSent;
 		void readGlobalEvent() {
@@ -8674,7 +9442,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 			// FIXME: the thread is woken up, now we need to check the circualr buffer queue
 		}
 
-		private __gshared int[2] kqueueGlobalFd;
+		private __gshared int[2] kqueueGlobalFd = -1;
 	}
 
 	/+
@@ -8701,48 +9469,103 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 	version(Arsd_core_windows) {
 		// all event loops share the one iocp, Windows
 		// manages how to do it
-		__gshared HANDLE iocpTaskRunners;
-		__gshared HANDLE iocpWorkers;
-
 		HANDLE[] handles;
 		CallbackHelper[] handlesCbs;
 
-		this() {
-			initializeGlobals();
-			thisThreadQueue = new CallbackQueue("this thread", false);
-			assert(thisThreadQueue.ev);
-			cast(void) addCallbackOnHandleReady(thisThreadQueue.ev, thisThreadQueue.callback);
+		HANDLE threadHandle;
 
+		private __gshared CoreEventLoopImplementation uiThread;
+		private static extern(Windows)
+		int ctrlCHandler(DWORD dwCtrlType) nothrow {
+			if(!uiThread)
+				return false;
+			try
+			switch(dwCtrlType) {
+				case 0: // CTRL_C_EVENT
+					// similar to Unix SIGINT
+					uiThread.onNextTick(&uiThread.sigIntHappened);
+					return true;
+				case 1: // CTRL_BREAK_EVENT
+					// idk the convention but im going to treat it similarly to SIGQUIT
+					uiThread.onNextTick(&uiThread.sigQuitHappened);
+					return true;
+				case 2: // CTRL_CLOSE_EVENT
+					// similar to a Unix SIGHUP
+					uiThread.onNextTick(&uiThread.sigHupHappened);
+					return true;
+				case 5: // CTRL_LOGOFF_EVENT
+				case 6: // CTRL_SHUTDOWN_EVENT
+				default:
+					// FIXME: some better idea?
+					ExitProcess(1);
+					return false;
+			}
+			catch(Exception e) { assert(0, e.toString()); }
 		}
 
-		void unregisterHandle(HANDLE handle, CallbackHelper cb) {
-			foreach(idx, h; handles)
-				if(h is handle && handlesCbs[idx] is cb) {
-					handles[idx] = handles[$-1];
-					handles = handles[0 .. $-1].assumeSafeAppend;
-
-					handlesCbs[idx] = handlesCbs[$-1];
-					handlesCbs = handlesCbs[0 .. $-1].assumeSafeAppend;
-				}
+		void sigIntHappened() {
+			debug printEventLoopDebugReport();
+			ExitProcess(3);
 		}
 
-		UnregisterToken addCallbackOnHandleReady(HANDLE handle, CallbackHelper cb) {
-			handles ~= handle;
-			handlesCbs ~= cb;
+		void sigQuitHappened() {
+			ExitProcess(2);
+		}
 
-			return UnregisterToken(this, handle, cb);
+		void sigHupHappened() {
+			ExitProcess(4);
+		}
+
+		void initialize_Platform() {
+			Win32Enforce!DuplicateHandle(
+				GetCurrentProcess(),
+				GetCurrentThread(),
+				GetCurrentProcess(),
+				&this.threadHandle,
+				0,
+				false,
+				DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS
+			);
+
+			if(eventLoopType == EventLoopType.Ui) {
+				import core.sys.windows.wincon;
+				uiThread = this;
+				SetConsoleCtrlHandler(&ctrlCHandler, true);
+			}
+		}
+
+		void teardown_Platform() {
+			import core.sys.windows.wincon;
+			SetConsoleCtrlHandler(&ctrlCHandler, false);
+			Win32Enforce!CloseHandle(threadHandle);
+			uiThread = null;
+		}
+
+		void wake() {
+			extern(Windows) static void apc(ULONG_PTR param) {
+				// the APC doesn't actually DO anything; the callback is already queued
+				// and the APC's job is really just to wake up the event loop, so the callback
+				// will be processed outside the OS
+			}
+			Win32Enforce!QueueUserAPC(&apc, threadHandle, 0);
 		}
 
 		// i think to terminate i just have to post the message at least once for every thread i know about, maybe a few more times for threads i don't know about.
-
-		RunOnceResult runOnce(Duration timeout = Duration.max) {
-			scope(exit) eventLoopRound++;
-
-			runLoopIterationDelegates(false);
+		RunOnceResult runOnce_Platform(Duration timeout) {
+			UINT nextTimeout;
+			if(timeout == Duration.max) {
+				nextTimeout = INFINITE;
+			} else if(timeout <= msecs(0)) {
+				nextTimeout = 0;
+			} else {
+				auto m = timeout.total!"msecs";
+				if(m >= int.max)
+					nextTimeout = int.max;
+				else
+					nextTimeout = cast(uint) m;
+			}
 
 			if(eventLoopType == EventLoopType.TaskRunner) {
-
-				auto timeout2 = INFINITE; // FIXME
 				/+
 				void* key;
 				OVERLAPPED* overlapped;
@@ -8752,10 +9575,10 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				OVERLAPPED_ENTRY[1] overlappedEntries;
 				ULONG entriesRemoved;
 
-				assert(runInHelperThreadQueue);
-				assert(runInHelperThreadQueue.iocp);
-				//if(GetQueuedCompletionStatus(runInTaskRunnerQueue.iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, timeout2)) {
-				if(GetQueuedCompletionStatusEx(runInTaskRunnerQueue.iocp, overlappedEntries.ptr, overlappedEntries.length, &entriesRemoved, timeout2, true)) {
+				assert(runInTaskRunnerQueue);
+				assert(runInTaskRunnerQueue.iocp);
+				//if(GetQueuedCompletionStatus(runInTaskRunnerQueue.iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, nextTimeout)) {
+				if(GetQueuedCompletionStatusEx(runInTaskRunnerQueue.iocp, overlappedEntries.ptr, overlappedEntries.length, &entriesRemoved, nextTimeout, true)) {
 					foreach(entry; overlappedEntries[0 .. entriesRemoved]) {
 						if(entry.lpOverlapped is null && entry.dwNumberOfBytesTransferred == 0 && entry.lpCompletionKey == 0) {
 							runInTaskRunnerQueue.callback.call();
@@ -8765,19 +9588,15 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				// else if it returns false, GetLastError() == WAIT_IO_COMPLETION means an APC happened
 				// other errors means we might wanna throw.
 
-				runLoopIterationDelegates(true);
-
 				return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
 
 				// this function is only supported on Windows Vista and up, so using this
 				// means dropping support for XP.
 				//GetQueuedCompletionStatusEx();
 			} else {
-				auto wto = getTimeout ? getTimeout() : 0;
-
 				auto waitResult = MsgWaitForMultipleObjectsEx(
 					cast(int) handles.length, handles.ptr,
-					(wto == 0 ? INFINITE : wto), /* timeout */
+					nextTimeout, /* timeout */
 					0x04FF, /* QS_ALLINPUT */
 					0x0002 /* MWMO_ALERTABLE */ | 0x0004 /* MWMO_INPUTAVAILABLE */);
 
@@ -8808,7 +9627,7 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				} else if(waitResult == 0x000000C0L /* WAIT_IO_COMPLETION */) {
 					SleepEx(0, true); // I call this to give it a chance to do stuff like async io
 				} else if(waitResult == 258L /* WAIT_TIMEOUT */) {
-					// timeout, should never happen since we aren't using it
+					// timeout, we will process timeouts at the start of the loop regardless
 				} else if(waitResult == 0xFFFFFFFF) {
 						// failed
 						throw new WindowsApiException("MsgWaitForMultipleObjectsEx", GetLastError());
@@ -8817,17 +9636,340 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 				}
 			}
 
-			runLoopIterationDelegates(true);
-
 			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+		}
+
+		private static extern(Windows) void tpWaitHandler(PTP_CALLBACK_INSTANCE instance, void* context, PTP_WAIT tpw, TP_WAIT_RESULT waitResult) {
+			// we never time out so no need to check that
+			CallbackHelper callback = cast(CallbackHelper) context;
+			// FIXME: if this throws, the program crashes fairly inelegantly and you need a debugger to clue into as to why. do we want to do something else?
+			// only reason it should throw is if the queue is full which should be rare af but still it can happen.
+			callback.targetLoop.onNextTick(&callback.callAfterBeingQueuedFromThreadpoolWait);
+		}
+
+		void unregisterHandle(HANDLE handle, CallbackHelper cb) {
+			if(cb.threadpoolWait) {
+				if(cb.threadpoolWait) {
+					CloseThreadpoolWait(cb.threadpoolWait);
+					cb.threadpoolWait = null;
+				}
+			} else {
+				foreach(idx, h; handles)
+					if(h is handle && handlesCbs[idx] is cb) {
+						handles[idx] = handles[$-1];
+						handles = handles[0 .. $-1].assumeSafeAppend;
+
+						handlesCbs[idx] = handlesCbs[$-1];
+						handlesCbs = handlesCbs[0 .. $-1].assumeSafeAppend;
+					}
+			}
+		}
+
+		// FIXME: this needs to set a threadpool wait to queue an APC if we are an i/o worker
+		// (GetQueuedCompletionStatusEx thread) cuz it never waits on objects without that.
+		// tbh maybe it should just always do it that way.
+		UnregisterToken addCallbackOnHandleReady(HANDLE handle, CallbackHelper cb) {
+			// we should not be calling this twice
+			assert(cb.threadpoolWait is null);
+			assert(cb.threadpoolWaitingOnHandle is null);
+			assert(cb.targetLoop is null);
+
+			assert(handle !is null);
+
+			auto tpw = CreateThreadpoolWait(&tpWaitHandler, cast(void*) cb, null); // returns null on failure
+			if(tpw is null)
+				throw new WindowsApiException("CreateThreadpoolWait", GetLastError());
+
+			cb.threadpoolWait = tpw;
+			cb.threadpoolWaitingOnHandle = handle;
+			cb.targetLoop = this;
+
+			SetThreadpoolWait(tpw, handle, null);
+
+			/+
+			handles ~= handle;
+			handlesCbs ~= cb;
+			+/
+
+			return UnregisterToken(this, handle, cb);
 		}
 	}
 
+	version(Arsd_core_epoll) {
+
+		import core.sys.linux.epoll;
+		import core.sys.linux.sys.eventfd;
+
+		int epollfd = -1;
+		int wakeFd = -1;
+
+		void initialize_Platform() {
+			assert(epollfd == -1, "initialized twice");
+
+			epollfd = epoll_create1(EPOLL_CLOEXEC);
+
+			wakeFd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+
+			// FIXME: ensure UI events get top priority
+
+			// global listeners
+
+			// FIXME: i should prolly keep the tokens and release them when tearing down.
+			//cast(void) addCallbackOnFdReadable(signalEventFd, signalReaderCallback);
+			final switch(eventLoopType) {
+				case EventLoopType.AdHoc:
+				case EventLoopType.Explicit:
+				case EventLoopType.Ui:
+					// worker threads shouldn't be doing the signals, only the ui thread runs those handlers
+
+					// not using addCallbackOnFdReadable because these shouldn't actually anchor the loop, they're
+					// just internal details
+					epoll_event event;
+					event.data.ptr = cast(void*) signalReaderCallback;
+					event.events = EPOLLIN;
+					assert(signalEventFd != -1);
+					ErrnoEnforce!epoll_ctl(epollfd, EPOLL_CTL_ADD, signalEventFd, &event);
+				break;
+				case EventLoopType.TaskRunner:
+					cast(void) addCallbackOnFdReadable(runInTaskRunnerQueue.fd, runInTaskRunnerQueue.callback);
+					runInTaskRunnerQueue.callback.addref();
+				break;
+				case EventLoopType.HelperWorker:
+					cast(void) addCallbackOnFdReadable(runInHelperThreadQueue.fd, runInHelperThreadQueue.callback);
+					runInHelperThreadQueue.callback.addref();
+				break;
+			}
+
+			// local listener
+			{
+			// ditto on not using addCallbackOnFdReadable
+			epoll_event event;
+			event.data.ptr = cast(void*) new CallbackHelper(&wokenDrainer);
+			event.events = EPOLLIN;
+			ErrnoEnforce!epoll_ctl(epollfd, EPOLL_CTL_ADD, wakeFd, &event);
+			}
+			// cast(void) addCallbackOnFdReadable(wakeFd, new CallbackHelper(&wokenDrainer));
+		}
+
+		void teardown_Platform() {
+			import core.sys.posix.fcntl;
+			import core.sys.posix.unistd;
+
+			close(epollfd);
+			epollfd = -1;
+
+			close(wakeFd);
+			wakeFd = -1;
+
+			// FIXME: should prolly free anything left in the callback queue, tho those could also be GC managed tbh.
+		}
+
+		void wokenDrainer() {
+			import core.sys.posix.unistd;
+			ulong number;
+			auto ret = read(wakeFd, &number, number.sizeof);
+			// this SHOULD never block because it is ONLY called in response to wake and can only ever be read by this thread (though it can be set by others)
+			assert(ret == ulong.sizeof);
+
+			thisThreadQueue.callback.call();
+		}
+
+		void wake() {
+			import core.sys.posix.unistd;
+			ulong number = 1;
+			auto ret = write(wakeFd, &number, number.sizeof);
+			assert(ret == ulong.sizeof);
+		}
+
+		// the any thread poll is just registered in the this thread poll w/ exclusive. nobody actaully epoll_waits
+		// on the global one directly.
+
+		RunOnceResult runOnce_Platform(Duration timeout) {
+			int nextTimeout;
+			if(timeout == Duration.max) {
+				nextTimeout = -1;
+			} else if(timeout <= msecs(0)) {
+				nextTimeout = 0;
+			} else {
+				auto m = timeout.total!"msecs";
+				if(m >= int.max)
+					nextTimeout = int.max;
+				else
+					nextTimeout = cast(int) m;
+			}
+
+			epoll_event[16] events;
+			auto ret = epoll_wait(epollfd, events.ptr, cast(int) events.length, nextTimeout);
+			if(ret == -1) {
+				import core.stdc.errno;
+				if(errno == EINTR) {
+					// we could check the signals here, but since we subscribed to them we'll check below when the event fd comes up
+					return RunOnceResult(RunOnceResult.Possibilities.Interrupted);
+				}
+				throw new ErrnoApiException("epoll_wait", errno);
+			} else if(ret == 0) {
+				// timeout, will be handled a level higher so just carry on
+			} else {
+				// loop events and call associated callbacks
+				foreach(event; events[0 .. ret]) {
+					auto flags = event.events;
+					auto cbObject = cast(CallbackHelper) event.data.ptr;
+
+					// FIXME: or if it is an error...
+					// EPOLLERR - write end of pipe when read end closed or other error. and EPOLLHUP - terminal hangup or read end when write end close (but it will give 0 reading after that soon anyway)
+
+					if(cbObject)
+						cbObject.call();
+				}
+			}
+
+			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
+		}
+
+
+		/+ // i call it explicitly at the thread exit instead, but worker threads aren't really supposed to exit generally speaking till process done anyway
+		static ~this() {
+			teardown();
+		}
+		+/
+
+		// building blocks for low-level integration with the loop
+
+		UnregisterToken registerFd_Platform(int fd) {
+			epoll_event event;
+			event.data.ptr = null;
+			// EPOLLEXCLUSIVE can only be used on add, then it disables mod.
+			// so it needs special treatment here. ugh.
+			event.events = EPOLLERR;// | EPOLLEXCLUSIVE;
+			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
+				throw new ErrnoApiException("epoll_ctl", errno);
+
+			return UnregisterToken(this, fd);
+		}
+
+		// Disk files will have to be sent as messages to a worker to do the read and report back a completion packet.
+	}
+
+	// signal stuff
 	version(Posix) {
 		private __gshared uint sigChildHappened = 0;
 		private __gshared uint sigIntrHappened = 0;
 
-		static void signalChecker() {
+		/++
+			Informs the arsd.core system that the given signal happened. You can call this from inside a signal handler.
+		+/
+		public static void markSignalOccurred(int sigNumber) nothrow {
+			import core.sys.posix.unistd;
+
+			if(sigNumber == SIGCHLD)
+				volatileStore(&sigChildHappened, 1);
+			if(sigNumber == SIGINT)
+				volatileStore(&sigIntrHappened, 1);
+
+			if(signalEventFd != -1) {
+				ulong writeValue = 1;
+				write(signalEventFd, &writeValue, writeValue.sizeof);
+			}
+		}
+
+		import core.sys.posix.signal;
+
+		private static immutable int[] speciallyHandledSignals = [SIGCHLD, SIGINT];
+		private __gshared sigaction_t[speciallyHandledSignals.length] oldSignalHandlers;
+		private __gshared sigaction_t oldSigPipe; // SIGPIPE gets special treatment because we outright ignore it, we handle errors on write(2) instead
+
+		private __gshared int signalEventFd = -1;
+
+		// this is part of initializing globals, done inside that lock
+		private static void setSignalHandlers() {
+			static extern(C) void interruptHandler(int sigNumber) nothrow {
+				markSignalOccurred(sigNumber);
+			}
+
+			sigaction_t n;
+			n.sa_handler = &interruptHandler;
+			n.sa_mask = cast(sigset_t) 0;
+			n.sa_flags = 0;
+			foreach(idx, signum; speciallyHandledSignals)
+				sigaction(signum, &n, &oldSignalHandlers[idx]);
+
+			n.sa_handler = SIG_IGN;
+			sigaction(SIGPIPE, &n, &oldSigPipe);
+		}
+
+		private static void restoreSignalHandlers() {
+			foreach(idx, signum; speciallyHandledSignals)
+				sigaction(signum, &oldSignalHandlers[idx], null);
+			sigaction(SIGPIPE, &oldSigPipe, null);
+		}
+
+		/+
+			I want the signal handlers to run in the ui thread itself whenever
+			possible so the workers don't have to deal with as much potential
+			surprising interruptions (even though all the actual handler does
+			is write to a pipe read by the ui thread anyway, i still want it
+			centralized on all levels). worker threads can call this to prepare
+			their way.
+
+			also potentially useful if we use signalfd or kqueue.
+		+/
+		private static void blockSignalsIntendedForUiThread(bool processWide = false) {
+			import core.sys.posix.signal;
+			sigset_t sigset;
+			auto err = sigemptyset(&sigset);
+			assert(!err);
+
+			foreach(signum; speciallyHandledSignals) {
+				err = sigaddset(&sigset, signum); assert(!err);
+			}
+
+			if(processWide)
+				err = sigprocmask(SIG_BLOCK, &sigset, null);
+			else
+				err = pthread_sigmask(SIG_BLOCK, &sigset, null);
+
+			assert(!err);
+		}
+
+		/+
+			UI signals
+				SIGINT - user requested interruption (ctrl+c), not necessarily termination, but if they hit it a bunch of times they prolly want it dead
+				SIGTERM - default `kill` command signal, program should clean up and terminate.
+				SIGHUP - user closed the window holding the program (nowadays), we should cleanup and terminate unless the program is designed to handle backgrounding. daemons traditionally use sighup as "reload config".
+				SIGQUIT - "quit from keyboard" (ctrl+\), default is to dump core and terminate
+
+			Terminal control signals
+				SIGWINCH - resized terminal window
+				SIGTTIN - input for background process, default to stop
+				SIGTTOU - output for background process, default to stop
+				SIGTSTP - user hit ctrl+z, wanting to stop us
+				SIGCONT - user continuting stopped process from the shell
+
+			Other notable ones
+				SIGKILL - forced kill, we can't catch it.
+				SIGSTOP - stop the program, we can't catch it, but SIGCONT is sent after to continue and we can handle there
+
+				SIGUSR1
+				SIGUSR2
+				SIGRT33
+				SIGRT34
+				SIGRT35
+					druntime GC control signals (USR is the old one, p sure it always RT* now, but it might be dynamically allocated and change)
+					don't want to mess with these.
+
+			If a signal is ignored, that IS inherited by child processes, so any we ignore we want to actually set back.
+			If it is handled though it is reset to default automatically.
+		+/
+		private static void signalReader() {
+			// this is called from the event loop, so the signal restrictions do not apply, but note
+			// the *Happened flags might be modified by a signal while we are inside this function, hence
+			// the cas ops.
+			if(signalEventFd != -1) {
+				import core.sys.posix.unistd;
+				ulong number;
+				read(signalEventFd, &number, number.sizeof);
+			}
+
 			if(cas(&sigChildHappened, 1, 0)) {
 				while(true) { // multiple children could have exited before we processed the notification
 
@@ -8859,169 +10001,168 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			}
 			if(cas(&sigIntrHappened, 1, 0)) {
+				debug {
+					auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+					if(el)
+						el.printEventLoopDebugReport();
+				}
 				// FIXME
 				import core.stdc.stdlib;
-				exit(0);
+				exit(-SIGINT);
 			}
-		}
 
-		/++
-			Informs the arsd.core system that the given signal happened. You can call this from inside a signal handler.
-		+/
-		public static void markSignalOccurred(int sigNumber) nothrow {
-			import core.sys.posix.unistd;
-
-			if(sigNumber == SIGCHLD)
-				volatileStore(&sigChildHappened, 1);
-			if(sigNumber == SIGINT)
-				volatileStore(&sigIntrHappened, 1);
-
-			version(Arsd_core_epoll) {
-				ulong writeValue = 1;
-				write(signalPipeFd, &writeValue, writeValue.sizeof);
-			}
 		}
 	}
 
 	private {
-		CallbackQueue thisThreadQueue;
-
-		// I don't strictly NEED this on Windows because I can just QueueUserAPC instead...
-		// but i guess useful for the ones that need to trigger an iocp.
-		private static final class CallbackQueue : SynchronizableObject {
-			version(Arsd_core_epoll)
-				int fd = -1;
-			else version(Arsd_core_windows) {
-				HANDLE ev = null;
-				HANDLE iocp = null;
-				HANDLE forThread = null;
-			}
+		private static final class CallbackQueueShared : SynchronizableObject {
 			string name;
 			CallbackHelper callback;
-			SynchronizedCircularBuffer!CallbackHelper queue;
+			SynchronizedCircularBuffer!UserModeCallback queue;
 
-			this(string name, bool dequeueIsShared) {
+			this(string name) {
 				this.name = name;
 				queue = typeof(queue)(this);
-
-				version(Arsd_core_epoll) {
-					fd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | (dequeueIsShared ? EFD_SEMAPHORE : 0));
-				} else version(Arsd_core_windows) {
-					if(dequeueIsShared) {
-						iocp = Win32Enforce!CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, 0, 0);
-					} else {
-						Win32Enforce!DuplicateHandle(
-							GetCurrentProcess(),
-							GetCurrentThread(),
-							GetCurrentProcess(),
-							&forThread,
-							0,
-							false,
-							DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS
-						);
-						//writeln("Creating ", forThread);
-						ev = Win32Enforce!CreateEvent(null, true, false, null);
-					}
-				}
-
-				callback = new CallbackHelper(dequeueIsShared ? &sharedDequeueCb : &threadLocalDequeueCb);
+				callback = new CallbackHelper(&processCallback_Platform);
+				initialize_Platform();
 			}
 
 			void teardown() {
-				version(Arsd_core_epoll) {
-					import core.sys.posix.fcntl;
-					import core.sys.posix.unistd;
-
-					close(fd);
-					fd = -1;
-				} else version(Arsd_core_windows) {
-					if(ev) {
-						CloseHandle(ev);
-						ev = null;
-					}
-					if(iocp) {
-						CloseHandle(iocp);
-						iocp = null;
-					}
-					if(forThread) {
-						CloseHandle(forThread);
-						forThread = null;
-					}
-				}
-
+				teardown_Platform();
 				callback.release();
 			}
 
+			void processCallback() {
+				// only want to do one in the shared case, so other threads can be woken to do the other ones
+				UserModeCallback[1] buffer;
+				foreach(cb; queue.dequeueSeveral(buffer[])) {
+					cb.call();
+				}
+			}
 
-			private(this) {
-				version(Windows)
-				extern(Windows)
-				static void apc(ULONG_PTR param) {
-					CallbackHelper callback = cast(CallbackHelper) cast(void*) param;
-					callback.call();
+			void enqueue(UserModeCallback cb) {
+				if(queue.enqueue(cb)) {
+					wakeListeners_Platform();
+				} else {
+					throw new ArsdException!"queue is full"(name);
+				}
+			}
+
+
+			version(Arsd_core_windows) {
+				HANDLE iocp = null;
+				void initialize_Platform() {
+					iocp = Win32Enforce!CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, 0, 0);
+				}
+				void teardown_Platform() {
+					if(iocp)
+						CloseHandle(iocp);
+					iocp = null;
+				}
+				void wakeListeners_Platform() {
+					Win32Enforce!PostQueuedCompletionStatus(iocp, 0, 0, null);
+				}
+				void processCallback_Platform() {
+					// the OS takes care if basically everything
+					processCallback();
+				}
+			}
+			version(Arsd_core_epoll) {
+				import core.sys.posix.fcntl;
+				import core.sys.posix.unistd;
+
+				int fd = -1;
+				void initialize_Platform() {
+					fd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
+				}
+				void teardown_Platform() {
+					close(fd);
+					fd = -1;
 				}
 
-				void setEvent() {
-					version(Arsd_core_epoll) {
-						import core.sys.posix.unistd;
-						ulong count = 1;
-						ErrnoEnforce!write(fd, &count, count.sizeof);
-					} else version(Arsd_core_windows) {
-						if(forThread)
-							Win32Enforce!QueueUserAPC(&apc, forThread, cast(ULONG_PTR) cast(void*) callback);
-						if(ev)
-							SetEvent(ev);
-						if(iocp)
-							Win32Enforce!PostQueuedCompletionStatus(iocp, 0, 0, null);
-					} else version(Arsd_core_dispatch) {
-						throw new NotYetImplementedException();
-					} else version(Arsd_core_kqueue) {
-						throw new NotYetImplementedException();
-					} else throw new NotYetImplementedException();
+				void wakeListeners_Platform() {
+					ulong count = 1;
+					ErrnoEnforce!write(fd, &count, count.sizeof);
 				}
-				bool resetEvent() {
-					version(Arsd_core_epoll) {
-						import core.sys.posix.unistd;
-						ulong count;
-						return read(fd, &count, count.sizeof) == count.sizeof;
-					} else version(Arsd_core_windows) {
-						if(ev)
-							return ResetEvent(ev) == true;
-						return true; // no need to reset, it was done automagically
-					} else version(Arsd_core_dispatch) {
-						throw new NotYetImplementedException();
-					} else version(Arsd_core_kqueue) {
-						throw new NotYetImplementedException();
-					} else throw new NotYetImplementedException();
+				void processCallback_Platform() {
+					ulong count;
+					auto ret = read(fd, &count, count.sizeof);
+					if(ret == count.sizeof && count)
+						processCallback();
+				}
+			}
+			version(Arsd_core_kqueue) {
+				import core.sys.posix.fcntl;
+				import core.sys.posix.unistd;
+
+				int[2] fd = -1;
+				void initialize_Platform() {
+					pipe(fd);
+					setCloExec(fd[0]);
+					setCloExec(fd[1]);
+					makeNonBlocking(fd[0]);
+					makeNonBlocking(fd[1]);
+				}
+				void teardown_Platform() {
+					close(fd[0]);
+					close(fd[1]);
+					fd[] = -1;
 				}
 
-				void sharedDequeueCb() {
-					if(resetEvent()) {
-						auto cb = queue.dequeue();
+				void wakeListeners_Platform() {
+					ubyte b;
+					ErrnoEnforce!write(fd[1], &b, b.sizeof);
+				}
+
+				void processCallback_Platform() {
+					ubyte b;
+					auto ret = read(fd[0], &b, b.sizeof);
+					if(ret == 1)
+						processCallback();
+				}
+			}
+		}
+
+		private static final class CallbackQueueForOneThread : SynchronizableObject {
+			string name;
+			CallbackHelper callback;
+			SynchronizedCircularBuffer!UserModeCallback queue;
+			ICoreEventLoop which;
+
+			this(string name, ICoreEventLoop which) {
+				this.name = name;
+				this.which = which;
+				queue = typeof(queue)(this);
+
+				callback = new CallbackHelper(&groupDequeue);
+			}
+
+			void teardown() {
+				callback.release();
+			}
+
+			private/*(this)*/ {
+				// note that anything added to the queue inside the callbacks will NOT be called here,
+				// since it dequeues as a group before calling any. this keeps one task scheduling itself
+				// fro dominating the event loop
+				void groupDequeue() {
+					UserModeCallback[16] buffer;
+					foreach(cb; queue.dequeueSeveral(buffer[])) {
 						cb.call();
-						cb.release();
-					}
-				}
-
-				void threadLocalDequeueCb() {
-					CallbackHelper[16] buffer;
-					foreach(cb; queue.dequeueSeveral(buffer[], () { resetEvent(); })) {
-						cb.call();
-						cb.release();
 					}
 				}
 			}
 
-			void enqueue(CallbackHelper cb) {
+			void enqueue(UserModeCallback cb) {
 				if(queue.enqueue(cb)) {
-					setEvent();
+					which.wake();
 				} else {
 					throw new ArsdException!"queue is full"(name);
 				}
 			}
 		}
 
-		static void initializeGlobals() {
+		static void ensureGlobalsInitialized() {
 			if(!globalsInitialized) {
 				synchronized {
 					if(!globalsInitialized) {
@@ -9029,14 +10170,15 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 							// blocking signals is problematic because it is inherited by child processes
 							// and that can be problematic for general purpose stuff so i use a self pipe
 							// here. though since it is linux, im using an eventfd instead just to notify
-							signalPipeFd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+							signalEventFd = ErrnoEnforce!eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 							signalReaderCallback = new CallbackHelper(&signalReader);
-
-							setSignalHandlers();
 						}
 
-						runInTaskRunnerQueue = new CallbackQueue("task runners", true);
-						runInHelperThreadQueue = new CallbackQueue("helper threads", true);
+						version(Posix)
+							setSignalHandlers();
+
+						runInTaskRunnerQueue = new CallbackQueueShared("task runners");
+						runInHelperThreadQueue = new CallbackQueueShared("helper threads");
 
 						globalsInitialized = true;
 					}
@@ -9046,12 +10188,15 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 		static void teardownGlobals() {
 			synchronized {
-				version(Arsd_core_epoll) {
+				version(Posix) {
 					import core.sys.posix.fcntl;
 					import core.sys.posix.unistd;
 					restoreSignalHandlers();
-					close(signalPipeFd);
-					signalReaderCallback.release();
+					if(signalEventFd != -1) {
+						close(signalEventFd);
+						signalReaderCallback.release();
+						signalEventFd = -1;
+					}
 				}
 
 				runInTaskRunnerQueue.teardown();
@@ -9069,241 +10214,56 @@ private class CoreEventLoopImplementation : ICoreEventLoop {
 
 			CallbackHelper signalReaderCallback;
 
-			CallbackQueue runInTaskRunnerQueue;
-			CallbackQueue runInHelperThreadQueue;
+			CallbackQueueShared runInTaskRunnerQueue;
+			CallbackQueueShared runInHelperThreadQueue;
 		}
-
 	}
 
-	version(Arsd_core_epoll) {
 
-		import core.sys.linux.epoll;
-		import core.sys.linux.sys.eventfd;
-
-		private this() {
-
-			initializeGlobals();
-
-			epollfd = epoll_create1(EPOLL_CLOEXEC);
-
-			// FIXME: ensure UI events get top priority
-
-			// global listeners
-
-			// FIXME: i should prolly keep the tokens and release them when tearing down.
-
-			cast(void) addCallbackOnFdReadable(signalPipeFd, signalReaderCallback);
-			final switch(eventLoopType) {
-				case EventLoopType.AdHoc:
-				case EventLoopType.Explicit:
-				case EventLoopType.Ui:
-				break;
-				case EventLoopType.TaskRunner:
-					cast(void) addCallbackOnFdReadable(runInTaskRunnerQueue.fd, runInTaskRunnerQueue.callback);
-					runInTaskRunnerQueue.callback.addref();
-				break;
-				case EventLoopType.HelperWorker:
-					cast(void) addCallbackOnFdReadable(runInHelperThreadQueue.fd, runInHelperThreadQueue.callback);
-					runInHelperThreadQueue.callback.addref();
-				break;
-			}
-
-			// local listener
-			thisThreadQueue = new CallbackQueue("this thread", false);
-			cast(void) addCallbackOnFdReadable(thisThreadQueue.fd, thisThreadQueue.callback);
-
-			// what are we going to do about timers?
+	debug void printEventLoopDebugReport() {
+		// want to show everything that can be keeping the event loop alive:
+		writeln("EVENT LOOP ", cast(void*) Thread.getThis," WAITING REPORT:");
+		auto st = SchedulableTask.taskRoot;
+		while(st) {
+			writeln("  SchedulableTask: ", st.debugInfo);
+			st = st.next;
 		}
 
-		void teardown() {
-			import core.sys.posix.fcntl;
-			import core.sys.posix.unistd;
-
-			close(epollfd);
-			epollfd = -1;
-
-			thisThreadQueue.teardown();
-
-			// FIXME: should prolly free anything left in the callback queue, tho those could also be GC managed tbh.
+		foreach(umt; userModeTimerQueue.buffer[0 .. userModeTimerQueue.pos]) {
+			writeln("    UserModeTimer: ", umt.debugInfo);
 		}
 
-		/+ // i call it explicitly at the thread exit instead, but worker threads aren't really supposed to exit generally speaking till process done anyway
-		static ~this() {
-			teardown();
-		}
-		+/
+		foreach(handle, item; this.registeredItems)
+			writeln("   RegisteredItem: ", item);
 
-
-		// and then the local loop
-		private {
-			int epollfd = -1;
-		}
-
-		void addTask(SchedulableTask task) {
-			runInTaskRunnerQueue.enqueue(new CallbackHelper(&task.callWithRethrow));
-		}
-
-		// signal stuff {
-		import core.sys.posix.signal;
-
-		private __gshared sigaction_t oldSigIntr;
-		private __gshared sigaction_t oldSigChld;
-		private __gshared sigaction_t oldSigPipe;
-
-		private __gshared int signalPipeFd = -1;
-		// sigpipe not important, i handle errors on the writes
-
-		public static void setSignalHandlers() {
-			static extern(C) void interruptHandler(int sigNumber) nothrow {
-				markSignalOccurred(sigNumber);
-
-				/+
-				// calling the old handler is non-trivial since there can be ignore
-				// or default or a plain handler or a sigaction 3 arg handler and i
-				// i don't think it is worth teh complication
-				sigaction_t* oldHandler;
-				if(sigNumber == SIGCHLD)
-					oldHandler = &oldSigChld;
-				else if(sigNumber == SIGINT)
-					oldHandler = &oldSigIntr;
-				if(oldHandler && oldHandler.sa_handler)
-					oldHandler
-				+/
-			}
-
-			sigaction_t n;
-			n.sa_handler = &interruptHandler;
-			n.sa_mask = cast(sigset_t) 0;
-			n.sa_flags = 0;
-			sigaction(SIGINT, &n, &oldSigIntr);
-			sigaction(SIGCHLD, &n, &oldSigChld);
-
-			n.sa_handler = SIG_IGN;
-			sigaction(SIGPIPE, &n, &oldSigPipe);
-		}
-
-		public static void restoreSignalHandlers() {
-			sigaction(SIGINT, &oldSigIntr, null);
-			sigaction(SIGCHLD, &oldSigChld, null);
-			sigaction(SIGPIPE, &oldSigPipe, null);
-		}
-
-		private static void signalReader() {
-			import core.sys.posix.unistd;
-			ulong number;
-			read(signalPipeFd, &number, number.sizeof);
-
-			signalChecker();
-		}
-		// signal stuff done }
-
-		// the any thread poll is just registered in the this thread poll w/ exclusive. nobody actaully epoll_waits
-		// on the global one directly.
-
-		RunOnceResult runOnce(Duration timeout = Duration.max) {
-			scope(exit) eventLoopRound++;
-
-			runLoopIterationDelegates(false);
-
-			epoll_event[16] events;
-			auto ret = epoll_wait(epollfd, events.ptr, cast(int) events.length, getTimeout ? getTimeout() : -1); // FIXME: timeout argument
-			if(ret == -1) {
-				import core.stdc.errno;
-				if(errno == EINTR) {
-					return RunOnceResult(RunOnceResult.Possibilities.Interrupted);
-				}
-				throw new ErrnoApiException("epoll_wait", errno);
-			} else if(ret == 0) {
-				// timeout
-			} else {
-				// loop events and call associated callbacks
-				foreach(event; events[0 .. ret]) {
-					auto flags = event.events;
-					auto cbObject = cast(CallbackHelper) event.data.ptr;
-
-					// FIXME: or if it is an error...
-					// EPOLLERR - write end of pipe when read end closed or other error. and EPOLLHUP - terminal hangup or read end when write end close (but it will give 0 reading after that soon anyway)
-
-					cbObject.call();
-				}
-			}
-
-			runLoopIterationDelegates(true);
-
-			return RunOnceResult(RunOnceResult.Possibilities.CarryOn);
-		}
-
-		// building blocks for low-level integration with the loop
-
-		UnregisterToken addCallbackOnFdReadable(int fd, CallbackHelper cb) {
-			epoll_event event;
-			event.data.ptr = cast(void*) cb;
-			event.events = EPOLLIN | EPOLLEXCLUSIVE;
-			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl", errno);
-
-			return UnregisterToken(this, fd, cb);
-		}
-
-		/++
-			Adds a one-off callback that you can optionally rearm when it happens.
-		+/
-		RearmToken addCallbackOnFdReadableOneShot(int fd, CallbackHelper cb) {
-			epoll_event event;
-			event.data.ptr = cast(void*) cb;
-			event.events = EPOLLIN | EPOLLONESHOT;
-			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl", errno);
-
-			return RearmToken(true, this, fd, cb, EPOLLIN | EPOLLONESHOT);
-		}
-
-		/++
-			Adds a one-off callback that you can optionally rearm when it happens.
-		+/
-		RearmToken addCallbackOnFdWritableOneShot(int fd, CallbackHelper cb) {
-			epoll_event event;
-			event.data.ptr = cast(void*) cb;
-			event.events = EPOLLOUT | EPOLLONESHOT;
-			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl", errno);
-
-			return RearmToken(false, this, fd, cb, EPOLLOUT | EPOLLONESHOT);
-		}
-
-		private void unregisterFd(int fd) {
-			epoll_event event;
-			if(epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl", errno);
-		}
-
-		private void rearmFd(RearmToken token) {
-			epoll_event event;
-			event.data.ptr = cast(void*) token.cb;
-			event.events = token.flags;
-			if(epoll_ctl(epollfd, EPOLL_CTL_MOD, token.fd, &event) == -1)
-				throw new ErrnoApiException("epoll_ctl", errno);
-		}
-
-		// Disk files will have to be sent as messages to a worker to do the read and report back a completion packet.
+		foreach(k, v; this.anchors)
+			writeln("           Anchor: ", v);
 	}
 
-	version(Arsd_core_kqueue) {
-		// FIXME
+}
+
+unittest {
+	auto el = new CoreEventLoopImplementation(EventLoopType.Ui);
+	bool wasRun;
+	foreach(iterations; 0 .. 3) {
+		el.onNextTick(() { wasRun = true; });
+		assert(wasRun == false);
+		el.runOnce();
+		assert(wasRun);
+		wasRun = false;
 	}
-
-	// cross platform adapters
-	void setTimeout() {}
-	void addFileOrDirectoryChangeListener(FilePath name, uint flags, bool recursive = false) {}
+	el.teardown();
 }
 
-// deduplication???????//
-bool postMessage(ThreadToRunIn destination, void delegate() code) {
-	return false;
+unittest {
+	auto el = new CoreEventLoopImplementation(EventLoopType.TaskRunner);
+	bool wasRun;
+	el.onNextTick(() { wasRun = true; });
+	el.runOnce();
+	assert(wasRun);
+	el.teardown();
 }
-bool postMessage(ThreadToRunIn destination, Object message) {
-	return false;
-}
+
 
 void runInWorkerThreadAsync(R)(R delegate() shared dg, void delegate(R) oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) {
 	R result;
@@ -9330,19 +10290,19 @@ void runInWorkerThreadAsync_impl(void delegate() dg, void delegate() oncomplete,
 	void operator() {
 		try {
 			dg();
-			replyTo.thisThreadQueue.enqueue(new CallbackHelper(oncomplete));
+			replyTo.thisThreadQueue.enqueue(UserModeCallback(oncomplete));
 		} catch(Throwable t) {
 			if(onerror)
-				replyTo.thisThreadQueue.enqueue(new CallbackHelper(() { onerror(t); }));
+				replyTo.thisThreadQueue.enqueue(UserModeCallback(() { onerror(t); }));
 			else
 				logSwallowedException(t);
 		} finally {
 			if(onfinally)
-				replyTo.thisThreadQueue.enqueue(new CallbackHelper(() { onfinally(); }));
+				replyTo.thisThreadQueue.enqueue(UserModeCallback(() { onfinally(); }));
 		}
 	}
 
-	replyTo.runInTaskRunnerQueue.enqueue(new CallbackHelper(&operator));
+	replyTo.runInTaskRunnerQueue.enqueue(UserModeCallback(&operator));
 }
 
 /+
@@ -9486,11 +10446,13 @@ struct SynchronizedCircularBuffer(T, size_t maxSize = 128) {
 		has been read and wait for that, or maybe try on a timer), or just fail and throw an exception
 		or to abandon the message.
 	+/
-	bool enqueue(T what) {
+	bool enqueue(T what, scope void delegate() runInsideLockIfSuccessful = null) {
 		synchronized(this.synchronizedOn) {
 			if(isFullUnsynchronized())
 				return false;
 			ring[(back++) % ring.length] = what;
+			if(runInsideLockIfSuccessful)
+				runInsideLockIfSuccessful();
 			return true;
 		}
 	}
@@ -9506,14 +10468,14 @@ struct SynchronizedCircularBuffer(T, size_t maxSize = 128) {
 
 		If you are using an event, you should use [dequeueSeveral] instead to drain it.
 	+/
-	T dequeue() {
+	T dequeueExactlyOne() {
 		synchronized(this.synchronizedOn) {
 			return dequeueUnsynchronized();
 		}
 	}
 
 	/++
-		Note that if you use a semaphore to signal waiting threads, you should probably not call this.
+		Note that if you use a semaphore to signal waiting threads, you should probably not call this and use [dequeueExactlyOne] instead.
 
 		If you use a set/reset event, there's a potential race condition between the dequeue and event
 		reset. This is why the `runInsideLockIfEmpty` delegate is there - when it is empty, before it
@@ -9535,38 +10497,38 @@ struct SynchronizedCircularBuffer(T, size_t maxSize = 128) {
 
 unittest {
 	SynchronizableObject object = new SynchronizableObject();
-	auto queue = SynchronizedCircularBuffer!CallbackHelper(object);
+	auto queue = SynchronizedCircularBuffer!(size_t)(object);
 	assert(queue.isEmpty);
 	foreach(i; 0 .. queue.ring.length - 1)
-		queue.enqueue(cast(CallbackHelper) cast(void*) i);
+		queue.enqueue(i);
 	assert(queue.isFull);
 
 	foreach(i; 0 .. queue.ring.length - 1)
-		assert(queue.dequeue() is (cast(CallbackHelper) cast(void*) i));
+		assert(queue.dequeueExactlyOne() is i);
 	assert(queue.isEmpty);
 
 	foreach(i; 0 .. queue.ring.length - 1)
-		queue.enqueue(cast(CallbackHelper) cast(void*) i);
+		queue.enqueue(i);
 	assert(queue.isFull);
 
-	CallbackHelper[] buffer = new CallbackHelper[](300);
+	size_t[] buffer = new size_t[](300);
 	auto got = queue.dequeueSeveral(buffer);
 	assert(got.length == queue.ring.length - 1);
 	assert(queue.isEmpty);
 	foreach(i, item; got)
-		assert(item is (cast(CallbackHelper) cast(void*) i));
+		assert(item is i);
 
 	foreach(i; 0 .. 8)
-		queue.enqueue(cast(CallbackHelper) cast(void*) i);
-	buffer = new CallbackHelper[](4);
+		queue.enqueue(i);
+	buffer = new size_t[](4);
 	got = queue.dequeueSeveral(buffer);
 	assert(got.length == 4);
 	foreach(i, item; got)
-		assert(item is (cast(CallbackHelper) cast(void*) i));
+		assert(item is i);
 	got = queue.dequeueSeveral(buffer);
 	assert(got.length == 4);
 	foreach(i, item; got)
-		assert(item is (cast(CallbackHelper) cast(void*) (i+4)));
+		assert(item is (i+4));
 	got = queue.dequeueSeveral(buffer);
 	assert(got.length == 0);
 	assert(queue.isEmpty);
@@ -9942,7 +10904,7 @@ private char[] asciiToUpper(scope const(char)[] s) pure {
 
 	Please note that this does not currently and I have no plans as of this writing to add support for any kind of direct file descriptor passing. It always pipes them back to the parent for processing. If you don't want this, call the lower level functions yourself; the reason this class is here is to aid integration in the arsd.core event loop. Of course, I might change my mind on this.
 +/
-class ExternalProcess /*: AsyncOperationRequest*/ {
+class ExternalProcess : Future!CompletedProcessInfo {
 
 	private static version(Posix) {
 		__gshared ExternalProcess[pid_t] activeChildren;
@@ -10050,6 +11012,16 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 	version(Posix)
 	this(pid_t recordForMinimalWrapping) {
 		recordChildCreated(recordForMinimalWrapping, this);
+	}
+
+	version(Posix)
+	void kill(int signum) {
+		ErrnoEnforce!(core.sys.posix.signal.kill)(pid, signum);
+	}
+
+	version(Windows)
+	void terminate(uint exitCode) {
+		Win32Enforce!TerminateProcess(handle, exitCode);
 	}
 
 	version(Posix)
@@ -10294,6 +11266,8 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 				// the error reporting pipe will be closed upon exec since we set cloexec before fork
 				// and everything else should have cloexec set too hopefully.
 
+				signal(SIGPIPE, SIG_DFL); // reset the signal we ignored earlier
+
 				if(beforeExec)
 					beforeExec();
 
@@ -10518,6 +11492,8 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 		completed = true;
 		_status = status;
 
+		this.fulfillWith(completedProcessInfo);
+
 		if(oncomplete)
 			oncomplete(this);
 	}
@@ -10542,6 +11518,10 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 	private AsyncFile _stdout;
 	private AsyncFile _stderr;
 
+	private CompletedProcessInfo completedProcessInfo() {
+		return CompletedProcessInfo(this.status);
+	}
+
 	/++
 
 	+/
@@ -10559,8 +11539,9 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 
 	/++
 	+/
-	void waitForCompletion() {
+	override CompletedProcessInfo waitForCompletionSynchronously() {
 		getThisThreadEventLoop().run(&this.isComplete);
+		return completedProcessInfo;
 	}
 
 	/++
@@ -10608,6 +11589,11 @@ class ExternalProcess /*: AsyncOperationRequest*/ {
 	void delegate(ExternalProcess) oncomplete;
 
 	// pty?
+}
+
+/// ditto
+struct CompletedProcessInfo {
+	int status;
 }
 
 // FIXME: comment this out
@@ -12260,8 +13246,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		}
 
 		enum NSEventType {
-			idk
-
+			idk,
+			applicationDefined = 15,
 		}
 
 		enum NSEventModifierFlags : NSUInteger {
@@ -12305,6 +13291,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			CGFloat scrollingDeltaY() @selector("scrollingDeltaY");
 
 			// @property(getter=isDirectionInvertedFromDevice, readonly) BOOL directionInvertedFromDevice;
+
+			static NSEvent otherEventWithType(NSEventType type, NSPoint location, NSEventModifierFlags modifierFlags, NSTimeInterval timestamp, NSInteger windowNumber, NSGraphicsContext unusedPassNil, short subtype, NSInteger data1, NSInteger data2) @selector("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:");
 		}
 
 		extern /* final */ class NSTimer : NSObject { // the docs say don't subclass this, but making it final breaks the bridge
@@ -12386,6 +13374,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 				NSRunLoopMode inMode,
 				bool dequeue
 			) @selector("nextEventMatchingMask:untilDate:inMode:dequeue:");
+
+			void postEvent(NSEvent event, bool atStart) @selector("postEvent:atStart:");
 		}
 
 		enum NSEventMask : ulong {
@@ -12409,6 +13399,9 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			static @property NSDate distantPast() @selector("distantPast");
 			static @property NSDate now() @selector("now");
 
+			override static NSDate alloc() @selector("alloc");
+			override NSDate init() @selector("init");
+			NSDate initWithTimeIntervalSinceNow(NSTimeInterval secs) @selector("initWithTimeIntervalSinceNow:");
 		}
 
 		version(OSX)
@@ -12672,6 +13665,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		alias NSSize CGSize;
 		alias NSRect CGRect;
 
+		extern(D) // had to mark this to avoid a "Context argument required but none given" error on arm mac. i wonder if that fixed in upstream or only opend bug
 		pragma(inline, true) NSPoint NSMakePoint(CGFloat x, CGFloat y) {
 			NSPoint p;
 			p.x = x;
@@ -12679,6 +13673,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			return p;
 		}
 
+		extern(D)
 		pragma(inline, true) NSSize NSMakeSize(CGFloat w, CGFloat h) {
 			NSSize s;
 			s.width = w;
@@ -12686,6 +13681,7 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 			return s;
 		}
 
+		extern(D)
 		pragma(inline, true) NSRect NSMakeRect(CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
 			NSRect r;
 			r.origin.x = x;
@@ -12815,6 +13811,8 @@ If you are not sure if Cocoa thinks your application is multithreaded or not, yo
 		void dispatch_source_set_event_handler(dispatch_source_t source, dispatch_block_t handler);
 		void dispatch_source_set_cancel_handler(dispatch_source_t source, dispatch_block_t handler);
 		void dispatch_source_cancel(dispatch_source_t source);
+
+		void dispatch_activate(dispatch_object_t object);
 
 		// DISPATCH_DECL_SUBCLASS(dispatch_queue_main, dispatch_queue_serial);
 		// dispatch_queue_t dispatch_get_main_queue();
