@@ -2487,6 +2487,29 @@ class Widget : ReflectableProperties {
 		return rect;
 	}
 
+	version(win32_widgets) {
+		string getWin32WindowText() {
+			wchar[4096] bufferstack;
+			wchar[] buffer;
+			auto len = GetWindowTextLength(hwnd);
+			if(len < bufferstack.length)
+				buffer = bufferstack[0 .. len + 1];
+			else
+				buffer = new wchar[](len + 1);
+
+			auto l = GetWindowTextW(hwnd, buffer.ptr, cast(int) buffer.length);
+			if(l >= 0)
+				return makeUtf8StringFromWindowsString(buffer[0 .. l]);
+			else
+				return null;
+		}
+
+		void setWin32WindowText(string s) {
+			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
+			SetWindowTextW(hwnd, bfr.ptr);
+		}
+	}
+
 
 	// FIXME: I kinda want to hide events from implementation widgets
 	// so it just catches them all and stops propagation...
@@ -3162,16 +3185,16 @@ class FreeEntrySelection : ComboboxBase {
 	}
 
 	string content() {
-		version(win32_widgets)
-			assert(0, "not implemented");
-		else version(custom_widgets)
+		version(win32_widgets) {
+			return getWin32WindowText();
+		} else version(custom_widgets)
 			return lineEdit.content;
 		else static assert(0);
 	}
 
 	void content(string s) {
 		version(win32_widgets)
-			assert(0, "not implemented");
+			setWin32WindowText(s);
 		else version(custom_widgets)
 			lineEdit.content = s;
 		else static assert(0);
@@ -9399,12 +9422,12 @@ class Window : Widget {
 	/++
 
 	+/
-	MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	Future!MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 		return .messageBox(this, title, message, style, icon);
 	}
 
 	/// ditto
-	int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+	Future!MessageBoxButton messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 		return messageBox(null, message, style, icon);
 	}
 
@@ -13752,8 +13775,7 @@ class Button : MouseActivatedWidget {
 	void label(string l) {
 		label_ = l;
 		version(win32_widgets) {
-			WCharzBuffer bfr = WCharzBuffer(l);
-			SetWindowTextW(hwnd, bfr.ptr);
+			setWin32WindowText(l);
 		} else version(custom_widgets) {
 			redraw();
 		}
@@ -14210,8 +14232,7 @@ class TextLabel : Widget {
 	void label(string l) {
 		label_ = l;
 		version(win32_widgets) {
-			WCharzBuffer bfr = WCharzBuffer(l);
-			SetWindowTextW(hwnd, bfr.ptr);
+			setWin32WindowText(l);
 		} else version(custom_widgets)
 			redraw();
 	}
@@ -15120,19 +15141,7 @@ abstract class EditableTextWidget : Widget {
 		if(useCustomWidget) {
 			return textLayout.getTextString();
 		} else version(win32_widgets) {
-			wchar[4096] bufferstack;
-			wchar[] buffer;
-			auto len = GetWindowTextLength(hwnd);
-			if(len < bufferstack.length)
-				buffer = bufferstack[0 .. len + 1];
-			else
-				buffer = new wchar[](len + 1);
-
-			auto l = GetWindowTextW(hwnd, buffer.ptr, cast(int) buffer.length);
-			if(l >= 0)
-				return makeUtf8StringFromWindowsString(buffer[0 .. l]);
-			else
-				return null;
+			return getWin32WindowText();
 		}
 
 		assert(0);
@@ -15155,8 +15164,7 @@ abstract class EditableTextWidget : Widget {
 
 			redraw();
 		} else version(win32_widgets) {
-			WCharzBuffer bfr = WCharzBuffer(s, WindowsStringConversionFlags.convertNewLines);
-			SetWindowTextW(hwnd, bfr.ptr);
+			setWin32WindowText(s);
 		}
 	}
 
@@ -15938,6 +15946,8 @@ private class GenericListViewWidgetInner : Widget {
 class MessageBox : Dialog {
 	private string message;
 	MessageBoxButton buttonPressed = MessageBoxButton.None;
+	private Future!MessageBoxButton futureToBeReturned;
+
 	/++
 
 		History:
@@ -15956,6 +15966,8 @@ class MessageBox : Dialog {
 	this(Window originator, string title, string message, string[] buttons = ["OK"], MessageBoxButton[] buttonIds = [MessageBoxButton.OK]) {
 		message = message.stripRightInternal;
 		int mainWidth;
+
+		this.futureToBeReturned = new Future!MessageBoxButton();
 
 		// estimate longest line
 		int count;
@@ -15992,6 +16004,7 @@ class MessageBox : Dialog {
 			button.addEventListener(EventType.triggered, ((size_t idx) { return () {
 				this.buttonPressed = buttonIds[idx];
 				win.close();
+				futureToBeReturned.fulfillWith(this.buttonPressed);
 			}; })(idx));
 
 			if(idx == 0)
@@ -16054,19 +16067,19 @@ enum MessageBoxButton {
 
 	Returns: the button pressed.
 +/
-MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+Future!MessageBoxButton messageBox(string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 	return messageBox(null, title, message, style, icon);
 }
 
 /// ditto
-int messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+Future!MessageBoxButton messageBox(string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 	return messageBox(null, null, message, style, icon);
 }
 
 /++
 
 +/
-MessageBoxButton messageBox(Window originator, string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+Future!MessageBoxButton messageBox(Window originator, string title, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 	version(win32_widgets) {
 		WCharzBuffer t = WCharzBuffer(title);
 		WCharzBuffer m = WCharzBuffer(message);
@@ -16087,15 +16100,17 @@ MessageBoxButton messageBox(Window originator, string title, string message, Mes
 			case Warning: type |= MB_ICONWARNING; break;
 			case Error: type |= MB_ICONERROR; break;
 		}
+		auto future = new Future!MessageBoxButton;
 		switch(MessageBoxW(originator is null ? null : originator.win.hwnd, m.ptr, t.ptr, type)) {
-			case IDOK: return MessageBoxButton.OK;
-			case IDCANCEL: return MessageBoxButton.Cancel;
-			case IDTRYAGAIN, IDRETRY: return MessageBoxButton.Retry;
-			case IDYES: return MessageBoxButton.Yes;
-			case IDNO: return MessageBoxButton.No;
-			case IDCONTINUE: return MessageBoxButton.Continue;
-			default: return MessageBoxButton.None;
+			case IDOK: future.fulfillWith(MessageBoxButton.OK); break;
+			case IDCANCEL: future.fulfillWith(MessageBoxButton.Cancel); break;
+			case IDTRYAGAIN, IDRETRY: future.fulfillWith(MessageBoxButton.Retry); break;
+			case IDYES: future.fulfillWith(MessageBoxButton.Yes); break;
+			case IDNO: future.fulfillWith(MessageBoxButton.No); break;
+			case IDCONTINUE: future.fulfillWith(MessageBoxButton.Continue); break;
+			default: future.fulfillWith(MessageBoxButton.None); break;
 		}
+		return future;
 	} else {
 		string[] buttons;
 		MessageBoxButton[] buttonIds;
@@ -16127,15 +16142,14 @@ MessageBoxButton messageBox(Window originator, string title, string message, Mes
 			break;
 		}
 		auto mb = new MessageBox(originator, title, message, buttons, buttonIds);
-		EventLoop el = EventLoop.get;
-		el.run(() { return !mb.win.closed; });
-		return mb.buttonPressed;
+
+		return mb.futureToBeReturned;
 	}
 
 }
 
 /// ditto
-int messageBox(Window originator, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
+Future!MessageBoxButton messageBox(Window originator, string message, MessageBoxStyle style = MessageBoxStyle.OK, MessageBoxIcon icon = MessageBoxIcon.None) {
 	return messageBox(originator, null, message, style, icon);
 }
 
