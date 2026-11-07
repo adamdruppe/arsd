@@ -6839,28 +6839,6 @@ void startAddonServer()(string arg) {
 }
 
 // template for laziness
-/*
-	The websocket server is a single-process, single-thread, event
-	I/O thing. It is passed websockets from other CGI processes
-	and is then responsible for handling their messages and responses.
-	Note that the CGI process is responsible for websocket setup,
-	including authentication, etc.
-
-	It also gets data sent to it by other processes and is responsible
-	for distributing that, as necessary.
-*/
-void runWebsocketServer()() {
-	assert(0, "not implemented");
-}
-
-void sendToWebsocketServer(WebSocket ws, string group) {
-	assert(0, "not implemented");
-}
-
-void sendToWebsocketServer(string content, string group) {
-	assert(0, "not implemented");
-}
-
 
 void runEventServer()() {
 	runAddonServer("/tmp/arsd_cgi_event_server", new EventSourceServerImplementation());
@@ -7149,7 +7127,7 @@ private void deserialize(T)(scope ubyte[] delegate(int sz) get, scope void deleg
 
 		T t = cast(T) get(len * cast(int) typeof(T.init[0]).sizeof);
 
-		dg(t);
+		dg(t.idup);
 	} else static if(is(T == E[], E)) {
 		T t;
 		int len;
@@ -11130,12 +11108,26 @@ private auto serveApiInternal(T)(string urlPrefix) {
 								}
 							}
 						} else {
-							// FIXME: if something is viaHeader i can load it here for constructors as well
 							static if(__traits(compiles, { params[pidx] = param.getAutomaticallyForCgi(cgi); } )) {
 								params[pidx] = param.getAutomaticallyForCgi(cgi);
 							} else static if(is(param == string)) {
-								auto ident = nextPieceFromSlash(remainingUrl);
-								params[pidx] = ident;
+								bool special = false;
+								string headerName = null;
+								foreach(attr; __traits(getAttributes, P[pidx .. pidx + 1])) {
+									static if(is(typeof(attr) == viaHeader)) {
+										special = true;
+										headerName = attr.headerName;
+									}
+								}
+								if(special) {
+									if(headerName in cgi.requestHeaders)
+										params[pidx] = cgi.requestHeaders[headerName];
+									else
+										{} // FIXME: default?
+								} else {
+									auto ident = nextPieceFromSlash(remainingUrl);
+									params[pidx] = ident;
+								}
 							} else static assert(0, "illegal type for subresource " ~ param.stringof);
 						}
 					}
