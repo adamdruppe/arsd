@@ -74,8 +74,6 @@ debug(arsd_http2_verbose) debug=arsd_http2;
 
 debug(arsd_http2) import std.stdio : writeln;
 
-version=arsd_http_internal_implementation;
-
 version(without_openssl) {}
 else {
 version=use_openssl;
@@ -655,7 +653,7 @@ class ProxyException : Exception {
 	request.waitForCompletion();
 	---
 */
-class HttpRequest {
+class HttpRequest : arsd.core.Future!HttpResponse {
 
 	/// Automatically follow a redirection?
 	bool followLocation = false;
@@ -1033,7 +1031,7 @@ class HttpRequest {
 		if(assignedSocket is null) {
 			state = State.pendingAvailableConnection;
 
-			Socket socket;
+			EventCapableSocket socket;
 			auto pc = this;
 
 			try {
@@ -1057,7 +1055,10 @@ class HttpRequest {
 				activeRequestOnSocket[socket] = pc;
 				pc.assignedSocket = socket;
 				assert(pc.sendBuffer.length);
-				pc.state = State.connecting;
+				if(socket.isNew)
+					pc.state = State.connecting;
+				else
+					pc.state = State.sendingHeaders;
 				resetTimeout();
 
 				pollReusableSocket(this.assignedSocket);
@@ -1085,12 +1086,22 @@ class HttpRequest {
 
 
 	/// Waits for the request to finish or timeout, whichever comes first.
-	HttpResponse waitForCompletion() {
+	override HttpResponse waitForCompletion() {
+		if(state == State.unsent) {
+			send();
+		}
+
+		super.waitForCompletion();
+
+		if(state == State.complete && responseData.code >= 200)
+			if(cache !is null)
+				cache.cacheResponse(this.requestParameters, this.responseData);
+
+		return responseData;
+	}
+
+	override protected HttpResponse waitForCompletionSynchronously() {
 		while(state != State.aborted && state != State.complete) {
-			if(state == State.unsent) {
-				send();
-				continue;
-			}
 			if(auto err = HttpRequest.advanceConnections(requestParameters.timeoutFromInactivity)) {
 				switch(err) {
 					case 1: throw new Exception("HttpRequest.advanceConnections returned 1: all connections timed out");
@@ -1101,10 +1112,6 @@ class HttpRequest {
 			}
 		}
 
-		if(state == State.complete && responseData.code >= 200)
-			if(cache !is null)
-				cache.cacheResponse(this.requestParameters, this.responseData);
-
 		return responseData;
 	}
 
@@ -1113,13 +1120,15 @@ class HttpRequest {
 		abortPrivate(1, "request.abort called");
 	}
 
-	private Socket assignedSocket;
+	private EventCapableSocket assignedSocket;
 
 	private void abortPrivate(int code, string codeText) {
 		auto beforeState = this.state;
 		this.state = State.aborted;
 		this.responseData.code = code;
 		this.responseData.codeText = codeText;
+
+		cancelTimeout();
 
 		// it is on a socket, we need to close it
 		if(assignedSocket) {
@@ -1134,6 +1143,8 @@ class HttpRequest {
 			if(this.onDataReceived)
 				this.onDataReceived(this);
 		}
+
+		this.fulfillWith(responseData);
 	}
 
 	private {
@@ -1152,8 +1163,6 @@ class HttpRequest {
 		static assert(0, "implementation not finished");
 	}
 
-
-	version(arsd_http_internal_implementation) {
 
 	/++
 		Changes the limit of number of open, inactive sockets. Reusing connections can provide a significant
@@ -1190,7 +1199,7 @@ class HttpRequest {
 		// host to do parallel requests.
 		//
 		// The key is the *domain name* and the port. Multiple domains on the same address will have separate connections.
-		Socket[][string] socketsPerHost;
+		EventCapableSocket[][string] socketsPerHost;
 
 		// only one request can be active on a given socket (at least HTTP < 2.0) so this is that
 		HttpRequest[Socket] activeRequestOnSocket;
@@ -1293,8 +1302,8 @@ class HttpRequest {
 			loseSocketByKey(key, s);
 		}
 
-		Socket getOpenSocketOnHost(bool forceNewConnection, string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
-			Socket openNewConnection() {
+		EventCapableSocket getOpenSocketOnHost(bool forceNewConnection, string proxy, string host, ushort port, bool ssl, string unixSocketPath, bool verifyPeer) {
+			EventCapableSocket openNewConnection() {
 				EventCapableSocket socket;
 				if(ssl) {
 					version(with_openssl) {
@@ -1416,14 +1425,18 @@ class HttpRequest {
 							// let's see if it has closed since we last tried
 							// e.g. a server timeout or something. If so, we need
 							// to lose this one and immediately open a new one.
-							static SocketSet readSet = null;
-							if(readSet is null)
-								readSet = new SocketSet();
-							readSet.reset();
-							assert(socket !is null);
-							assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
-							readSet.add(socket);
-							auto got = Socket.select(readSet, null, null, 0.msecs /* timeout, want it small since we just checking for eof */);
+
+							int got = -1;
+							if(socket.isAlive) {
+								static SocketSet readSet = null;
+								if(readSet is null)
+									readSet = new SocketSet();
+								readSet.reset();
+								assert(socket !is null);
+								assert(socket.handle() !is socket_t.init, socket is null ? "null" : socket.toString());
+								readSet.add(socket);
+								got = Socket.select(readSet, null, null, 0.msecs /* timeout, want it small since we just checking for eof */);
+							}
 							if(got > 0) {
 								// we can read something off this... but there aren't
 								// any active requests. Assume it is EOF and open a new one
@@ -1433,6 +1446,9 @@ class HttpRequest {
 								goto openNew;
 							}
 							cachedSockets--;
+
+							socket.reregister();
+
 							return socket;
 						}
 					}
@@ -1945,8 +1961,6 @@ class HttpRequest {
 		return wasRedirected;
 	}
 
-	}
-
 	private void markComplete() {
 		state = State.complete;
 		cancelTimeout();
@@ -1955,19 +1969,24 @@ class HttpRequest {
 				this.assignedSocket.close();
 				loseSocket(this.requestParameters.host, this.requestParameters.port, this.requestParameters.ssl, assignedSocket);
 			} else {
-				// FIXME: unregister from event loop or something? it is waiting for US to use it again, or for it to be closed remotely.
+				if(this.assignedSocket.eventToken) {
+					this.assignedSocket.eventToken.unregister();
+					this.assignedSocket.eventToken = typeof(this.assignedSocket.eventToken).init;
+				}
 			}
 			activeRequestOnSocket.remove(this.assignedSocket);
 			this.assignedSocket = null;
 			debug(arsd_http2_verbose) writeln("null 3");
 		}
+
+		this.fulfillWith(responseData);
 	}
 
 	private arsd.core.UserModeTimer timeout;
 	private void markTimedOut() {
 		if(this.state == State.aborted || this.state == State.complete)
 			return;
-		abortPrivate(5, (this.state == State.connecting) ?  this.responseData.codeText = "Connect timed out" : this.responseData.codeText = "Request timed out");
+		abortPrivate(5, (this.state == State.connecting) ?  "Connect timed out" : "Request timed out");
 	}
 
 	private void cancelTimeout() {
@@ -1991,7 +2010,7 @@ class HttpRequest {
 		handleSocketStateChange(assignedSocket, false, true);
 	}
 
-	private void pollReusableSocket(Socket sock) {
+	private void pollReusableSocket(EventCapableSocket sock) {
 		assert(sock is assignedSocket);
 		auto readset = new SocketSet();
 		auto writeset = new SocketSet();
@@ -2010,14 +2029,16 @@ class HttpRequest {
 		handleSocketStateChange(sock, isReadable, isWritable);
 	}
 
-	private void handleSocketStateChange(Socket sock, bool isReadable, bool isWriteable) {
+	private void handleSocketStateChange(EventCapableSocket sock, bool isReadable, bool isWriteable) {
 		try
 			handleSocketStateChangeImpl(sock, isReadable, isWriteable);
-		catch(Throwable t)
-			abortPrivate(2, t.toString);
+		catch(Throwable t) {
+			if(this.state != State.complete && this.state != State.aborted)
+				abortPrivate(2, t.toString);
+		}
 	}
 
-	private void handleSocketStateChangeImpl(Socket sock, bool isReadable, bool isWriteable) {
+	private void handleSocketStateChangeImpl(EventCapableSocket sock, bool isReadable, bool isWriteable) {
 		auto request = this;
 		debug(arsd_http2_verbose) writeln(request.state, " on ", cast(void*) assignedSocket, " ", isReadable, "/", isWriteable);
 
@@ -2052,6 +2073,7 @@ class HttpRequest {
 				abortPrivate(2, msg);
 				return;
 			} else {
+				sock.isNew = false;
 				if(auto s = cast(SslClientSocket) sock) {
 					sslProceed(request, s, isReadable, isWriteable);
 					goto keep_processing; // sslProceed changes state in all paths from here
@@ -2102,6 +2124,7 @@ class HttpRequest {
 				if(sent <= 0) {
 					if(wouldHaveBlocked()) {
 						if(auto ecs = cast(EventCapableSocket) sock) {
+							version(Windows) ecs.isWritable = false;
 							version(Posix) ecs.eventToken.subscribeToEvents(false, true, false, &nowWritable);
 						}
 
@@ -2211,7 +2234,6 @@ class HttpRequest {
 				return;
 			}
 		}
-
 	}
 
 	private static void sslProceed(HttpRequest request, SslClientSocket s, ref bool isReadable, ref bool isWriteable) {
@@ -3274,22 +3296,36 @@ class EventCapableSocket : Socket {
 		version(Windows) __traits(getMember, this, "_blocking") = true; // lol longstanding phobos bug setting this to false on init
 		super(af, type);
 
-		version(Windows) {
-			readinessEvent = arsd.core.Win32Enforce!CreateEvent(null, true, false, null);
-			auto ret = WSAEventSelect(this.handle, readinessEvent, 1/*FD_READ*/ | 2/*FD_WRITE*/ | 0x10/*FD_CONNECT*/ | 0x20 /* FD_CLOSE */);
-			if(ret == SOCKET_ERROR)
-				throw new arsd.core.WindowsApiException("WSAEventSelect", GetLastError());
+		reregister();
+	}
 
-			eventToken = arsd.core.getThisThreadEventLoop().addCallbackOnHandleReady(readinessEvent, new arsd.core.CallbackHelper(&readinessEventSet));
+	bool isNew = true;
+
+	void reregister() {
+
+		version(Windows) {
+			if(readinessEvent is null) {
+				readinessEvent = arsd.core.Win32Enforce!CreateEvent(null, true, false, null);
+				auto ret = WSAEventSelect(this.handle, readinessEvent, 1/*FD_READ*/ | 2/*FD_WRITE*/ | 0x10/*FD_CONNECT*/ | 0x20 /* FD_CLOSE */);
+				if(ret == SOCKET_ERROR)
+					throw new arsd.core.WindowsApiException("WSAEventSelect", GetLastError());
+			}
+
+			if(eventToken is typeof(eventToken).init)
+				eventToken = arsd.core.getThisThreadEventLoop().addCallbackOnHandleReady(readinessEvent, new arsd.core.CallbackHelper(&readinessEventSet));
 		}
 
 		version(Posix)
-		eventToken = arsd.core.getThisThreadEventLoop().registerFd(this.handle);
+		if(eventToken is typeof(eventToken).init)
+			eventToken = arsd.core.getThisThreadEventLoop().registerFd(this.handle);
+
 	}
 
 	version(Windows) {
 		import core.sys.windows.windows;
 		HANDLE readinessEvent;
+
+		bool isWritable; // this edge triggers, so we need to track it here
 
 		void readinessEventSet() {
 			if(!this.handle)
@@ -3301,8 +3337,9 @@ class EventCapableSocket : Socket {
 				if(ret)
 					throw new arsd.core.WindowsApiException("WSAEnumNetworkEvents", GetLastError());
 				bool isReadable = (ne.lNetworkEvents & (1 | 0x10 | 0x20)) ? true : false;
-				bool isWritable = (ne.lNetworkEvents & (2 | 0x10 | 0x20)) ? true : false;
-				//arsd.core.writeln(cast(void*) this, " signaled ", isReadable, " ", isWritable, " ", ne.lNetworkEvents, " ", ne.iErrorCode[]);
+				isWritable = isWritable || ((ne.lNetworkEvents & (2 | 0x10 | 0x20)) ? true : false);
+
+				debug(arsd_http2_verbose) arsd.core.writeln(cast(void*) this, " signaled ", isReadable, " ", isWritable, " ", ne.lNetworkEvents, " ", ne.iErrorCode[]);
 
 				if(!isReadable && !isWritable) {
 					// idk why it is 0 but we'll just pretend we got what we need
@@ -3315,8 +3352,11 @@ class EventCapableSocket : Socket {
 					this.associatedWebsocket.handleSocketStateChange(isReadable, isWritable);
 				} else if(auto preq = this in HttpRequest.activeRequestOnSocket) {
 					auto req = *preq;
-
 					req.handleSocketStateChange(this, isReadable, isWritable);
+				} else {
+					debug(arsd_http2_verbose) arsd.core.writeln("close from not being used");
+					// nobody is associated with it... hopefully it is a close message because we're abandoning
+					this.close();
 				}
 			} catch(Throwable t) {
 				if(this.associatedWebsocket) {
@@ -3324,6 +3364,10 @@ class EventCapableSocket : Socket {
 				} else if(auto preq = this in HttpRequest.activeRequestOnSocket) {
 					auto req = *preq;
 					req.abortPrivate(2, t.msg);
+				} else {
+					debug(arsd_http2_verbose) arsd.core.writeln("close ex ", t);
+					// nobody is associated with it.. why are we getting the message? maybe timed out or disconnected, just let it go
+					this.close();
 				}
 			}
 		}
@@ -4392,6 +4436,8 @@ private bool bicmp(in ubyte[] item, in char[] search) {
 /++
 	A client for a HTTP Server-Sent Event (SSE) source.
 
+	You'll want to construct it and then minimally, set [onmessage] or [onevent] handlers to see the incoming data, otherwise it will appear as if nothing is happening.
+
 	See_Also:
 		[arsd.cgi.EventSourceServer]
 
@@ -4794,6 +4840,7 @@ class WebSocket : arsd.core.WebSocketBase {
 	private void waitForWrite() {
 		if(socket is null || socket.eventToken is arsd.core.ICoreEventLoop.UnregisterToken.init)
 			return;
+		version(Windows) socket.isWritable = false;
 		// import arsd.core; writeln("waitForWrite");
 		version(Posix) socket.eventToken.subscribeToEvents(false, true, false, &isNowWritable);
 	}
