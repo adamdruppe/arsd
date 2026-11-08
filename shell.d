@@ -60,6 +60,8 @@
 +/
 module arsd.shell;
 
+// FIXME: should i catch SIGHUP and resume stopped jobs ? wikipedia says resume them and forward the signal so they die too.
+
 // can do a colon which is a built in to parse the command but do nothing. or leading dot which is to run a script inside this process.
 // : "${1:?missing argument, aborting.!
 // see https://refp.se/articles/your-shell-and-the-magic-colon
@@ -1750,6 +1752,7 @@ class ExternalCommandExecutor : Shell.CommandExecutor {
 				//signal (SIGWINCH, SIG_DFL);
 				signal (SIGHUP, SIG_DFL);
 				signal (SIGCONT, SIG_DFL);
+				signal (SIGPIPE, SIG_DFL);
 			};
 			proc.pgid = crc.pgid; // 0 here means to lead the group, all subsequent pipe programs should inherit the leader
 		}
