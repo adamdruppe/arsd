@@ -159,16 +159,11 @@ void main() {
 			- The embedded HTTP server will use a single process with a thread pool. (use instead of plain `embedded_httpd` if you want this specific implementation)
 		* - `-version=embedded_httpd_processes`
 			- The embedded HTTP server will use a prefork style process pool. (use instead of plain `embedded_httpd` if you want this specific implementation)
-		* - `-version=embedded_httpd_processes_accept_after_fork`
-			- It will call accept() in each child process, after forking. This is currently the only option, though I am experimenting with other ideas. You probably should NOT specify this right now.
 		* - `-version=stdio_http`
 			- The embedded HTTP server will be spoken over stdin and stdout.
 
 		* + Tweaks
 		  + (can be used together with others)
-
-		* - `-version=cgi_with_websocket`
-			- The CGI class has websocket server support. (This is on by default now.)
 
 		* - `-version=with_openssl`
 			- not currently used
@@ -490,9 +485,9 @@ void main() {
 
 		The `struct Uri` was removed on November 2, 2025. You can find that now in [arsd.http2]. Other functions, including `rawurlencode`, `makeDataUrl`, `decodeVariablesSingle`, and `encodeVariables` were moved to [arsd.uri].
 
-		Prior to September 20, 2026, the server defaulted for forking at least once on compatible platforms. Since then, it does not unless you either request it with `-version=cgi_use_fork` when compiling or by setting [RequestServer.useFork] before starting the server.
+		Prior to September 20, 2026, the server defaulted for forking at least once on compatible platforms. It was set to default false on that date, and support for it was removed fully on November 8, 2026.
 
-		Additionally, on September 20, 2026, all builds default to including the fiber hybrid if supported on the platform. Use `-version=cgi_no_fiber` to disable it at build time.
+		Additionally, on September 20, 2026, all builds default to including the fiber hybrid if supported on the platform. As of November 8, 2026, the hybrid server is now integrated with [arsd.core] and its use is no longer optional.
 
 		On October 9, 2026, the default format of responses using the [DispatcherMain], etc., changed to check the Accept header and some other heuristics. It generally assumes json unless html is requested. The way to request a format changed from `format=...` to `__format=...`.
 
@@ -621,10 +616,6 @@ import arsd.core : makeNonBlocking;
 
 import arsd.core : encodeUriComponent, decodeUriComponent;
 
-
-// for a single thread, linear request thing, use:
-// -version=embedded_httpd_threads -version=cgi_no_threads
-
 version(Posix) {
 	version(CRuntime_Musl) {
 
@@ -637,7 +628,6 @@ version(Posix) {
 			// I never implemented the fancy stuff there either
 		} else {
 			version=with_breaking_cgi_features;
-			version=with_sendfd;
 			version=with_addon_servers;
 		}
 	}
@@ -672,39 +662,17 @@ version(with_addon_servers)
 	version=with_addon_servers_connections;
 
 
-version(cgi_no_fiber) {} else {
-	version=cgi_use_fiber;
+version(cgi_no_fiber) {
+	static assert(0, "Support for non-fiber builds was dropped with arsd 13.0 (November 2026).");
 }
 
 version(embedded_httpd) {
-	version(OSX)
-		version = embedded_httpd_threads;
-	else
-		version=embedded_httpd_hybrid;
-	/*
-	version(with_openssl) {
-		pragma(lib, "crypto");
-		pragma(lib, "ssl");
-	}
-	*/
+	version=embedded_httpd_threads;
 }
 
 version(embedded_httpd_hybrid) {
 	version=embedded_httpd_threads;
-	version=cgi_use_fiber;
 }
-
-version(cgi_no_fork) {
-	version(cgi_use_fork) static assert(0, "conflicting versions on no fork and use fork");
-}
-
-version(cgi_use_fork)
-	enum cgi_use_fork_default = true;
-else
-	enum cgi_use_fork_default = false;
-
-version(embedded_httpd_processes)
-	version=embedded_httpd_processes_accept_after_fork; // I am getting much better average performance on this, so just keeping it. But the other way MIGHT help keep the variation down so i wanna keep the code to play with later
 
 version(embedded_httpd_threads) {
 	//  unless the user overrides the default..
@@ -725,8 +693,6 @@ version(scgi) {
 version(cgi_embedded_sessions) {}
 else version=cgi_session_server_process;
 
-
-version=cgi_with_websocket;
 
 enum long defaultMaxContentLength = 5_000_000;
 
@@ -3554,10 +3520,10 @@ struct RequestServer {
 			argument to dmd. That version still defines the value of `cgi_use_fork_default`, used to initialize this, for
 			compatibility.
 
-			On September 20, 2026 (dub v13.0) the default has changed to always be false, unless you opt in with either
-			`-version=cgi_use_fork` or by setting this variable to `true`.
+			On September 20, 2026 (dub v13.0) the default has changed to always be false and in November 2026, the functionality
+			was removed.
 	+/
-	bool useFork = cgi_use_fork_default;
+	deprecated("Support for a forking hybrid server has been removed.") bool useFork;
 
 	/++
 		Determines the number of worker threads to spawn per process, for server modes that use worker threads. 0 will use a
@@ -3576,27 +3542,24 @@ struct RequestServer {
 	+/
 	this(string[] listenTo) {
 		this.listenSpec = listenTo;
-		init();
 	}
 
 	/// Creates a server object configured to listen on a single host and port.
 	this(string defaultHost, ushort defaultPort) {
 		this.listeningHost = defaultHost;
 		this.listeningPort = defaultPort;
-		init();
 	}
 
 	/// ditto
 	this(ushort defaultPort) {
 		listeningPort = defaultPort;
-		init();
 	}
 
-	private void init() {
+	private void initBeforeListen() {
+		this.el = arsd.core.getThisThreadEventLoop();
 		version(Windows) {
 			if(this.iocp)
 				return;
-			arsd.core.getThisThreadEventLoop();
 			arsd.core.CoreWorkerThread.ensureSetup();
 			this.iocp = (cast(arsd.core.CoreEventLoopImplementation) arsd.core.getThisThreadEventLoop()).runInTaskRunnerQueue.iocp;
 			//arsd.core.writeln("initialized ", cast(void*) this.iocp);
@@ -3696,7 +3659,6 @@ struct RequestServer {
 	}
 
 	private bool actuallyUseFiber = true;
-	private int cancelfd = -1;
 
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
@@ -3728,7 +3690,8 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1);
+		dropPrivileges();
 		auto connection = socket.accept();
 		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection, &this);
 
@@ -3744,7 +3707,8 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1);
+		dropPrivileges();
 		auto connection = socket.accept();
 		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection, &this);
 
@@ -3761,23 +3725,15 @@ struct RequestServer {
 		Starts serving requests according to the current configuration.
 	+/
 	void serve(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
-		init();
-		version(netman_httpd) {
-			// Obsolete!
-
-			import arsd.httpd;
-			// what about forwarding the other constructor args?
-			// this probably needs a whole redoing...
-			serveHttp!CustomCgi(&fun, listeningPort);//5005);
-			return;
-		} else
 		version(embedded_httpd_processes) {
 			serveEmbeddedHttpdProcesses!(fun, CustomCgi)(this);
 		} else
 		version(embedded_httpd_threads) {
+			initBeforeListen();
 			serveEmbeddedHttp!(fun, CustomCgi, maxContentLength)();
 		} else
 		version(scgi) {
+			initBeforeListen();
 			serveScgi!(fun, CustomCgi, maxContentLength)();
 		} else
 		version(fastcgi) {
@@ -3790,6 +3746,7 @@ struct RequestServer {
 			handleCgiRequest!(fun, CustomCgi, maxContentLength)();
 		} else {
 			if(this.listenSpec.length) {
+				initBeforeListen();
 				// FIXME: what about heterogeneous listen specs?
 				if(this.listenSpec[0].startsWith("scgi:"))
 					serveScgi!(fun, CustomCgi, maxContentLength)();
@@ -3827,7 +3784,6 @@ struct RequestServer {
 					writeln("If you need FastCGI, you can listen with fcgi:// but note it requires the C fcgi library available in your dynamic load path.");
 					writeln();
 					writeln("Learn more at https://opendlang.org/library/arsd.cgi.html#Command-line-interface");
-					arsd.core.getThisThreadEventLoop.exitApplication();
 				}
 			}
 		}
@@ -3838,6 +3794,14 @@ struct RequestServer {
 	version(Windows)
 		HANDLE iocp;
 
+
+	/++
+		Set to `true` if you want the serve family of functions to return immediately when possible instead of running their own loops.
+
+		History:
+			Added November 8, 2026
+	+/
+	public bool async = false;
 
 	/++
 		Runs the embedded HTTP thread server specifically, regardless of which build configuration you have.
@@ -3855,9 +3819,12 @@ struct RequestServer {
 				else static assert(0, "Not implemented in your compiler version!");
 			}
 		auto manager = this.listenSpec is null ?
-			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads) :
-			new ListeningConnectionManager(&this, this.listenSpec, &doThreadHttpConnection!(CustomCgi, funToUse), null, useFork, numberOfThreads);
-		manager.listen();
+			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadHttpConnection!(CustomCgi, funToUse)) :
+			new ListeningConnectionManager(&this, this.listenSpec, &doThreadHttpConnection!(CustomCgi, funToUse));
+		dropPrivileges();
+		manager.startAccepting();
+		if(!async)
+			manager.runLoop();
 	}
 
 	/++
@@ -3866,9 +3833,12 @@ struct RequestServer {
 	void serveScgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
 		stopRequested = false;
 		auto manager = this.listenSpec is null ?
-			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads) :
-			new ListeningConnectionManager(&this, this.listenSpec, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength), null, useFork, numberOfThreads);
-		manager.listen();
+			new ListeningConnectionManager(&this, listeningHost, listeningPort, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength)) :
+			new ListeningConnectionManager(&this, this.listenSpec, &doThreadScgiConnection!(CustomCgi, fun, maxContentLength));
+		dropPrivileges();
+		manager.startAccepting();
+		if(!async)
+			manager.runLoop();
 	}
 
 	/++
@@ -3940,20 +3910,15 @@ struct RequestServer {
 	void requestStop(ForceStop stopPriority = ForceStop.afterCurrentRequestsComplete) shared {
 		stopRequested = true;
 
-		version(Posix) {
-			if(cancelfd > 0) {
-				ulong a = 1;
-				core.sys.posix.unistd.write(cancelfd, &a, a.sizeof);
-			}
-		}
-		RequestServer* unshared = cast(RequestServer*) &this;
-		version(Windows) {
-			if(unshared.iocp) {
-				foreach(i; 0 .. 16) // FIXME
-				PostQueuedCompletionStatus(unshared.iocp, 0, cast(ULONG_PTR) null, null);
-			}
-		}
+		auto us = cast(RequestServer*) &this; // just casting away shared though tbh this is improper and it should be protected by a mutex...
+		foreach(lcm; us.lcms)
+			us.el.removeAnchor(lcm);
+
+		us.lcms = null;
 	}
+
+	ListeningConnectionManager[] lcms;
+	arsd.core.ICoreEventLoop el;
 }
 
 class AuthorizationRequiredException : Exception {
@@ -4028,23 +3993,6 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer* para
 		params.dropPrivileges();
 	}
 
-	version(embedded_httpd_processes_accept_after_fork) {} else {
-		int pipeReadFd;
-		int pipeWriteFd;
-
-		{
-			int[2] pipeFd;
-			if(socketpair(AF_UNIX, SOCK_DGRAM, 0, pipeFd)) {
-				import core.stdc.errno;
-				throw new Exception("pipe failed " ~ to!string(errno));
-			}
-
-			pipeReadFd = pipeFd[0];
-			pipeWriteFd = pipeFd[1];
-		}
-	}
-
-
 	int processCount;
 	pid_t newPid;
 	reopen:
@@ -4058,24 +4006,14 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer* para
 				uint i;
 				sockaddr addr;
 				i = addr.sizeof;
-				version(embedded_httpd_processes_accept_after_fork) {
-					int s = accept(sock, &addr, &i);
-					int opt = 1;
-					import core.sys.posix.netinet.tcp;
-					// the Cgi class does internal buffering, so disabling this
-					// helps with latency in many cases...
-					setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
-					cloexec(s);
-				} else {
-					int s;
-					auto readret = read_fd(pipeReadFd, &s, s.sizeof, &s);
-					if(readret != s.sizeof) {
-						import core.stdc.errno;
-						throw new Exception("pipe read failed " ~ to!string(errno));
-					}
 
-					//writeln("process ", getpid(), " got socket ", s);
-				}
+				int s = accept(sock, &addr, &i);
+				int opt = 1;
+				import core.sys.posix.netinet.tcp;
+				// the Cgi class does internal buffering, so disabling this
+				// helps with latency in many cases...
+				setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
+				cloexec(s);
 
 				try {
 
@@ -4176,55 +4114,6 @@ void serveEmbeddedHttpdProcesses(alias fun, CustomCgi = Cgi)(RequestServer* para
 	// the parent should wait for its children...
 	if(newPid) {
 		import core.sys.posix.sys.wait;
-
-		version(embedded_httpd_processes_accept_after_fork) {} else {
-			import core.sys.posix.sys.select;
-			int[] fdQueue;
-			while(true) {
-				// writeln("select call");
-				int nfds = pipeWriteFd;
-				if(sock > pipeWriteFd)
-					nfds = sock;
-				nfds += 1;
-				fd_set read_fds;
-				fd_set write_fds;
-				FD_ZERO(&read_fds);
-				FD_ZERO(&write_fds);
-				FD_SET(sock, &read_fds);
-				if(fdQueue.length)
-					FD_SET(pipeWriteFd, &write_fds);
-				auto ret = select(nfds, &read_fds, &write_fds, null, null);
-				if(ret == -1) {
-					import core.stdc.errno;
-					if(errno == EINTR)
-						goto try_wait;
-					else
-						throw new Exception("wtf select");
-				}
-
-				int s = -1;
-				if(FD_ISSET(sock, &read_fds)) {
-					uint i;
-					sockaddr addr;
-					i = addr.sizeof;
-					s = accept(sock, &addr, &i);
-					cloexec(s);
-					import core.sys.posix.netinet.tcp;
-					int opt = 1;
-					setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, opt.sizeof);
-				}
-
-				if(FD_ISSET(pipeWriteFd, &write_fds)) {
-					if(s == -1 && fdQueue.length) {
-						s = fdQueue[0];
-						fdQueue = fdQueue[1 .. $]; // FIXME reuse buffer
-					}
-					write_fd(pipeWriteFd, &s, s.sizeof, s);
-					close(s); // we are done with it, let the other process take ownership
-				} else
-					fdQueue ~= s;
-			}
-		}
 
 		try_wait:
 
@@ -4357,9 +4246,7 @@ void serveFastCgi(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMax
 
 /// Returns the default listening port for the current cgi configuration. 8085 for embedded httpd, 4000 for scgi, irrelevant for others.
 ushort defaultListeningPort() @safe {
-	version(netman_httpd)
-		return 8080;
-	else version(embedded_httpd_processes)
+	version(embedded_httpd_processes)
 		return 8085;
 	else version(embedded_httpd_threads)
 		return 8085;
@@ -4371,9 +4258,7 @@ ushort defaultListeningPort() @safe {
 
 /// Default host for listening. 127.0.0.1 for scgi, null (aka all interfaces) for all others. If you want the server directly accessible from other computers on the network, normally use null. If not, 127.0.0.1 is a bit better. Settable with default handlers with --listening-host command line argument.
 string defaultListeningHost() @safe {
-	version(netman_httpd)
-		return null;
-	else version(embedded_httpd_processes)
+	version(embedded_httpd_processes)
 		return null;
 	else version(embedded_httpd_threads)
 		return null;
@@ -4538,7 +4423,6 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 	History:
 		Added July 10, 2021. Previously, it used the druntime default of 16 KB.
 +/
-version(cgi_use_fiber)
 __gshared size_t fiberStackSize = 4096 * 100;
 
 
@@ -4671,7 +4555,6 @@ class ListeningSocket : FiberCapableCgiSocket {
 		this.af = af;
 		this.socketType = type;
 		this.lcm = lcm;
-		version(cgi_use_fiber)
 		if(lcm && requestServer && requestServer.actuallyUseFiber) {
 			actuallyUseFiber = true;
 
@@ -4780,16 +4663,13 @@ class CgiSocket : FiberCapableCgiSocket {
 		super(handle, af);
 	}
 
-	version(cgi_use_fiber)
 	arsd.core.ICoreEventLoop.UnregisterToken token;
 
 	void register() {
-		version(cgi_use_fiber)
 		version(Posix)
 		token = arsd.core.getThisThreadEventLoop().registerFd(this.handle);
 	}
 
-	version(cgi_use_fiber)
 	void yieldUntilReadable() {
 		version(Posix)
 		if(auto controller = arsd.core.inSchedulableTask)
@@ -4798,7 +4678,6 @@ class CgiSocket : FiberCapableCgiSocket {
 			});
 	}
 
-	version(cgi_use_fiber)
 	void yieldUntilWritable() {
 		version(Posix)
 		if(auto controller = arsd.core.inSchedulableTask)
@@ -4813,7 +4692,6 @@ class CgiSocket : FiberCapableCgiSocket {
 
 	void closeLol() {
 		version(Posix)
-		version(cgi_use_fiber)
 		if(token) {
 			token.unregister();
 			token = typeof(token).init;
@@ -4878,7 +4756,6 @@ class CgiSocket : FiberCapableCgiSocket {
 	}
 }
 
-version(cgi_use_fiber)
 class CgiFiber : arsd.core.SchedulableTask {
 	private RequestServer* rs;
 	private void function(CgiSocket, RequestServer*) f_handler;
@@ -4908,7 +4785,6 @@ class CgiFiber : arsd.core.SchedulableTask {
 	}
 }
 
-version(cgi_use_fiber)
 version(Windows) {
 
 extern(Windows) private {
@@ -4961,7 +4837,7 @@ extern(Windows) private {
 
 void doThreadHttpConnection(CustomCgi, alias fun)(CgiSocket connection, RequestServer* rs) {
 	assert(connection !is null);
-	version(cgi_use_fiber) {
+	if(rs.actuallyUseFiber) {
 		auto fiber = new CgiFiber(rs, &doThreadHttpConnectionGuts!(CustomCgi, fun));
 
 		connection.fiber = fiber;
@@ -5499,13 +5375,10 @@ private class BufferedInputRange {
 	this(RequestServer* requestServer, CgiSocket source, ubyte[] buffer = null, bool allowGrowth = true) {
 		// if they connect but never send stuff to us, we don't want it wasting the process
 		// so setting a time out
-		version(cgi_use_fiber) {
-			if(requestServer && requestServer.actuallyUseFiber) {
-				source.blocking = false;
-			} else
-				{} // this space intentionally left blank
+		if(requestServer && requestServer.actuallyUseFiber) {
+			source.blocking = false;
 		} else
-			source.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
+			{} // this space intentionally left blank
 
 		this.source = source;
 		if(buffer is null) {
@@ -5568,15 +5441,8 @@ private class BufferedInputRange {
 			auto ret = source.receive(freeSpace);
 			if(ret == Socket.ERROR) {
 				if(wouldHaveBlocked()) {
-					version(cgi_use_fiber) {
-						source.yieldUntilReadable();
-						goto try_again;
-					} else {
-						// gonna treat a timeout here as a close
-						sourceClosed = true;
-						source.close();
-						return;
-					}
+					source.yieldUntilReadable();
+					goto try_again;
 				}
 				version(Posix) {
 					import core.stdc.errno;
@@ -5690,266 +5556,71 @@ private class FakeSocketForStdin : CgiSocket {
 	}
 }
 
-import core.sync.semaphore;
 import core.atomic;
 
 /**
 	This is for internal use only. It was previously public but never stabilized and now to become private.
-
-	---
-	void handler(Socket s) { do something... }
-	auto manager = new ListeningConnectionManager("127.0.0.1", 80, &handler, &delegateThatDropsPrivileges);
-	manager.listen();
-	---
-
-	The 4th parameter is optional.
-
-	I suggest you use BufferedInputRange(connection) to handle the input. As a packet
-	comes in, you will get control. You can just continue; though to fetch more.
-
-
-	FIXME: should I offer an event based async thing like netman did too? Yeah, probably.
+	It is a small adapter for the arsd.core event loop to distribute new connections across its worker thread pool.
 */
 class ListeningConnectionManager {
 	version(D_OpenD) mixin EnableSynchronization;
 
-	Semaphore semaphore;
-	CgiSocket[256] queue;
-	shared(ubyte) nextIndexFront;
-	ubyte nextIndexBack;
-	shared(int) queueLength;
-
 	RequestServer* requestServer;
 
-	CgiSocket acceptCancelable() {
-		version(Posix) {
-			import core.sys.posix.sys.select;
-			fd_set read_fds;
-			FD_ZERO(&read_fds);
-			int max = 0;
-			foreach(listener; listeners) {
-				FD_SET(listener.handle, &read_fds);
-				if(listener.handle > max)
-					max = listener.handle;
-			}
-			if(requestServer && requestServer.cancelfd != -1) {
-				FD_SET(requestServer.cancelfd, &read_fds);
-				if(requestServer.cancelfd > max)
-					max = requestServer.cancelfd;
-			}
-			auto ret = select(max + 1, &read_fds, null, null, null);
-			if(ret == -1) {
-				import core.stdc.errno;
-				if(errno == EINTR)
-					return null;
-				else
-					throw new Exception("wtf select");
-			}
+	deprecated void listen() {
+		startAccepting();
+		runLoop();
+	}
 
-			if(requestServer && requestServer.cancelfd != -1 && FD_ISSET(requestServer.cancelfd, &read_fds)) {
-				return null;
-			}
+	void runLoop() {
+		auto el = arsd.core.getThisThreadEventLoop();
 
-			foreach(listener; listeners) {
-				if(FD_ISSET(listener.handle, &read_fds))
-					return listener.accept();
-			}
+		el.run();
 
-			return null;
-		} else {
+		// FIXME: i typically stop this with ctrl+c which never
+		// actually gets here. i need to do a sigint handler.
+		if(cleanup)
+			cleanup();
 
-			auto check = new SocketSet();
+	}
 
-			keep_looping:
-			check.reset();
+	void startAccepting() {
+		// note that arsd.core will ignore SIGPIPE
+
+		version(Windows) {
+			// please note these are overlapped sockets! so the accept just kicks things off
 			foreach(listener; listeners)
-				check.add(listener);
-
-			// just to check the stop flag on a kinda busy loop. i hate this FIXME
-			auto got = Socket.select(check, null, null, 3.seconds);
-			if(got > 0)
-				foreach(listener; listeners)
-					if(check.isSet(listener))
-						return listener.accept();
-			if(requestServer && requestServer.stopRequested)
-				return null;
-			else
-				goto keep_looping;
-		}
-	}
-
-	int defaultNumberOfThreads() {
-		import std.parallelism;
-		version(cgi_use_fiber) {
-			return totalCPUs * 2 + 1; // still chance some will be pointlessly blocked anyway
-		} else {
-			// I times 4 here because there's a good chance some will be blocked on i/o.
-			return totalCPUs * 4;
+				listener.accept();
 		}
 
-	}
-
-	void listen() {
-		shared(int) loopBroken;
-
-		version(Posix) {
-			import core.sys.posix.signal;
-			signal(SIGPIPE, SIG_IGN);
-		}
-
-		version(linux) {
-			if(requestServer && requestServer.cancelfd == -1)
-				requestServer.cancelfd = eventfd(0, 0);
-		}
-
-		version(cgi_no_threads) {
-			// NEVER USE THIS
-			// it exists only for debugging and other special occasions
-
-			// the thread mode is faster and less likely to stall the whole
-			// thing when a request is slow
-			while(!loopBroken && (requestServer && !requestServer.stopRequested)) {
-				auto sn = acceptCancelable();
-				if(sn is null) continue;
-				cloexec(sn);
-				try {
-					handler(sn);
-				} catch(Exception e) {
-					// if a connection goes wrong, we want to just say no, but try to carry on unless it is an Error of some sort (in which case, we'll die. You might want an external helper program to revive the server when it dies)
-					sn.close();
-				}
-			}
-		} else {
-
-			if(useFork) {
-				version(linux) {
-					//asm { int 3; }
-					fork();
-				}
-			}
-
-			version(cgi_use_fiber) {
-				version(Windows) {
-					// please note these are overlapped sockets! so the accept just kicks things off
-					foreach(listener; listeners)
-						listener.accept();
-				}
-
-				auto el = arsd.core.getThisThreadEventLoop();
-				static class RequestServerAnchor {
-					RequestServer* rs;
-					this(RequestServer* rs) {
-						this.rs = rs;
-					}
-				}
-				auto rsa = new RequestServerAnchor(requestServer);
-				el.addAnchor(rsa);
-
-				foreach(listener; listeners) {
-					void upstreamDmdWorkaround(ListeningSocket listener) {
-						void doAccept() {
-							CgiSocket sn;
-							try
-								sn = listener.accept(); // don't need to do the acceptCancelable here since the epoll checks it better
-							catch(SocketAcceptException e) { return; }
-
-							cloexec(sn);
-							if(this.tcp) {
-								// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-								// on the socket because we do some buffering internally. I think this helps,
-								// certainly does for small requests, and I think it does for larger ones too
-								sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-
-								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
-							}
-
-							this.handler(sn, this.requestServer);
-						}
-
-						arsd.core.CoreWorkerThread.acceptConnectionsAmongstTaskRunners(listener.handle, &doAccept);
-					}
-					upstreamDmdWorkaround(listener);
-				}
-
-				el.run(() => requestServer && requestServer.stopRequested);
-
-				el.removeAnchor(rsa);
-				el.exitApplication();
-			} else {
-				semaphore = new Semaphore();
-
-				ConnectionThread[] threads = new ConnectionThread[](numberOfThreads);
-				foreach(i, ref thread; threads) {
-					thread = new ConnectionThread(this, handler, cast(int) i);
-					thread.start();
-				}
-
-				while(!loopBroken && !requestServer.stopRequested) {
+		foreach(listener; listeners) {
+			void upstreamDmdWorkaround(ListeningSocket listener) {
+				void doAccept() {
 					CgiSocket sn;
+					try
+						sn = listener.accept(); // don't need to do the acceptCancelable here since the epoll checks it better
+					catch(SocketAcceptException e) { return; }
 
-					bool crash_check() {
-						bool hasAnyRunning;
-						foreach(thread; threads) {
-							if(!thread.isRunning) {
-								thread.join();
-							} else hasAnyRunning = true;
-						}
+					cloexec(sn);
+					if(this.tcp) {
+						// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+						// on the socket because we do some buffering internally. I think this helps,
+						// certainly does for small requests, and I think it does for larger ones too
+						sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
 
-						return (!hasAnyRunning);
+						sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
 					}
 
-
-					void accept_new_connection() {
-						sn = acceptCancelable();
-						if(sn is null) return;
-						cloexec(sn);
-						if(tcp) {
-							// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-							// on the socket because we do some buffering internally. I think this helps,
-							// certainly does for small requests, and I think it does for larger ones too
-							sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-
-							sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
-						}
-					}
-
-					void existing_connection_new_data() {
-						// wait until a slot opens up
-						// int waited = 0;
-						while(queueLength >= queue.length) {
-							Thread.sleep(1.msecs);
-							// waited ++;
-						}
-						// if(waited) {import std.stdio; writeln(waited);}
-						synchronized(this) {
-							queue[nextIndexBack] = sn;
-							nextIndexBack++;
-							atomicOp!"+="(queueLength, 1);
-						}
-						semaphore.notify();
-					}
-
-
-					accept_new_connection();
-					if(sn !is null)
-						existing_connection_new_data();
-					else if(sn is null && requestServer.stopRequested) {
-						foreach(thread; threads) {
-							semaphore.notify();
-						}
-						Thread.sleep(50.msecs);
-					}
-
-					if(crash_check())
-						break;
+					this.handler(sn, this.requestServer);
 				}
-			}
 
-			// FIXME: i typically stop this with ctrl+c which never
-			// actually gets here. i need to do a sigint handler.
-			if(cleanup)
-				cleanup();
+				arsd.core.CoreWorkerThread.acceptConnectionsAmongstTaskRunners(listener.handle, &doAccept);
+			}
+			upstreamDmdWorkaround(listener);
 		}
+
+		requestServer.lcms ~= this;
+		requestServer.el.addAnchor(this);
 	}
 
 	//version(linux)
@@ -6019,43 +5690,33 @@ class ListeningConnectionManager {
 		return pls;
 	}
 
-	this(RequestServer* requestServer, string[] listenSpec, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void function(CgiSocket, RequestServer*) handler) {
 		fhandler = handler;
-		this(requestServer, listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, listenSpec, &dg_handler);
 	}
-	this(RequestServer* requestServer, string[] listenSpec, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void delegate(CgiSocket, RequestServer*) handler) {
 		auto pls = parseListenSpec(listenSpec);
 
-		this(requestServer, pls.host, pls.port, handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, pls.host, pls.port, handler);
 	}
 
-	this(RequestServer* requestServer, string host, ushort port, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
-		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
+	this(RequestServer* requestServer, string host, ushort port, void function(CgiSocket, RequestServer*) handler) {
+		this(requestServer, [host], [port], handler);
 	}
-	this(RequestServer* requestServer, string host, ushort port, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
-		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
+	this(RequestServer* requestServer, string host, ushort port, void delegate(CgiSocket, RequestServer*) handler) {
+		this(requestServer, [host], [port], handler);
 	}
 
-	this(RequestServer* requestServer, string[] host, ushort[] port, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void function(CgiSocket, RequestServer*) handler) {
 		fhandler = handler;
-		this(requestServer, host, port, &dg_handler, dropPrivs, useFork, numberOfThreads);
+		this(requestServer, host, port, &dg_handler);
 	}
 
-	private void delegate()[] allCleanups;
-	private void cleanupAll() {
-		foreach(c; allCleanups) {
-			if(c)
-				c();
-		}
-	}
-
-	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(CgiSocket, RequestServer*) handler) {
 		assert(host.length == port.length);
 
 		this.requestServer = requestServer;
 		this.handler = handler;
-		this.useFork = useFork;
-		this.numberOfThreads = numberOfThreads ? numberOfThreads : defaultNumberOfThreads();
 
 		listeners.reserve(host.length);
 
@@ -6064,22 +5725,17 @@ class ListeningConnectionManager {
 		void delegate() cleanupLocal;
 		foreach(i; 0 .. host.length)
 			if(host[i] == "localhost") {
-				listeners ~= startListening(this, requestServer, "127.0.0.1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, "127.0.0.1", port[i], tcp, cleanupLocal, 128);
 				allCleanups ~= cleanupLocal;
-				listeners ~= startListening(this, requestServer, "::1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, "::1", port[i], tcp, cleanupLocal, 128);
 				allCleanups ~= cleanupLocal;
 			} else {
-				listeners ~= startListening(this, requestServer, host[i], port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, host[i], port[i], tcp, cleanupLocal, 128);
 				allCleanups ~= cleanupLocal;
 			}
 
-		version(cgi_use_fiber) {
-			foreach(listener; listeners)
-				listener.blocking = false;
-		}
-
-		// this is the UI control thread and thus gets more priority
-		Thread.getThis.priority = Thread.PRIORITY_MAX;
+		foreach(listener; listeners)
+			listener.blocking = false;
 
 		this.cleanup = &cleanupAll;
 	}
@@ -6087,11 +5743,16 @@ class ListeningConnectionManager {
 	ListeningSocket[] listeners;
 	void delegate(CgiSocket, RequestServer*) handler;
 
-	immutable bool useFork;
-	int numberOfThreads;
+	private void delegate()[] allCleanups;
+	private void cleanupAll() {
+		foreach(c; allCleanups) {
+			if(c)
+				c();
+		}
+	}
 }
 
-ListeningSocket startListening(ListeningConnectionManager lcm, RequestServer* requestServer, string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
+ListeningSocket startListening(ListeningConnectionManager lcm, RequestServer* requestServer, string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue) {
 	ListeningSocket listener;
 	if(host.startsWith("unix:")) {
 		version(Posix) {
@@ -6135,9 +5796,6 @@ ListeningSocket startListening(ListeningConnectionManager lcm, RequestServer* re
 
 	listener.listen(backQueue);
 
-	if (dropPrivs !is null) // can be null, backwards compatibility
-		dropPrivs();
-
 	return listener;
 }
 
@@ -6149,11 +5807,9 @@ void sendAll(CgiSocket s, const(void)[] data, string file = __FILE__, size_t lin
 	do {
 		amount = s.send(data);
 		if(amount == Socket.ERROR) {
-			version(cgi_use_fiber) {
-				if(wouldHaveBlocked()) {
-					s.yieldUntilWritable();
-					continue;
-				}
+			if(wouldHaveBlocked()) {
+				s.yieldUntilWritable();
+				continue;
 			}
 			throw new ConnectionException(s, lastSocketError, file, line);
 		}
@@ -6180,257 +5836,6 @@ class HttpVersionNotSupportedException : Exception {
 alias void delegate(CgiSocket, RequestServer*) CMT;
 
 import core.thread;
-/+
-	cgi.d now uses a hybrid of event i/o and threads at the top level.
-
-	Top level thread is responsible for accepting sockets and selecting on them.
-
-	It then indicates to a child that a request is pending, and any random worker
-	thread that is free handles it. It goes into blocking mode and handles that
-	http request to completion.
-
-	At that point, it goes back into the waiting queue.
-
-
-	This concept is only implemented on Linux. On all other systems, it still
-	uses the worker threads and semaphores (which is perfectly fine for a lot of
-	things! Just having a great number of keep-alive connections will break that.)
-
-
-	So the algorithm is:
-
-	select(accept, event, pending)
-		if accept -> send socket to free thread, if any. if not, add socket to queue
-		if event -> send the signaling thread a socket from the queue, if not, mark it free
-			- event might block until it can be *written* to. it is a fifo sending socket fds!
-
-	A worker only does one http request at a time, then signals its availability back to the boss.
-
-	The socket the worker was just doing should be added to the one-off epoll read. If it is closed,
-	great, we can get rid of it. Otherwise, it is considered `pending`. The *kernel* manages that; the
-	actual FD will not be kept out here.
-
-	So:
-		queue = sockets we know are ready to read now, but no worker thread is available
-		idle list = worker threads not doing anything else. they signal back and forth
-
-	the workers all read off the event fd. This is the semaphore wait
-
-	the boss waits on accept or other sockets read events (one off! and level triggered). If anything happens wrt ready read,
-	it puts it in the queue and writes to the event fd.
-
-	The child could put the socket back in the epoll thing itself.
-
-	The child needs to be able to gracefully handle being given a socket that just closed with no work.
-+/
-class ConnectionThread : Thread {
-	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
-		assert(lcm !is null);
-		this.lcm = lcm;
-		this.dg = dg;
-		this.myThreadNumber = myThreadNumber;
-		super(&run);
-	}
-
-	void run() {
-		while(true) {
-			// so if there's a bunch of idle keep-alive connections, it can
-			// consume all the worker threads... just sitting there.
-			lcm.semaphore.wait();
-			if(lcm.requestServer && lcm.requestServer.stopRequested)
-				return;
-			CgiSocket socket;
-			synchronized(lcm) {
-				auto idx = lcm.nextIndexFront;
-				socket = lcm.queue[idx];
-				lcm.queue[idx] = null;
-				atomicOp!"+="(lcm.nextIndexFront, 1);
-				atomicOp!"-="(lcm.queueLength, 1);
-			}
-			try {
-			//import std.stdio; writeln(myThreadNumber, " taking it");
-				dg(socket, lcm.requestServer);
-				/+
-				if(socket.isAlive) {
-					// process it more later
-					version(linux) {
-						import core.sys.linux.epoll;
-						epoll_event ev;
-						ev.events = EPOLLIN | EPOLLONESHOT | EPOLLET;
-						ev.data.fd = socket.handle;
-						import std.stdio; writeln("adding");
-						if(epoll_ctl(lcm.epoll_fd, EPOLL_CTL_ADD, socket.handle, &ev) == -1) {
-							if(errno == EEXIST) {
-								ev.events = EPOLLIN | EPOLLONESHOT | EPOLLET;
-								ev.data.fd = socket.handle;
-								if(epoll_ctl(lcm.epoll_fd, EPOLL_CTL_MOD, socket.handle, &ev) == -1)
-									throw new Exception("epoll_ctl " ~ to!string(errno));
-							} else
-								throw new Exception("epoll_ctl " ~ to!string(errno));
-						}
-						//import std.stdio; writeln("keep alive");
-						// writing to this private member is to prevent the GC from closing my precious socket when I'm trying to use it later
-						__traits(getMember, socket, "sock") = cast(socket_t) -1;
-					} else {
-						continue; // hope it times out in a reasonable amount of time...
-					}
-				}
-				+/
-			} catch(ConnectionClosedException e) {
-				// can just ignore this, it is fairly normal
-				socket.close();
-			} catch(Throwable e) {
-				import std.stdio; stderr.rawWrite(e.toString); stderr.rawWrite("\n");
-				socket.close();
-			}
-		}
-	}
-
-	ListeningConnectionManager lcm;
-	CMT dg;
-	int myThreadNumber;
-}
-
-version(cgi_use_fiber)
-version(none)
-class WorkerThread : Thread {
-	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
-		assert(lcm !is null);
-		this.lcm = lcm;
-		this.dg = dg;
-		this.myThreadNumber = myThreadNumber;
-		super(&run);
-	}
-
-	version(Windows)
-	void run() {
-		auto timeout = INFINITE;
-		CgiSocket key;
-		OVERLAPPED* overlapped;
-		DWORD bytes;
-		assert(lcm.requestServer !is null);
-		while(!lcm.requestServer.stopRequested && GetQueuedCompletionStatus(lcm.requestServer.iocp, &bytes, cast(PULONG_PTR) &key, &overlapped, timeout)) {
-			if(key is null)
-				continue;
-			key.lastAnswer = bytes;
-			if(key.fiber) {
-				key.fiber.proceed();
-			} else {
-				// we have a new connection, issue the first receive on it and issue the next accept
-
-				auto sn = key.accepted;
-
-				key.accept();
-
-				cloexec(sn);
-				if(lcm.tcp) {
-					// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-					// on the socket because we do some buffering internally. I think this helps,
-					// certainly does for small requests, and I think it does for larger ones too
-					sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-
-					sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
-				}
-
-				dg(sn, lcm.requestServer);
-			}
-		}
-		//SleepEx(INFINITE, TRUE);
-	}
-
-	version(linux)
-	void run() {
-
-		import core.sys.linux.epoll;
-		epfd = epoll_create1(EPOLL_CLOEXEC);
-		if(epfd == -1)
-			throw new Exception("epoll_create1 " ~ to!string(errno));
-		scope(exit) {
-			import core.sys.posix.unistd;
-			close(epfd);
-		}
-
-		if(lcm.requestServer) {
-			epoll_event ev;
-			ev.events = EPOLLIN;
-			ev.data.fd = lcm.requestServer.cancelfd;
-			epoll_ctl(epfd, EPOLL_CTL_ADD, lcm.requestServer.cancelfd, &ev);
-		}
-
-		foreach(listener; lcm.listeners) {
-			epoll_event ev;
-			ev.events = EPOLLIN | EPOLLEXCLUSIVE; // EPOLLEXCLUSIVE is only available on kernels since like 2017 but that's prolly good enough.
-			ev.data.fd = listener.handle;
-			listener.blocking = false;
-			if(epoll_ctl(epfd, EPOLL_CTL_ADD, listener.handle, &ev) == -1)
-				throw new Exception("epoll_ctl " ~ to!string(errno));
-		}
-
-
-
-		while(lcm.requestServer is null || !lcm.requestServer.stopRequested) {
-			CgiSocket sn;
-
-			epoll_event[64] events;
-			auto nfds = epoll_wait(epfd, events.ptr, events.length, -1);
-			if(nfds == -1) {
-				if(errno == EINTR)
-					continue;
-				throw new Exception("epoll_wait " ~ to!string(errno));
-			}
-
-			outer: foreach(idx; 0 .. nfds) {
-				auto flags = events[idx].events;
-
-				if(lcm.requestServer && cast(size_t) events[idx].data.ptr == cast(size_t) lcm.requestServer.cancelfd) {
-					if(lcm.requestServer)
-						lcm.requestServer.stopRequested = true;
-					//import std.stdio; writeln("exit heard");
-					break;
-				} else {
-					foreach(listener; lcm.listeners) {
-						if(cast(size_t) events[idx].data.ptr == cast(size_t) listener.handle) {
-							//import std.stdio; writeln(myThreadNumber, " woken up ", flags);
-							// this try/catch is because it is set to non-blocking mode
-							// and Phobos' stupid api throws an exception instead of returning
-							// if it would block. Why would it block? because a forked process
-							// might have beat us to it, but the wakeup event thundered our herds.
-								try
-								sn = listener.accept(); // don't need to do the acceptCancelable here since the epoll checks it better
-								catch(SocketAcceptException e) { continue outer; }
-
-							cloexec(sn);
-							if(lcm.tcp) {
-								// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
-								// on the socket because we do some buffering internally. I think this helps,
-								// certainly does for small requests, and I think it does for larger ones too
-								sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
-
-								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
-							}
-
-							dg(sn, lcm.requestServer);
-							continue outer;
-						} else {
-							// writeln(events[idx].data.ptr);
-						}
-					}
-
-					if(cast(size_t) events[idx].data.ptr < 1024) {
-						throw arsd.core.ArsdException!"this doesn't look like a fiber pointer... "(cast(size_t) events[idx].data.ptr);
-					}
-					auto fiber = cast(CgiFiber) events[idx].data.ptr;
-					fiber.proceed();
-				}
-			}
-		}
-	}
-
-	ListeningConnectionManager lcm;
-	CMT dg;
-	int myThreadNumber;
-}
-
 
 /* Done with network helper */
 
@@ -6645,183 +6050,181 @@ ByChunkRange byChunk(BufferedInputRange ir, size_t atMost) {
 	};
 }
 
-version(cgi_with_websocket) {
-	// http://tools.ietf.org/html/rfc6455
+// http://tools.ietf.org/html/rfc6455
 
-	public import arsd.core : WebSocketOpcode, WebSocketFrame;
+public import arsd.core : WebSocketOpcode, WebSocketFrame;
 
-	/++
-		WEBSOCKET SUPPORT:
+/++
+	WEBSOCKET SUPPORT:
 
-		Full example:
-		---
-			import arsd.cgi;
+	Full example:
+	---
+		import arsd.cgi;
 
-			void websocketEcho(Cgi cgi) {
-				if(cgi.websocketRequested()) {
-					if(cgi.origin != "http://arsdnet.net")
-						throw new Exception("bad origin");
-					auto websocket = cgi.acceptWebsocket();
+		void websocketEcho(Cgi cgi) {
+			if(cgi.websocketRequested()) {
+				if(cgi.origin != "http://arsdnet.net")
+					throw new Exception("bad origin");
+				auto websocket = cgi.acceptWebsocket();
 
-					websocket.send("hello");
-					websocket.send(" world!");
+				websocket.send("hello");
+				websocket.send(" world!");
 
-					auto msg = websocket.recv();
-					while(msg.opcode != WebSocketOpcode.close) {
-						if(msg.opcode == WebSocketOpcode.text) {
-							websocket.send(msg.textData);
-						} else if(msg.opcode == WebSocketOpcode.binary) {
-							websocket.send(msg.data);
-						}
-
-						msg = websocket.recv();
+				auto msg = websocket.recv();
+				while(msg.opcode != WebSocketOpcode.close) {
+					if(msg.opcode == WebSocketOpcode.text) {
+						websocket.send(msg.textData);
+					} else if(msg.opcode == WebSocketOpcode.binary) {
+						websocket.send(msg.data);
 					}
 
-					websocket.close();
-				} else {
-					cgi.write("You are loading the websocket endpoint in a browser instead of a websocket client. Use a websocket client on this url instead.\n", true);
+					msg = websocket.recv();
 				}
+
+				websocket.close();
+			} else {
+				cgi.write("You are loading the websocket endpoint in a browser instead of a websocket client. Use a websocket client on this url instead.\n", true);
 			}
-
-			mixin GenericMain!websocketEcho;
-		---
-	+/
-
-	class WebSocket : arsd.core.WebSocketBase {
-		Cgi cgi;
-
-		private this(Cgi cgi) {
-			this.cgi = cgi;
-
-			CgiSocket socket = cgi.idlol.source;
-			socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"minutes"(5));
 		}
 
-		// returns true if data available, false if it timed out
-		bool recvAvailable(Duration timeout = dur!"msecs"(0)) {
-			if(!waitForNextMessageWouldBlock())
-				return true;
-			if(isDataPending(timeout))
-				return true; // this is kinda a lie.
+		mixin GenericMain!websocketEcho;
+	---
++/
 
+class WebSocket : arsd.core.WebSocketBase {
+	Cgi cgi;
+
+	private this(Cgi cgi) {
+		this.cgi = cgi;
+
+		CgiSocket socket = cgi.idlol.source;
+		socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"minutes"(5));
+	}
+
+	// returns true if data available, false if it timed out
+	bool recvAvailable(Duration timeout = dur!"msecs"(0)) {
+		if(!waitForNextMessageWouldBlock())
+			return true;
+		if(isDataPending(timeout))
+			return true; // this is kinda a lie.
+
+		return false;
+	}
+
+	public override bool lowLevelReceive() {
+		auto bfr = cgi.idlol;
+		top:
+		auto got = bfr.front;
+		if(got.length) {
+			if(receiveBuffer.length < receiveBufferUsedLength + got.length)
+				receiveBuffer.length += receiveBufferUsedLength + got.length;
+
+			receiveBuffer[receiveBufferUsedLength .. receiveBufferUsedLength + got.length] = got[];
+			receiveBufferUsedLength += got.length;
+			bfr.consume(got.length);
+
+			return true;
+		}
+
+		if(bfr.sourceClosed) {
 			return false;
 		}
 
-		public override bool lowLevelReceive() {
-			auto bfr = cgi.idlol;
-			top:
-			auto got = bfr.front;
-			if(got.length) {
-				if(receiveBuffer.length < receiveBufferUsedLength + got.length)
-					receiveBuffer.length += receiveBufferUsedLength + got.length;
-
-				receiveBuffer[receiveBufferUsedLength .. receiveBufferUsedLength + got.length] = got[];
-				receiveBufferUsedLength += got.length;
-				bfr.consume(got.length);
-
-				return true;
-			}
-
-			if(bfr.sourceClosed) {
-				return false;
-			}
-
-			bfr.popFront(0);
-			if(bfr.sourceClosed) {
-				return false;
-			}
-			goto top;
-		}
-
-
-		override bool isDataPending(Duration timeout = 0.seconds) {
-			CgiSocket socket = cgi.idlol.source;
-
-			auto check = new SocketSet();
-			check.add(socket);
-
-			auto got = Socket.select(check, null, null, timeout);
-			if(got > 0)
-				return true;
+		bfr.popFront(0);
+		if(bfr.sourceClosed) {
 			return false;
 		}
-
-		// note: this blocks
-		WebSocketFrame recv() {
-			return waitForNextMessage();
-		}
-
-
-
-
-		protected override void llshutdown() {
-			cgi.close();
-		}
-
-		protected override void llclose() {}
-
-		protected override void llsend(ubyte[] data) {
-			cgi.write(data);
-			cgi.flush();
-		}
-
-		override void unregisterAsActiveSocket() {}
-		override WebSocketFrame waitGotNothing() {
-			throw new ConnectionClosedException("Websocket receive timed out");
-		}
-		override bool connectionClosedInMiddleOfMessage() {
-			throw new ConnectionClosedException("Connection closed in middle of message");
-		}
+		goto top;
 	}
 
-	/++
-		Returns true if the request headers are asking for a websocket upgrade.
 
-		If this returns true, and you want to accept it, call [acceptWebsocket].
-	+/
-	bool websocketRequested(Cgi cgi) {
-		return
-			"sec-websocket-key" in cgi.requestHeaders
-			&&
-			"connection" in cgi.requestHeaders &&
-				cgi.requestHeaders["connection"].asLowerCase().canFind("upgrade")
-			&&
-			"upgrade" in cgi.requestHeaders &&
-				cgi.requestHeaders["upgrade"].asLowerCase().equal("websocket")
-			;
+	override bool isDataPending(Duration timeout = 0.seconds) {
+		CgiSocket socket = cgi.idlol.source;
+
+		auto check = new SocketSet();
+		check.add(socket);
+
+		auto got = Socket.select(check, null, null, timeout);
+		if(got > 0)
+			return true;
+		return false;
 	}
 
-	/++
-		If [websocketRequested], you can call this to accept it and upgrade the connection. It returns the new [WebSocket] object you use for future communication on this connection; the `cgi` object should no longer be used.
-	+/
-	WebSocket acceptWebsocket(Cgi cgi) {
-		assert(!cgi.closed);
-		assert(!cgi.outputtedResponseData);
-		cgi.setResponseStatus("101 Switching Protocols");
-		cgi.header("Upgrade: WebSocket");
-		cgi.header("Connection: upgrade");
+	// note: this blocks
+	WebSocketFrame recv() {
+		return waitForNextMessage();
+	}
 
-		string key = cgi.requestHeaders["sec-websocket-key"];
-		key ~= "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; // the defined guid from the websocket spec
 
-		import std.digest.sha;
-		auto hash = sha1Of(key);
-		auto accept = Base64.encode(hash);
 
-		cgi.header(("Sec-WebSocket-Accept: " ~ accept).idup);
 
-		cgi.websocketMode = true;
-		cgi.write("");
+	protected override void llshutdown() {
+		cgi.close();
+	}
 
+	protected override void llclose() {}
+
+	protected override void llsend(ubyte[] data) {
+		cgi.write(data);
 		cgi.flush();
-
-		auto ws = new WebSocket(cgi);
-		ws.readyState_ = WebSocket.OPEN;
-		return ws;
 	}
 
-	// FIXME get websocket to work on other modes, not just embedded_httpd
+	override void unregisterAsActiveSocket() {}
+	override WebSocketFrame waitGotNothing() {
+		throw new ConnectionClosedException("Websocket receive timed out");
+	}
+	override bool connectionClosedInMiddleOfMessage() {
+		throw new ConnectionClosedException("Connection closed in middle of message");
+	}
 }
+
+/++
+	Returns true if the request headers are asking for a websocket upgrade.
+
+	If this returns true, and you want to accept it, call [acceptWebsocket].
++/
+bool websocketRequested(Cgi cgi) {
+	return
+		"sec-websocket-key" in cgi.requestHeaders
+		&&
+		"connection" in cgi.requestHeaders &&
+			cgi.requestHeaders["connection"].asLowerCase().canFind("upgrade")
+		&&
+		"upgrade" in cgi.requestHeaders &&
+			cgi.requestHeaders["upgrade"].asLowerCase().equal("websocket")
+		;
+}
+
+/++
+	If [websocketRequested], you can call this to accept it and upgrade the connection. It returns the new [WebSocket] object you use for future communication on this connection; the `cgi` object should no longer be used.
++/
+WebSocket acceptWebsocket(Cgi cgi) {
+	assert(!cgi.closed);
+	assert(!cgi.outputtedResponseData);
+	cgi.setResponseStatus("101 Switching Protocols");
+	cgi.header("Upgrade: WebSocket");
+	cgi.header("Connection: upgrade");
+
+	string key = cgi.requestHeaders["sec-websocket-key"];
+	key ~= "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; // the defined guid from the websocket spec
+
+	import std.digest.sha;
+	auto hash = sha1Of(key);
+	auto accept = Base64.encode(hash);
+
+	cgi.header(("Sec-WebSocket-Accept: " ~ accept).idup);
+
+	cgi.websocketMode = true;
+	cgi.write("");
+
+	cgi.flush();
+
+	auto ws = new WebSocket(cgi);
+	ws.readyState_ = WebSocket.OPEN;
+	return ws;
+}
+
+// FIXME get websocket to work on other modes, not just embedded_httpd
 
 
 version(Windows)
@@ -7003,6 +6406,103 @@ void closeLocalServerConnection(LocalServerConnectionHandle handle) {
 void runSessionServer()() {
 	runAddonServer("/tmp/arsd_session_server", new BasicDataServerImplementation());
 }
+version(with_addon_servers)
+// copied from the web and ported from C
+// see https://stackoverflow.com/questions/2358684/can-i-share-a-file-descriptor-to-another-process-on-linux-or-are-they-local-to-t
+ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
+	msghdr msg;
+	iovec[1] iov;
+
+	version(OSX) {
+		//msg.msg_accrights = cast(cattr_t) &sendfd;
+		//msg.msg_accrightslen = int.sizeof;
+	} else version(Android) {
+	} else {
+		union ControlUnion {
+			cmsghdr cm;
+			char[CMSG_SPACE(int.sizeof)] control;
+		}
+
+		ControlUnion control_un;
+		cmsghdr* cmptr;
+
+		msg.msg_control = control_un.control.ptr;
+		msg.msg_controllen = control_un.control.length;
+
+		cmptr = CMSG_FIRSTHDR(&msg);
+		cmptr.cmsg_len = CMSG_LEN(int.sizeof);
+		cmptr.cmsg_level = SOL_SOCKET;
+		cmptr.cmsg_type = SCM_RIGHTS;
+		*(cast(int *) CMSG_DATA(cmptr)) = sendfd;
+	}
+
+	msg.msg_name = null;
+	msg.msg_namelen = 0;
+
+	iov[0].iov_base = ptr;
+	iov[0].iov_len = nbytes;
+	msg.msg_iov = iov.ptr;
+	msg.msg_iovlen = 1;
+
+	return sendmsg(fd, &msg, 0);
+}
+
+version(with_addon_servers)
+// copied from the web and ported from C
+ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
+	msghdr msg;
+	iovec[1] iov;
+	ssize_t n;
+	int newfd;
+
+	version(OSX) {
+		//msg.msg_accrights = cast(cattr_t) recvfd;
+		//msg.msg_accrightslen = int.sizeof;
+	} else version(Android) {
+	} else {
+		union ControlUnion {
+			cmsghdr cm;
+			char[CMSG_SPACE(int.sizeof)] control;
+		}
+		ControlUnion control_un;
+		cmsghdr* cmptr;
+
+		msg.msg_control = control_un.control.ptr;
+		msg.msg_controllen = control_un.control.length;
+	}
+
+	msg.msg_name = null;
+	msg.msg_namelen = 0;
+
+	iov[0].iov_base = ptr;
+	iov[0].iov_len = nbytes;
+	msg.msg_iov = iov.ptr;
+	msg.msg_iovlen = 1;
+
+	if ( (n = recvmsg(fd, &msg, 0)) <= 0)
+		return n;
+
+	version(OSX) {
+		//if(msg.msg_accrightslen != int.sizeof)
+			//*recvfd = -1;
+	} else version(Android) {
+	} else {
+		if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
+				cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
+			if (cmptr.cmsg_level != SOL_SOCKET)
+				throw new Exception("control level != SOL_SOCKET");
+			if (cmptr.cmsg_type != SCM_RIGHTS)
+				throw new Exception("control type != SCM_RIGHTS");
+			*recvfd = *(cast(int *) CMSG_DATA(cmptr));
+		} else
+			*recvfd = -1;       /* descriptor was not passed */
+	}
+
+	return n;
+}
+/* end read_fd */
+
+
 
 import core.stdc.errno;
 
@@ -8576,118 +8076,6 @@ void runAddonServer(EIS)(string localListenerName, EIS eis) if(is(EIS : EventIoS
 
 	} else static assert(0);
 }
-
-
-version(with_sendfd)
-// copied from the web and ported from C
-// see https://stackoverflow.com/questions/2358684/can-i-share-a-file-descriptor-to-another-process-on-linux-or-are-they-local-to-t
-ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd) {
-	msghdr msg;
-	iovec[1] iov;
-
-	version(OSX) {
-		//msg.msg_accrights = cast(cattr_t) &sendfd;
-		//msg.msg_accrightslen = int.sizeof;
-	} else version(Android) {
-	} else {
-		union ControlUnion {
-			cmsghdr cm;
-			char[CMSG_SPACE(int.sizeof)] control;
-		}
-
-		ControlUnion control_un;
-		cmsghdr* cmptr;
-
-		msg.msg_control = control_un.control.ptr;
-		msg.msg_controllen = control_un.control.length;
-
-		cmptr = CMSG_FIRSTHDR(&msg);
-		cmptr.cmsg_len = CMSG_LEN(int.sizeof);
-		cmptr.cmsg_level = SOL_SOCKET;
-		cmptr.cmsg_type = SCM_RIGHTS;
-		*(cast(int *) CMSG_DATA(cmptr)) = sendfd;
-	}
-
-	msg.msg_name = null;
-	msg.msg_namelen = 0;
-
-	iov[0].iov_base = ptr;
-	iov[0].iov_len = nbytes;
-	msg.msg_iov = iov.ptr;
-	msg.msg_iovlen = 1;
-
-	return sendmsg(fd, &msg, 0);
-}
-
-version(with_sendfd)
-// copied from the web and ported from C
-ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd) {
-	msghdr msg;
-	iovec[1] iov;
-	ssize_t n;
-	int newfd;
-
-	version(OSX) {
-		//msg.msg_accrights = cast(cattr_t) recvfd;
-		//msg.msg_accrightslen = int.sizeof;
-	} else version(Android) {
-	} else {
-		union ControlUnion {
-			cmsghdr cm;
-			char[CMSG_SPACE(int.sizeof)] control;
-		}
-		ControlUnion control_un;
-		cmsghdr* cmptr;
-
-		msg.msg_control = control_un.control.ptr;
-		msg.msg_controllen = control_un.control.length;
-	}
-
-	msg.msg_name = null;
-	msg.msg_namelen = 0;
-
-	iov[0].iov_base = ptr;
-	iov[0].iov_len = nbytes;
-	msg.msg_iov = iov.ptr;
-	msg.msg_iovlen = 1;
-
-	if ( (n = recvmsg(fd, &msg, 0)) <= 0)
-		return n;
-
-	version(OSX) {
-		//if(msg.msg_accrightslen != int.sizeof)
-			//*recvfd = -1;
-	} else version(Android) {
-	} else {
-		if ( (cmptr = CMSG_FIRSTHDR(&msg)) != null &&
-				cmptr.cmsg_len == CMSG_LEN(int.sizeof)) {
-			if (cmptr.cmsg_level != SOL_SOCKET)
-				throw new Exception("control level != SOL_SOCKET");
-			if (cmptr.cmsg_type != SCM_RIGHTS)
-				throw new Exception("control type != SCM_RIGHTS");
-			*recvfd = *(cast(int *) CMSG_DATA(cmptr));
-		} else
-			*recvfd = -1;       /* descriptor was not passed */
-	}
-
-	return n;
-}
-/* end read_fd */
-
-
-/*
-	Event source stuff
-
-	The api is:
-
-	sendEvent(string url, string type, string data, int timeout = 60*10);
-
-	attachEventListener(string url, int fd, lastId)
-
-
-	It just sends to all attached listeners, and stores it until the timeout
-	for replaying via lastEventId.
-*/
 
 /*
 	Session process stuff
