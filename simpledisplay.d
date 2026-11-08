@@ -3436,7 +3436,7 @@ class SimpleWindow : CapableOfHandlingNativeEvent, CapableOfBeingDrawnUpon {
 				buffer.ptr,
 				cast(int) buffer.length);
 		} else version(OSXCocoa) {
-			throw new NotYetImplementedException();
+			//throw new NotYetImplementedException();
 		} else version(Emscripten) {
 			throw new NotYetImplementedException();
 		} else static assert(0);
@@ -4646,40 +4646,7 @@ struct EventLoop {
 	__gshared static EventLoopImpl* impl;
 }
 
-version(linux)
-	void delegate(int, int) globalHupHandler;
-
-version(Posix)
-	void makeNonBlocking(int fd) {
-		import fcntl = core.sys.posix.fcntl;
-		auto flags = fcntl.fcntl(fd, fcntl.F_GETFL, 0);
-		if(flags == -1)
-			throw new Exception("fcntl get");
-		flags |= fcntl.O_NONBLOCK;
-		auto s = fcntl.fcntl(fd, fcntl.F_SETFL, flags);
-		if(s == -1)
-			throw new Exception("fcntl set");
-	}
-
 struct EventLoopImpl {
-	int refcount;
-
-	bool notExited = true;
-
-	version(Emscripten) {
-		static import unix = core.sys.posix.unistd;
-		static import err = core.stdc.errno;
-	} else
-	version(linux) {
-		static import ep = core.sys.linux.epoll;
-		static import unix = core.sys.posix.unistd;
-		static import err = core.stdc.errno;
-		import core.sys.linux.timerfd;
-	}
-	else
-	version(Posix) {
-		static import unix = core.sys.posix.unistd;
-	}
 
 	/// "Lock" this window handle, to do multithreaded synchronization. You probably won't need
 	/// to call this, as it's not recommended to share window between threads.
@@ -4700,14 +4667,168 @@ struct EventLoopImpl {
 		}
 	}
 
-	Timer pulser;
+	private int refcount;
+	private bool notExited = true;
+
+	private Timer pulser;
+	private static bool loopInitialized = false;
+
+	private bool disposed = true;
+
+	private ICoreEventLoop.UnregisterToken[] unregisters;
+
+	private long pulseTimeout;
+	private void delegate() handlePulse;
+
+	this(long pulseTimeout, void delegate() handlePulse) {
+		this.pulseTimeout = pulseTimeout;
+		this.handlePulse = handlePulse;
+		initialize(pulseTimeout);
+	}
+
+	~this() {
+		dispose();
+	}
 
 	void initialize(long pulseTimeout) @system {
 		if(pulseTimeout && handlePulse !is null)
 			pulser = new Timer(cast(int) pulseTimeout, handlePulse);
 
+		if(!loopInitialized) {
+			import arsd.core;
+			auto el = getThisThreadEventLoop(EventLoopType.Ui);
+
+			version(X11) {
+				unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
+
+				if(XDisplayConnection.get.fd != -1)
+				unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
+					this.mtLock();
+					scope(exit) this.mtUnlock();
+					bool done = false;
+					while(!done && XPending(display)) {
+						done = doXNextEvent(this.display);
+					}
+				}));
+
+				// FIXME hup? we could viably detach from the tty
+			} else
+			version(Windows) {
+				unregisters ~= el.addDelegateOnLoopIteration(function bool() { eventLoopRound++; return false; });
+			} else
+			version (OSXCocoa) {
+				NSApp.run(); // this will exit once things are initialized by the system, then the arsd.core event pump can take over
+			}
+
+			el.setSdpyTimeout(&SimpleWindow.eventAllQueueTimeoutMSecs);
+			unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
+
+			loopInitialized = true;
+		}
+
+
+		SimpleWindow.processAllCustomEvents(); // process events added before loop creation
+
+		version(Posix) {
+			this.mtLock();
+			scope(exit) this.mtUnlock();
+			version(X11)
+				XPending(display); // no, really
+		}
+
+		disposed = false;
+	}
+
+	void dispose() @system {
+		disposed = true;
+		loopInitialized = false;
+
+		foreach(urt; unregisters)
+			urt.unregister();
+		unregisters = null;
+
+		if(pulser) {
+			pulser.destroy();
+			pulser = null;
+		}
+	}
+
+	version(X11) {
+		bool doXPending(ref bool didAnything) {
+			bool done = false;
+
+			this.mtLock();
+			scope(exit) this.mtUnlock();
+			//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
+			while(!done && XPending(display)) {
+				done = doXNextEvent(this.display);
+				didAnything = true;
+			}
+
+			return done;
+		}
+		bool doXNextEventReturningDidAnything() {
+			bool didAnything;
+			doXPending(didAnything);
+			return didAnything;
+		}
+	}
+
+	int run(bool delegate() whileCondition = null) {
+		if(disposed)
+			initialize(this.pulseTimeout);
+
+		try {
+			version(X11) {
+				try {
+					return loopHelper(whileCondition);
+				} catch(XDisconnectException e) {
+					if(e.userRequested) {
+						foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
+							item.discardConnectionState();
+						XCloseDisplay(XDisplayConnection.display);
+					}
+
+					XDisplayConnection.display = null;
+
+					this.dispose();
+
+					throw e;
+				}
+			} else {
+				return loopHelper(whileCondition);
+			}
+		} catch(Throwable t) {
+			if(whileCondition is null)
+				getThisThreadEventLoop.exitApplication(); // if the ui thread is dying with nobody else waiting on it, we want the program to die along with it
+			throw t;
+		}
+	}
+
+
+	int loopHelper(bool delegate() whileCondition) {
+		import arsd.core;
+		auto el = getThisThreadEventLoop(EventLoopType.Ui);
+
+		version(X11) {
+			XFlush(display);
+			insideXEventLoop = true;
+			scope(exit) insideXEventLoop = false;
+		}
+
+		if(whileCondition)
+			el.run(() => !whileCondition());
+		else
+			el.run();
+
+		return 0;
+	}
+			/+
+		// this is all old code that i don't need anymore but might be useful to refer to later
+
 		version(none) {
 			/+
+			import core.sys.linux.timerfd;
 			if(pulseTimeout && handlePulse !is null) {
 				pulseFd = timerfd_create(CLOCK_MONOTONIC, 0);
 				if(pulseFd == -1)
@@ -4753,125 +4874,7 @@ struct EventLoopImpl {
 
 
 
-		if(!loopInitialized) {
-			import arsd.core;
-			auto el = getThisThreadEventLoop(EventLoopType.Ui);
 
-			version(X11) {
-				unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
-
-				if(XDisplayConnection.get.fd != -1)
-				unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
-					this.mtLock();
-					scope(exit) this.mtUnlock();
-					bool done = false;
-					while(!done && XPending(display)) {
-						done = doXNextEvent(this.display);
-					}
-				}));
-
-				// FIXME: posix fds
-				// FIXME hup?
-			} else
-			version(Windows) {
-				unregisters ~= el.addDelegateOnLoopIteration(function bool() { eventLoopRound++; return false; });
-			} else
-			version (OSXCocoa) {
-				NSApp.run(); // this will exit once things are initialized, then the arsd.core event pump can take over
-			}
-
-			el.getTimeout = &SimpleWindow.eventAllQueueTimeoutMSecs;
-			unregisters ~= el.addDelegateOnLoopIteration(&SimpleWindow.processAllCustomEvents);
-
-			loopInitialized = true;
-		}
-
-
-		SimpleWindow.processAllCustomEvents(); // process events added before loop creation
-
-		version(Posix) {
-			this.mtLock();
-			scope(exit) this.mtUnlock();
-			version(X11)
-				XPending(display); // no, really
-		}
-
-		disposed = false;
-	}
-
-	bool disposed = true;
-
-	ICoreEventLoop.UnregisterToken[] unregisters;
-
-	void dispose() @system {
-		disposed = true;
-		loopInitialized = false;
-
-		foreach(urt; unregisters)
-			urt.unregister();
-		unregisters = null;
-
-		if(pulser) {
-			pulser.destroy();
-			pulser = null;
-		}
-	}
-
-	this(long pulseTimeout, void delegate() handlePulse) {
-		this.pulseTimeout = pulseTimeout;
-		this.handlePulse = handlePulse;
-		initialize(pulseTimeout);
-	}
-
-	private long pulseTimeout;
-	void delegate() handlePulse;
-
-	~this() {
-		dispose();
-	}
-
-	version(X11) {
-		bool doXPending(ref bool didAnything) {
-			bool done = false;
-
-			this.mtLock();
-			scope(exit) this.mtUnlock();
-			//{ import core.stdc.stdio; printf("*** queued: %d\n", XEventsQueued(this.display, QueueMode.QueuedAlready)); }
-			while(!done && XPending(display)) {
-				done = doXNextEvent(this.display);
-				didAnything = true;
-			}
-
-			return done;
-		}
-		bool doXNextEventReturningDidAnything() {
-			bool didAnything;
-			doXPending(didAnything);
-			return didAnything;
-		}
-	}
-
-	static bool loopInitialized = false;
-
-	int loopHelper(bool delegate() whileCondition) {
-		import arsd.core;
-		auto el = getThisThreadEventLoop(EventLoopType.Ui);
-
-		version(X11) {
-			bool done = false;
-
-			XFlush(display);
-			insideXEventLoop = true;
-			scope(exit) insideXEventLoop = false;
-		}
-
-		if(whileCondition)
-			el.run(() => !whileCondition());
-		else
-			el.run();
-
-		return 0;
-			/+
 			version(OSXCocoa) {
 				if (handlePulse !is null && pulseTimeout != 0) {
 					NSTimer timer = NSTimer.schedule(pulseTimeout*1e-3,
@@ -5009,32 +5012,6 @@ struct EventLoopImpl {
 				}
 			}
 			+/
-	}
-
-	int run(bool delegate() whileCondition = null) {
-		if(disposed)
-			initialize(this.pulseTimeout);
-
-		version(X11) {
-			try {
-				return loopHelper(whileCondition);
-			} catch(XDisconnectException e) {
-				if(e.userRequested) {
-					foreach(item; CapableOfHandlingNativeEvent.nativeHandleMapping)
-						item.discardConnectionState();
-					XCloseDisplay(XDisplayConnection.display);
-				}
-
-				XDisplayConnection.display = null;
-
-				this.dispose();
-
-				throw e;
-			}
-		} else {
-			return loopHelper(whileCondition);
-		}
-	}
 }
 
 
@@ -15130,7 +15107,7 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 		}
 
-		static void unregisterImage (Image img) {
+		static void unregisterImage (void* img) {
 			if (!imglistLocked && img !is null) {
 				import core.stdc.stdlib : free;
 				ImgList* prev = null;
@@ -15391,11 +15368,11 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 			}
 		}
 
-		void dispose() {
+		static void staticDispose(void* toPassToUnregister, XImage* handle, bool usingXshm, XShmSegmentInfo shminfo) {
 			// note: this calls free(rawData) for us
 			if(handle) {
 				if (usingXshm) {
-					XDisplayConnection.unregisterImage(this);
+					XDisplayConnection.unregisterImage(toPassToUnregister);
 					if (XDisplayConnection.get()) XShmDetach(XDisplayConnection.get(), &shminfo);
 				}
 				XDestroyImage(handle);
@@ -15405,6 +15382,21 @@ mixin DynamicLoad!(XRandr, "Xrandr", 2, XRandrLibrarySuccessfullyLoaded) XRandrL
 				}
 				handle = null;
 			}
+
+		}
+
+		void dispose() {
+			/+
+				import core.memory;
+				import core.stdc.stdio;
+				if(core.memory.GC.inFinalizer)
+					printf("triggered\n");
+			+/
+
+			// this must be run on the gui thread or else it might hit a deadlock w/ the X connection
+			if(handle)
+				cleanupQueue.queue!staticDispose(cast(void*) this, handle, usingXshm, shminfo);
+			handle = null;
 		}
 
 		Color getPixel(int x, int y) @system {
