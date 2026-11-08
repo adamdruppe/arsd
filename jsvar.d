@@ -1243,7 +1243,12 @@ struct var {
 				static if(__traits(compiles, to!T(this._payload._string))) {
 					try {
 						return to!T(this._payload._string);
-					} catch (Exception e) { return T.init; }
+					} catch (Exception e) {
+						static if(is(T == double) || is(T == float))
+							return T.nan;
+						else
+							return T.init;
+					}
 				} else
 					return T.init;
 			case Type.Array:
@@ -1310,12 +1315,26 @@ struct var {
 		return this.get!T;
 	}
 
+	public int opCmp(T:string)(T t) {
+		import std.string;
+		auto f = this.get!string;
+		auto r = t;
+		return cmp(f, r);
+	}
+
 	public double opCmp(T)(T t) {
+		static if(is(T == var))
+		if(this._type == Type.String && t._type == Type.String) {
+			import std.string;
+			return cmp(this.get!string, t.get!string);
+		}
+
 		auto f = this.get!double;
 		static if(is(T == var))
 			auto r = t.get!double;
 		else
 			auto r = t;
+		// FIXME: what if they're both runtime strings?
 		return f - r;
 	}
 
@@ -3036,6 +3055,20 @@ unittest {
 	a = A(5, nullable(4));
 	assert(a.a == 5);
 	assert(a.b == 4);
+}
+
+unittest {
+	var a = 4;
+	var b = 3;
+	assert(b < a);
+	a = "a";
+	b = "b";
+	assert(a < b);
+	assert(a < "b");
+
+	// this is weird but if comparing to a number it should be NaN on conversion failure and thus never compare...
+	assert(!(a < 4));
+	assert(!(a >= 4));
 }
 
 bool appearsNumeric(string n) {
