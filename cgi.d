@@ -673,8 +673,7 @@ version(with_addon_servers)
 
 
 version(cgi_no_fiber) {} else {
-	version(Windows) version=cgi_use_fiber;
-	version(linux) version=cgi_use_fiber;
+	version=cgi_use_fiber;
 }
 
 version(embedded_httpd) {
@@ -3577,17 +3576,31 @@ struct RequestServer {
 	+/
 	this(string[] listenTo) {
 		this.listenSpec = listenTo;
+		init();
 	}
 
 	/// Creates a server object configured to listen on a single host and port.
 	this(string defaultHost, ushort defaultPort) {
 		this.listeningHost = defaultHost;
 		this.listeningPort = defaultPort;
+		init();
 	}
 
 	/// ditto
 	this(ushort defaultPort) {
 		listeningPort = defaultPort;
+		init();
+	}
+
+	private void init() {
+		version(Windows) {
+			if(this.iocp)
+				return;
+			arsd.core.getThisThreadEventLoop();
+			arsd.core.CoreWorkerThread.ensureSetup();
+			this.iocp = (cast(arsd.core.CoreEventLoopImplementation) arsd.core.getThisThreadEventLoop()).runInTaskRunnerQueue.iocp;
+			//arsd.core.writeln("initialized ", cast(void*) this.iocp);
+		}
 	}
 
 	/++
@@ -3715,7 +3728,7 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(&this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
 		auto connection = socket.accept();
 		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection, &this);
 
@@ -3731,7 +3744,7 @@ struct RequestServer {
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(&this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
+		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1, &dropPrivileges);
 		auto connection = socket.accept();
 		doThreadHttpConnectionGuts!(CustomCgi, fun, true)(connection, &this);
 
@@ -3748,6 +3761,7 @@ struct RequestServer {
 		Starts serving requests according to the current configuration.
 	+/
 	void serve(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
+		init();
 		version(netman_httpd) {
 			// Obsolete!
 
@@ -3813,6 +3827,7 @@ struct RequestServer {
 					writeln("If you need FastCGI, you can listen with fcgi:// but note it requires the C fcgi library available in your dynamic load path.");
 					writeln();
 					writeln("Learn more at https://opendlang.org/library/arsd.cgi.html#Command-line-interface");
+					arsd.core.getThisThreadEventLoop.exitApplication();
 				}
 			}
 		}
@@ -4526,55 +4541,370 @@ void handleCgiRequest(alias fun, CustomCgi = Cgi, long maxContentLength = defaul
 version(cgi_use_fiber)
 __gshared size_t fiberStackSize = 4096 * 100;
 
+
+class FiberCapableCgiSocket : Socket {
+	version(Windows) {
+		SOCKET handle;
+
+		DWORD lastAnswer;
+		ubyte[1024] scratchBuffer;
+		static assert(scratchBuffer.length > sockaddr_in.sizeof * 2 + 32);
+
+		WSABUF[1] buffer;
+		OVERLAPPED overlapped;
+
+		override void blocking(bool) {} // meaningless to us, just ignore it.
+
+		void associateIocp(arsd.core.CallbackHelper cb) {
+			auto iocp = arsd.core.Win32Enforce!CreateIoCompletionPort(cast(HANDLE) handle, requestServer.iocp, cast(ULONG_PTR) cast(void*) cb, 0);
+		}
+
+		__gshared static typeof(&GetAcceptExSockaddrs) lpfnGetAcceptExSockaddrs;
+
+		bool addressesParsed;
+		Address la;
+		Address ra;
+
+		private void populateAddresses() {
+			if(addressesParsed)
+				return;
+			addressesParsed = true;
+
+			int lalen, ralen;
+
+			sockaddr_in* la;
+			sockaddr_in* ra;
+
+			lpfnGetAcceptExSockaddrs(
+				scratchBuffer.ptr,
+				0, // same as in the AcceptEx call!
+				sockaddr_in.sizeof + 16,
+				sockaddr_in.sizeof + 16,
+				cast(sockaddr**) &la,
+				&lalen,
+				cast(sockaddr**) &ra,
+				&ralen
+			);
+
+			if(la)
+				this.la = new InternetAddress(*la);
+			if(ra)
+				this.ra = new InternetAddress(*ra);
+
+		}
+
+		override @property @trusted Address localAddress() {
+			populateAddresses();
+			return la;
+		}
+		override @property @trusted Address remoteAddress() {
+			populateAddresses();
+			return ra;
+		}
+	}
+
+	CgiFiber fiber_;
+	CgiFiber fiber() { return fiber_; }
+	void fiber(CgiFiber f) {
+		fiber_ = f;
+		version(Windows) {
+			associateIocp(f.callbackHelper);
+		}
+
+	}
+	RequestServer* requestServer;
+
+	this(RequestServer* requestServer, AddressFamily af, SocketType socketType) {
+		assert(requestServer !is null);
+		this.requestServer = requestServer;
+
+		version(Windows) {
+			if(requestServer.actuallyUseFiber) {
+				auto handle = WSASocketW(af, socketType, 0, null, 0, 1 /*WSA_FLAG_OVERLAPPED*/);
+				if(!handle)
+					throw new Exception("WSASocketW");
+				this.handle = handle;
+
+				super(cast(socket_t) handle, af);
+			} else {
+				super(af, socketType);
+			}
+		} else {
+			super(af, socketType);
+		}
+	}
+
+	version(Windows)
+	this(SOCKET handle, AddressFamily af) {
+		super(cast(socket_t) handle, af);
+	}
+
+	this() pure @safe nothrow {}
+
+	// cgi.d only receives connections, it never makes them, so this is ok
+	override void connect(Address to) { assert(0); }
+
+	// I might go back and implement these for udp things.
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags, ref Address from) @trusted {
+		assert(0);
+	}
+	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags) @trusted {
+		assert(0);
+	}
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags, Address to) @trusted {
+		assert(0);
+	}
+	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags) @trusted {
+		assert(0);
+	}
+
+}
+
+class ListeningSocket : FiberCapableCgiSocket {
+	bool actuallyUseFiber;
+	arsd.core.CallbackHelper callbackHelper;
+	ListeningConnectionManager lcm;
+	AddressFamily af;
+	SocketType socketType;
+
+	this(ListeningConnectionManager lcm, RequestServer* requestServer, AddressFamily af, SocketType type) {
+		this.af = af;
+		this.socketType = type;
+		this.lcm = lcm;
+		version(cgi_use_fiber)
+		if(lcm && requestServer && requestServer.actuallyUseFiber) {
+			actuallyUseFiber = true;
+
+		}
+		super(requestServer, af, type);
+		version(Windows) {
+			this.callbackHelper = new arsd.core.CallbackHelper(&acceptComplete);
+			associateIocp(this.callbackHelper);
+		}
+	}
+
+	version(Windows)
+	void acceptComplete() {
+		// we have a new connection, issue the first receive on it and issue the next accept
+		assert(lcm);
+
+		auto sn = this.accepted;
+
+		this.accept(); // kick off another get
+
+		cloexec(sn);
+		if(lcm.tcp) {
+			// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+			// on the socket because we do some buffering internally. I think this helps,
+			// certainly does for small requests, and I think it does for larger ones too
+			sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+
+			sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(10));
+		}
+
+		lcm.handler(sn, requestServer);
+	}
+
+	override CgiSocket accept() @trusted {
+		version(Windows)
+		if(actuallyUseFiber) {
+			__gshared static LPFN_ACCEPTEX lpfnAcceptEx;
+
+			synchronized(typeid(this))
+			if(lpfnAcceptEx is null) {
+				DWORD dwBytes;
+				GUID GuidAcceptEx = WSAID_ACCEPTEX;
+
+				auto iResult = WSAIoctl(handle, 0xc8000006 /*SIO_GET_EXTENSION_FUNCTION_POINTER*/,
+						&GuidAcceptEx, GuidAcceptEx.sizeof,
+						&lpfnAcceptEx, lpfnAcceptEx.sizeof,
+						&dwBytes, null, null);
+
+				GuidAcceptEx = WSAID_GETACCEPTEXSOCKADDRS;
+				iResult = WSAIoctl(handle, 0xc8000006 /*SIO_GET_EXTENSION_FUNCTION_POINTER*/,
+						&GuidAcceptEx, GuidAcceptEx.sizeof,
+						&lpfnGetAcceptExSockaddrs, lpfnGetAcceptExSockaddrs.sizeof,
+						&dwBytes, null, null);
+
+			}
+
+			auto nh = WSASocketW(af, socketType, 0, null, 0, 1 /*WSA_FLAG_OVERLAPPED*/);
+			auto pfa = new CgiSocket(nh, this.addressFamily);
+			pfa.handle = nh;
+			pfa.requestServer = requestServer;
+			accepted = pfa;
+
+			SOCKET pendingForAccept = pfa.handle;
+			DWORD ignored;
+
+			auto ret = lpfnAcceptEx(
+				handle,
+				pendingForAccept,
+				// buffer to receive up front
+				pfa.scratchBuffer.ptr,
+				0,
+				// size of local and remote addresses. normally + 16.
+				sockaddr_in.sizeof + 16,
+				sockaddr_in.sizeof + 16,
+				&ignored, // bytes would be given through the iocp instead but im not even requesting the thing
+				&overlapped
+			);
+			if(!ret) {
+				auto error = GetLastError();
+				if(error != 997)
+					throw new arsd.core.WindowsApiException("AcceptEx", error);
+			}
+
+			return pfa;
+		}
+
+		auto cgis = cast(CgiSocket) super.accept();
+		cgis.register();
+		return cgis;
+	}
+
+	protected override Socket accepting() {
+		return new CgiSocket();
+	}
+
+	version(Windows) {
+		CgiSocket accepted;
+	}
+}
+
+class CgiSocket : FiberCapableCgiSocket {
+	this() pure @safe nothrow {}
+
+	version(Windows)
+	this(SOCKET handle, AddressFamily af) {
+		super(handle, af);
+	}
+
+	version(cgi_use_fiber)
+	arsd.core.ICoreEventLoop.UnregisterToken token;
+
+	void register() {
+		version(cgi_use_fiber)
+		version(Posix)
+		token = arsd.core.getThisThreadEventLoop().registerFd(this.handle);
+	}
+
+	version(cgi_use_fiber)
+	void yieldUntilReadable() {
+		version(Posix)
+		if(auto controller = arsd.core.inSchedulableTask)
+			controller.yieldWithUserDefinedWakeup((task) {
+				token.subscribeToEvents(true, false, false, task.callbackHelper);
+			});
+	}
+
+	version(cgi_use_fiber)
+	void yieldUntilWritable() {
+		version(Posix)
+		if(auto controller = arsd.core.inSchedulableTask)
+			controller.yieldWithUserDefinedWakeup((task) {
+				token.subscribeToEvents(false, true, false, task.callbackHelper);
+			});
+	}
+
+	override void close() scope nothrow @nogc @trusted {
+		(cast(void delegate() @nogc nothrow scope @trusted) &closeLol)();
+	}
+
+	void closeLol() {
+		version(Posix)
+		version(cgi_use_fiber)
+		if(token) {
+			token.unregister();
+			token = typeof(token).init;
+		}
+		super.close();
+	}
+
+	protected override Socket accepting() pure nothrow {
+		assert(0);
+	}
+
+	version(Windows) {
+		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) @trusted {
+			overlapped = overlapped.init;
+			buffer[0].len = cast(DWORD) buf.length;
+			buffer[0].buf = cast(ubyte*) buf.ptr;
+			if(auto controller = arsd.core.inSchedulableTask)
+			controller.yieldWithUserDefinedWakeup( (task) {
+				if(SOCKET_ERROR == WSASend(handle, buffer.ptr, cast(DWORD) buffer.length, null, 0, &overlapped, null)) {
+					auto error = GetLastError();
+					if(error != 997 && error != 0) {
+						throw new arsd.core.WindowsApiException("WSASend", error);
+					}
+				}
+			});
+			else assert(0);
+
+			lastAnswer = cast(DWORD) overlapped.hEvent;
+
+			return lastAnswer;
+		}
+		override ptrdiff_t receive(scope void[] buf, SocketFlags flags) @trusted {
+			overlapped = overlapped.init;
+			buffer[0].len = cast(DWORD) buf.length;
+			buffer[0].buf = cast(ubyte*) buf.ptr;
+
+			DWORD flags2 = 0;
+
+			if(auto controller = arsd.core.inSchedulableTask)
+			controller.yieldWithUserDefinedWakeup( (task) {
+				if(SOCKET_ERROR == WSARecv(handle, buffer.ptr, cast(DWORD) buffer.length, null, &flags2 /* flags */, &overlapped, null)) {
+					auto error = GetLastError();
+					if(error != 997 && error != 0) {
+						throw new arsd.core.WindowsApiException("WSARecv", error);
+						//writeln("WSARecv ", WSAGetLastError());
+						//throw new Exception("WSARecv fail");
+					}
+				}
+			});
+			else assert(0);
+
+			lastAnswer = cast(DWORD) overlapped.hEvent;
+
+			return lastAnswer;
+		}
+
+		// lol overload sets
+		alias send = typeof(super).send;
+		alias receive = typeof(super).receive;
+		alias sendTo = typeof(super).sendTo;
+		alias receiveFrom = typeof(super).receiveFrom;
+	}
+}
+
 version(cgi_use_fiber)
-class CgiFiber : Fiber {
+class CgiFiber : arsd.core.SchedulableTask {
 	private RequestServer* rs;
-	private void function(Socket, RequestServer*) f_handler;
-	private void f_handler_dg(Socket s, RequestServer* rs) { // to avoid extra allocation w/ function
+	private void function(CgiSocket, RequestServer*) f_handler;
+
+	CgiSocket connection;
+	void delegate(CgiSocket, RequestServer*) handler;
+
+	private void f_handler_dg(CgiSocket s, RequestServer* rs) { // to avoid extra allocation w/ function
 		f_handler(s, rs);
 	}
-	this(RequestServer* rs, void function(Socket, RequestServer*) handler) {
+	this(RequestServer* rs, void function(CgiSocket, RequestServer*) handler) {
 		this.f_handler = handler;
 		this(rs, &f_handler_dg);
 	}
 
-	this(RequestServer* rs, void delegate(Socket, RequestServer*) handler) {
+	this(RequestServer* rs, void delegate(CgiSocket, RequestServer*) handler) {
 		this.rs = rs;
 		this.handler = handler;
 		super(&run, fiberStackSize);
 	}
 
-	Socket connection;
-	void delegate(Socket, RequestServer*) handler;
-
 	void run() {
-		handler(connection, rs);
-	}
-
-	void delegate() postYield;
-
-	private void setPostYield(scope void delegate() py) @nogc {
-		postYield = cast(void delegate()) py;
-	}
-
-	void proceed() {
-		try {
-			call();
-			auto py = postYield;
-			postYield = null;
-			if(py !is null)
-				py();
-		} catch(Exception e) {
+		scope(failure)
 			if(connection)
 				connection.close();
-			goto terminate;
-		}
-
-		if(state == State.TERM) {
-			terminate:
-			import core.memory;
-			GC.removeRoot(cast(void*) this);
-		}
+		handler(connection, rs);
 	}
 }
 
@@ -4627,203 +4957,17 @@ extern(Windows) private {
 	enum WSAID_GETACCEPTEXSOCKADDRS = GUID(0xb5367df2,0xcbac,0x11cf,[0x95,0xca,0x00,0x80,0x5f,0x48,0xa1,0x92]);
 }
 
-private class PseudoblockingOverlappedSocket : Socket {
-	SOCKET handle;
-
-	CgiFiber fiber;
-	RequestServer* requestServer;
-
-	this(RequestServer* requestServer, AddressFamily af, SocketType st) {
-		assert(requestServer !is null);
-		this.requestServer = requestServer;
-		auto handle = WSASocketW(af, st, 0, null, 0, 1 /*WSA_FLAG_OVERLAPPED*/);
-		if(!handle)
-			throw new Exception("WSASocketW");
-		this.handle = handle;
-
-		requestServer.iocp = CreateIoCompletionPort(cast(HANDLE) handle, requestServer.iocp, cast(ULONG_PTR) cast(void*) this, 0);
-
-		if(requestServer.iocp is null) {
-			writeln(GetLastError());
-			throw new Exception("CreateIoCompletionPort");
-		}
-
-		super(cast(socket_t) handle, af);
-	}
-	this() pure nothrow @trusted { assert(0); }
-
-	override void blocking(bool) {} // meaningless to us, just ignore it.
-
-	protected override Socket accepting() pure nothrow {
-		assert(0);
-	}
-
-	bool addressesParsed;
-	Address la;
-	Address ra;
-
-	private void populateAddresses() {
-		if(addressesParsed)
-			return;
-		addressesParsed = true;
-
-		int lalen, ralen;
-
-		sockaddr_in* la;
-		sockaddr_in* ra;
-
-		lpfnGetAcceptExSockaddrs(
-			scratchBuffer.ptr,
-			0, // same as in the AcceptEx call!
-			sockaddr_in.sizeof + 16,
-			sockaddr_in.sizeof + 16,
-			cast(sockaddr**) &la,
-			&lalen,
-			cast(sockaddr**) &ra,
-			&ralen
-		);
-
-		if(la)
-			this.la = new InternetAddress(*la);
-		if(ra)
-			this.ra = new InternetAddress(*ra);
-
-	}
-
-	override @property @trusted Address localAddress() {
-		populateAddresses();
-		return la;
-	}
-	override @property @trusted Address remoteAddress() {
-		populateAddresses();
-		return ra;
-	}
-
-	PseudoblockingOverlappedSocket accepted;
-
-	__gshared static typeof(&GetAcceptExSockaddrs) lpfnGetAcceptExSockaddrs;
-
-	override Socket accept() @trusted {
-		__gshared static LPFN_ACCEPTEX lpfnAcceptEx;
-
-		synchronized(typeid(this))
-		if(lpfnAcceptEx is null) {
-			DWORD dwBytes;
-			GUID GuidAcceptEx = WSAID_ACCEPTEX;
-
-			auto iResult = WSAIoctl(handle, 0xc8000006 /*SIO_GET_EXTENSION_FUNCTION_POINTER*/,
-					&GuidAcceptEx, GuidAcceptEx.sizeof,
-					&lpfnAcceptEx, lpfnAcceptEx.sizeof,
-					&dwBytes, null, null);
-
-			GuidAcceptEx = WSAID_GETACCEPTEXSOCKADDRS;
-			iResult = WSAIoctl(handle, 0xc8000006 /*SIO_GET_EXTENSION_FUNCTION_POINTER*/,
-					&GuidAcceptEx, GuidAcceptEx.sizeof,
-					&lpfnGetAcceptExSockaddrs, lpfnGetAcceptExSockaddrs.sizeof,
-					&dwBytes, null, null);
-
-		}
-
-		auto pfa = new PseudoblockingOverlappedSocket(requestServer, AddressFamily.INET, SocketType.STREAM);
-		accepted = pfa;
-
-		SOCKET pendingForAccept = pfa.handle;
-		DWORD ignored;
-
-		auto ret = lpfnAcceptEx(handle,
-			pendingForAccept,
-			// buffer to receive up front
-			pfa.scratchBuffer.ptr,
-			0,
-			// size of local and remote addresses. normally + 16.
-			sockaddr_in.sizeof + 16,
-			sockaddr_in.sizeof + 16,
-			&ignored, // bytes would be given through the iocp instead but im not even requesting the thing
-			&overlapped
-		);
-
-		return pfa;
-	}
-
-	override void connect(Address to) { assert(0); }
-
-	DWORD lastAnswer;
-	ubyte[1024] scratchBuffer;
-	static assert(scratchBuffer.length > sockaddr_in.sizeof * 2 + 32);
-
-	WSABUF[1] buffer;
-	OVERLAPPED overlapped;
-	override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) @trusted {
-		overlapped = overlapped.init;
-		buffer[0].len = cast(DWORD) buf.length;
-		buffer[0].buf = cast(ubyte*) buf.ptr;
-		fiber.setPostYield( () {
-			if(!WSASend(handle, buffer.ptr, cast(DWORD) buffer.length, null, 0, &overlapped, null)) {
-				if(GetLastError() != 997) {
-					//throw new Exception("WSASend fail");
-				}
-			}
-		});
-
-		Fiber.yield();
-		return lastAnswer;
-	}
-	override ptrdiff_t receive(scope void[] buf, SocketFlags flags) @trusted {
-		overlapped = overlapped.init;
-		buffer[0].len = cast(DWORD) buf.length;
-		buffer[0].buf = cast(ubyte*) buf.ptr;
-
-		DWORD flags2 = 0;
-
-		fiber.setPostYield(() {
-			if(!WSARecv(handle, buffer.ptr, cast(DWORD) buffer.length, null, &flags2 /* flags */, &overlapped, null)) {
-				if(GetLastError() != 997) {
-					//writeln("WSARecv ", WSAGetLastError());
-					//throw new Exception("WSARecv fail");
-				}
-			}
-		});
-
-		Fiber.yield();
-		return lastAnswer;
-	}
-
-	// I might go back and implement these for udp things.
-	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags, ref Address from) @trusted {
-		assert(0);
-	}
-	override ptrdiff_t receiveFrom(scope void[] buf, SocketFlags flags) @trusted {
-		assert(0);
-	}
-	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags, Address to) @trusted {
-		assert(0);
-	}
-	override ptrdiff_t sendTo(scope const(void)[] buf, SocketFlags flags) @trusted {
-		assert(0);
-	}
-
-	// lol overload sets
-	alias send = typeof(super).send;
-	alias receive = typeof(super).receive;
-	alias sendTo = typeof(super).sendTo;
-	alias receiveFrom = typeof(super).receiveFrom;
-
-}
 }
 
-void doThreadHttpConnection(CustomCgi, alias fun)(Socket connection, RequestServer* rs) {
+void doThreadHttpConnection(CustomCgi, alias fun)(CgiSocket connection, RequestServer* rs) {
 	assert(connection !is null);
 	version(cgi_use_fiber) {
 		auto fiber = new CgiFiber(rs, &doThreadHttpConnectionGuts!(CustomCgi, fun));
 
-		version(Windows) {
-			(cast(PseudoblockingOverlappedSocket) connection).fiber = fiber;
-		}
+		connection.fiber = fiber;
 
-		import core.memory;
-		GC.addRoot(cast(void*) fiber);
 		fiber.connection = connection;
-		fiber.proceed();
+		fiber.runOnThisThread();
 	} else {
 		doThreadHttpConnectionGuts!(CustomCgi, fun)(connection, rs);
 	}
@@ -4947,7 +5091,7 @@ struct HeaderCollection {
 }
 +/
 
-void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(Socket connection, RequestServer* requestServer) {
+void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection = false)(CgiSocket connection, RequestServer* requestServer) {
 	scope(failure) {
 		// catch all for other errors
 		try {
@@ -5072,7 +5216,7 @@ void doThreadHttpConnectionGuts(CustomCgi, alias fun, bool alwaysCloseConnection
 	// I am otherwise NOT closing it here because the parent thread might still be able to make use of the keep-alive connection!
 }
 
-void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(Socket connection, RequestServer* requestServer) {
+void doThreadScgiConnection(CustomCgi, alias fun, long maxContentLength)(CgiSocket connection, RequestServer* requestServer) {
 	// and now we can buffer
 	scope(failure)
 		connection.close();
@@ -5348,82 +5492,11 @@ version(all /* fastcgi */) {
 
 import std.socket;
 
-version(cgi_use_fiber) {
-	import core.thread;
-
-	version(linux) {
-		import core.sys.linux.epoll;
-
-		int epfd = -1; // thread local because EPOLLEXCLUSIVE works much better this way... weirdly.
-	} else version(Windows) {
-		// declaring the iocp thing below...
-	} else static assert(0, "The hybrid fiber server is not implemented on your OS.");
-}
-
-version(cgi_use_fiber) {
-	version(linux)
-	private enum WakeupEvent {
-		Read = EPOLLIN,
-		Write = EPOLLOUT
-	}
-	else version(Windows)
-	private enum WakeupEvent {
-		Read, Write
-	}
-	else static assert(0);
-}
-
-version(cgi_use_fiber)
-private void registerEventWakeup(bool* registered, Socket source, WakeupEvent e) @nogc {
-	// static cast since I know what i have in here and don't want to pay for dynamic cast
-	auto f = cast(CgiFiber) cast(void*) Fiber.getThis();
-
-	version(linux) {
-		f.setPostYield = () {
-			if(*registered) {
-				// rearm
-				epoll_event evt;
-				evt.events = e | EPOLLONESHOT;
-				evt.data.ptr = cast(void*) f;
-				if(epoll_ctl(epfd, EPOLL_CTL_MOD, source.handle, &evt) == -1)
-					throw new Exception("epoll_ctl");
-			} else {
-				// initial registration
-				*registered = true ;
-				int fd = source.handle;
-				epoll_event evt;
-				evt.events = e | EPOLLONESHOT;
-				evt.data.ptr = cast(void*) f;
-				if(epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &evt) == -1)
-					throw new Exception("epoll_ctl");
-			}
-		};
-
-		Fiber.yield();
-
-		f.setPostYield(null);
-	} else version(Windows) {
-		Fiber.yield();
-	}
-	else static assert(0);
-}
-
-version(cgi_use_fiber)
-void unregisterSource(Socket s) {
-	version(linux) {
-		epoll_event evt;
-		epoll_ctl(epfd, EPOLL_CTL_DEL, s.handle(), &evt);
-	} else version(Windows) {
-		// intentionally blank
-	}
-	else static assert(0);
-}
-
 // it is a class primarily for reference semantics
 // I might change this interface
 /// This is NOT ACTUALLY an input range! It is too different. Historical mistake kinda.
 private class BufferedInputRange {
-	this(RequestServer* requestServer, Socket source, ubyte[] buffer = null, bool allowGrowth = true) {
+	this(RequestServer* requestServer, CgiSocket source, ubyte[] buffer = null, bool allowGrowth = true) {
 		// if they connect but never send stuff to us, we don't want it wasting the process
 		// so setting a time out
 		version(cgi_use_fiber) {
@@ -5451,15 +5524,7 @@ private class BufferedInputRange {
 		popFront(); // prime
 	}
 
-	version(cgi_use_fiber) {
-		bool registered;
-	}
-
 	void dispose() {
-		version(cgi_use_fiber) {
-			if(registered)
-				unregisterSource(source);
-		}
 	}
 
 	/**
@@ -5504,7 +5569,7 @@ private class BufferedInputRange {
 			if(ret == Socket.ERROR) {
 				if(wouldHaveBlocked()) {
 					version(cgi_use_fiber) {
-						registerEventWakeup(&registered, source, WakeupEvent.Read);
+						source.yieldUntilReadable();
 						goto try_again;
 					} else {
 						// gonna treat a timeout here as a close
@@ -5574,15 +5639,15 @@ private class BufferedInputRange {
 	ubyte[] underlyingBuffer;
 	bool allowGrowth;
 	ubyte[] view;
-	Socket source;
+	CgiSocket source;
 	bool sourceClosed;
 }
 
-private class FakeSocketForStdin : Socket {
+private class FakeSocketForStdin : CgiSocket {
 	import std.stdio;
 
 	this() {
-
+		super();
 	}
 
 	private bool closed;
@@ -5649,14 +5714,14 @@ class ListeningConnectionManager {
 	version(D_OpenD) mixin EnableSynchronization;
 
 	Semaphore semaphore;
-	Socket[256] queue;
+	CgiSocket[256] queue;
 	shared(ubyte) nextIndexFront;
 	ubyte nextIndexBack;
 	shared(int) queueLength;
 
 	RequestServer* requestServer;
 
-	Socket acceptCancelable() {
+	CgiSocket acceptCancelable() {
 		version(Posix) {
 			import core.sys.posix.sys.select;
 			fd_set read_fds;
@@ -5764,37 +5829,52 @@ class ListeningConnectionManager {
 			}
 
 			version(cgi_use_fiber) {
-
 				version(Windows) {
 					// please note these are overlapped sockets! so the accept just kicks things off
 					foreach(listener; listeners)
 						listener.accept();
 				}
 
-				WorkerThread[] threads = new WorkerThread[](numberOfThreads);
-				foreach(i, ref thread; threads) {
-					thread = new WorkerThread(this, handler, cast(int) i);
-					thread.start();
-				}
-
-				bool fiber_crash_check() {
-					bool hasAnyRunning;
-					foreach(thread; threads) {
-						if(!thread.isRunning) {
-							thread.join();
-						} else hasAnyRunning = true;
+				auto el = arsd.core.getThisThreadEventLoop();
+				static class RequestServerAnchor {
+					RequestServer* rs;
+					this(RequestServer* rs) {
+						this.rs = rs;
 					}
+				}
+				auto rsa = new RequestServerAnchor(requestServer);
+				el.addAnchor(rsa);
 
-					return (!hasAnyRunning);
+				foreach(listener; listeners) {
+					void upstreamDmdWorkaround(ListeningSocket listener) {
+						void doAccept() {
+							CgiSocket sn;
+							try
+								sn = listener.accept(); // don't need to do the acceptCancelable here since the epoll checks it better
+							catch(SocketAcceptException e) { return; }
+
+							cloexec(sn);
+							if(this.tcp) {
+								// disable Nagle's algorithm to avoid a 40ms delay when we send/recv
+								// on the socket because we do some buffering internally. I think this helps,
+								// certainly does for small requests, and I think it does for larger ones too
+								sn.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, 1);
+
+								sn.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"seconds"(3));
+							}
+
+							this.handler(sn, this.requestServer);
+						}
+
+						arsd.core.CoreWorkerThread.acceptConnectionsAmongstTaskRunners(listener.handle, &doAccept);
+					}
+					upstreamDmdWorkaround(listener);
 				}
 
+				el.run(() => requestServer && requestServer.stopRequested);
 
-				while(requestServer && !requestServer.stopRequested) {
-					Thread.sleep(1.seconds);
-					if(fiber_crash_check())
-						break;
-				}
-
+				el.removeAnchor(rsa);
+				el.exitApplication();
 			} else {
 				semaphore = new Semaphore();
 
@@ -5805,7 +5885,7 @@ class ListeningConnectionManager {
 				}
 
 				while(!loopBroken && !requestServer.stopRequested) {
-					Socket sn;
+					CgiSocket sn;
 
 					bool crash_check() {
 						bool hasAnyRunning;
@@ -5878,8 +5958,8 @@ class ListeningConnectionManager {
 	bool tcp;
 	void delegate() cleanup;
 
-	private void function(Socket, RequestServer*) fhandler;
-	private void dg_handler(Socket s, RequestServer* rs) {
+	private void function(CgiSocket, RequestServer*) fhandler;
+	private void dg_handler(CgiSocket s, RequestServer* rs) {
 		fhandler(s, rs);
 	}
 
@@ -5939,24 +6019,24 @@ class ListeningConnectionManager {
 		return pls;
 	}
 
-	this(RequestServer* requestServer, string[] listenSpec, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		fhandler = handler;
 		this(requestServer, listenSpec, &dg_handler, dropPrivs, useFork, numberOfThreads);
 	}
-	this(RequestServer* requestServer, string[] listenSpec, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] listenSpec, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		auto pls = parseListenSpec(listenSpec);
 
 		this(requestServer, pls.host, pls.port, handler, dropPrivs, useFork, numberOfThreads);
 	}
 
-	this(RequestServer* requestServer, string host, ushort port, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string host, ushort port, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
 	}
-	this(RequestServer* requestServer, string host, ushort port, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string host, ushort port, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		this(requestServer, [host], [port], handler, dropPrivs, useFork, numberOfThreads);
 	}
 
-	this(RequestServer* requestServer, string[] host, ushort[] port, void function(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void function(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		fhandler = handler;
 		this(requestServer, host, port, &dg_handler, dropPrivs, useFork, numberOfThreads);
 	}
@@ -5969,7 +6049,7 @@ class ListeningConnectionManager {
 		}
 	}
 
-	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(Socket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
+	this(RequestServer* requestServer, string[] host, ushort[] port, void delegate(CgiSocket, RequestServer*) handler, void delegate() dropPrivs = null, bool useFork = cgi_use_fork_default, int numberOfThreads = 0) {
 		assert(host.length == port.length);
 
 		this.requestServer = requestServer;
@@ -5984,17 +6064,16 @@ class ListeningConnectionManager {
 		void delegate() cleanupLocal;
 		foreach(i; 0 .. host.length)
 			if(host[i] == "localhost") {
-				listeners ~= startListening(requestServer, "127.0.0.1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, "127.0.0.1", port[i], tcp, cleanupLocal, 128, dropPrivs);
 				allCleanups ~= cleanupLocal;
-				listeners ~= startListening(requestServer, "::1", port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, "::1", port[i], tcp, cleanupLocal, 128, dropPrivs);
 				allCleanups ~= cleanupLocal;
 			} else {
-				listeners ~= startListening(requestServer, host[i], port[i], tcp, cleanupLocal, 128, dropPrivs);
+				listeners ~= startListening(this, requestServer, host[i], port[i], tcp, cleanupLocal, 128, dropPrivs);
 				allCleanups ~= cleanupLocal;
 			}
 
-		version(cgi_use_fiber)
-		if(useFork) {
+		version(cgi_use_fiber) {
 			foreach(listener; listeners)
 				listener.blocking = false;
 		}
@@ -6005,18 +6084,18 @@ class ListeningConnectionManager {
 		this.cleanup = &cleanupAll;
 	}
 
-	Socket[] listeners;
-	void delegate(Socket, RequestServer*) handler;
+	ListeningSocket[] listeners;
+	void delegate(CgiSocket, RequestServer*) handler;
 
 	immutable bool useFork;
 	int numberOfThreads;
 }
 
-Socket startListening(RequestServer* requestServer, string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
-	Socket listener;
+ListeningSocket startListening(ListeningConnectionManager lcm, RequestServer* requestServer, string host, ushort port, ref bool tcp, ref void delegate() cleanup, int backQueue, void delegate() dropPrivs) {
+	ListeningSocket listener;
 	if(host.startsWith("unix:")) {
 		version(Posix) {
-			listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+			listener = new ListeningSocket(lcm, requestServer, AddressFamily.UNIX, SocketType.STREAM);
 			cloexec(listener);
 			string filename = host["unix:".length .. $].idup;
 			listener.bind(new UnixAddress(filename));
@@ -6031,7 +6110,7 @@ Socket startListening(RequestServer* requestServer, string host, ushort port, re
 		}
 	} else if(host.startsWith("abstract:")) {
 		version(linux) {
-			listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+			listener = new ListeningSocket(lcm, requestServer, AddressFamily.UNIX, SocketType.STREAM);
 			cloexec(listener);
 			string filename = "\0" ~ host["abstract:".length .. $];
 			import std.stdio; stderr.writeln("Listening to abstract unix domain socket: ", host["abstract:".length .. $]);
@@ -6042,18 +6121,7 @@ Socket startListening(RequestServer* requestServer, string host, ushort port, re
 		}
 	} else {
 		auto address = host.length ? parseAddress(host, port) : new InternetAddress(port);
-		version(cgi_use_fiber) {
-			version(Windows) {
-				if(requestServer && requestServer.actuallyUseFiber)
-					listener = new PseudoblockingOverlappedSocket(requestServer, AddressFamily.INET, SocketType.STREAM);
-				else
-					listener = new Socket(address.addressFamily, SocketType.STREAM);
-			} else {
-				listener = new Socket(address.addressFamily, SocketType.STREAM);
-			}
-		} else {
-			listener = new Socket(address.addressFamily, SocketType.STREAM);
-		}
+		listener = new ListeningSocket(lcm, requestServer, address.addressFamily, SocketType.STREAM);
 		cloexec(listener);
 		listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
 		if(address.addressFamily == AddressFamily.INET6)
@@ -6074,7 +6142,7 @@ Socket startListening(RequestServer* requestServer, string host, ushort port, re
 }
 
 // helper function to send a lot to a socket. Since this blocks for the buffer (possibly several times), you should probably call it in a separate thread or something.
-void sendAll(Socket s, const(void)[] data, string file = __FILE__, size_t line = __LINE__) {
+void sendAll(CgiSocket s, const(void)[] data, string file = __FILE__, size_t line = __LINE__) {
 	if(data.length == 0) return;
 	ptrdiff_t amount;
 	//import std.stdio; writeln("***",cast(string) data,"///");
@@ -6083,8 +6151,7 @@ void sendAll(Socket s, const(void)[] data, string file = __FILE__, size_t line =
 		if(amount == Socket.ERROR) {
 			version(cgi_use_fiber) {
 				if(wouldHaveBlocked()) {
-					bool registered = true;
-					registerEventWakeup(&registered, s, WakeupEvent.Write);
+					s.yieldUntilWritable();
 					continue;
 				}
 			}
@@ -6097,8 +6164,8 @@ void sendAll(Socket s, const(void)[] data, string file = __FILE__, size_t line =
 }
 
 class ConnectionException : Exception {
-	Socket socket;
-	this(Socket s, string msg, string file = __FILE__, size_t line = __LINE__) {
+	CgiSocket socket;
+	this(CgiSocket s, string msg, string file = __FILE__, size_t line = __LINE__) {
 		this.socket = s;
 		super(msg, file, line);
 	}
@@ -6110,7 +6177,7 @@ class HttpVersionNotSupportedException : Exception {
 	}
 }
 
-alias void delegate(Socket, RequestServer*) CMT;
+alias void delegate(CgiSocket, RequestServer*) CMT;
 
 import core.thread;
 /+
@@ -6172,7 +6239,7 @@ class ConnectionThread : Thread {
 			lcm.semaphore.wait();
 			if(lcm.requestServer && lcm.requestServer.stopRequested)
 				return;
-			Socket socket;
+			CgiSocket socket;
 			synchronized(lcm) {
 				auto idx = lcm.nextIndexFront;
 				socket = lcm.queue[idx];
@@ -6225,6 +6292,7 @@ class ConnectionThread : Thread {
 }
 
 version(cgi_use_fiber)
+version(none)
 class WorkerThread : Thread {
 	this(ListeningConnectionManager lcm, CMT dg, int myThreadNumber) {
 		assert(lcm !is null);
@@ -6237,7 +6305,7 @@ class WorkerThread : Thread {
 	version(Windows)
 	void run() {
 		auto timeout = INFINITE;
-		PseudoblockingOverlappedSocket key;
+		CgiSocket key;
 		OVERLAPPED* overlapped;
 		DWORD bytes;
 		assert(lcm.requestServer !is null);
@@ -6301,7 +6369,7 @@ class WorkerThread : Thread {
 
 
 		while(lcm.requestServer is null || !lcm.requestServer.stopRequested) {
-			Socket sn;
+			CgiSocket sn;
 
 			epoll_event[64] events;
 			auto nfds = epoll_wait(epfd, events.ptr, events.length, -1);
@@ -6625,7 +6693,7 @@ version(cgi_with_websocket) {
 		private this(Cgi cgi) {
 			this.cgi = cgi;
 
-			Socket socket = cgi.idlol.source;
+			CgiSocket socket = cgi.idlol.source;
 			socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, dur!"minutes"(5));
 		}
 
@@ -6667,7 +6735,7 @@ version(cgi_with_websocket) {
 
 
 		override bool isDataPending(Duration timeout = 0.seconds) {
-			Socket socket = cgi.idlol.source;
+			CgiSocket socket = cgi.idlol.source;
 
 			auto check = new SocketSet();
 			check.add(socket);
