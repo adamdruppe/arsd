@@ -583,8 +583,8 @@ class PostgresPipeline {
 
 		}
 
-		//PQsendPipelineSync(db.conn); // apparently my libpq is not new enough for this but flush request is better than nothing
-		if(!PQsendFlushRequest(db.conn)) {
+		// if(!PQsendFlushRequest(db.conn)) { this just sends it but still leaves the pipeline active and since we're done we need to pipeline sync...
+		if(!PQpipelineSync(db.conn)) { // this will send a sync point and a flush request at once
 			if(first_retry && db.retryConnection(true)) {
 				first_retry = false;
 				goto retry;
@@ -616,6 +616,7 @@ class PostgresPipeline {
 				if(ress != PGRES_TUPLES_OK
 					&& ress != PGRES_COMMAND_OK)
 				{
+					PQclear(result);
 
 					// this looks like a connection died before we actually did any work. safe to restart.
 					// but if receiveLocation != 0, we have some partial results accumulated, and need to throw
@@ -651,6 +652,8 @@ class PostgresPipeline {
 				}
 
 				auto resultObject = new PostgresResult(result);
+				scope(exit)
+					.destroy(resultObject); // the dtor calls PQclear(result);
 				if(resultObject.empty()) {
 					auto dg = components[receiveLocation].onNone;
 					if(dg)
@@ -664,7 +667,6 @@ class PostgresPipeline {
 						}
 					}
 				}
-				.destroy(resultObject); // the dtor calls PQclear(result);
 			}
 			auto oc = components[receiveLocation].onComplete;
 			if(oc)
@@ -676,6 +678,14 @@ class PostgresPipeline {
 			send(db);
 			goto more;
 		}
+
+		while(auto result = PQgetResult(db.conn)) {
+			int rss = PQresultStatus(result);
+			if(!rss == PGRES_PIPELINE_SYNC)
+				assert(0);
+			PQclear(result);
+		}
+
 		if(errors.length) {
 			string combined;
 			foreach(error; errors) {
@@ -1061,6 +1071,7 @@ string argToPostgresString(T)(T arg) {
 	return to!string(arg);
 }
 
+// FIXME: need to apply this outside just the pipelines
 string variantToPostgresString(Variant b) {
 	if(b.peek!(int[]))
 		return "{"~b.toString()[1 ..$-1]~"}";
