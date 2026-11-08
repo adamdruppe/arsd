@@ -670,7 +670,6 @@ struct AssociatedDatabaseDatum(alias queryMetadata, string name, string file, si
 		return datum.toArsdJsvar();
 	}
 
-
 	bool isNull() {
 		return datum.isNull();
 	}
