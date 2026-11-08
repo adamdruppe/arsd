@@ -10,22 +10,78 @@ module arsd.process;
 
 import arsd.core;
 
-version(Windows) {
-	alias NativeProcessArguments = string;
+string argvToConventionalWindowsCommandLine(string[] argv) {
+	string cmdLine;
+	foreach(idx, arg; argv) {
+		if(idx)
+			cmdLine ~= " ";
 
-	NativeProcessArguments toNativeProcessArguments(string cmdLine) {
-		return cmdLine;
-	}
+		if(argv.length == 0) {
+			cmdLine ~= `""`;
+			continue;
+		}
 
-	NativeProcessArguments toNativeProcessArguments(string[] argv) {
-		// does NOT try to encode things... because we don't know how to encode it. really should make the user do it.
-		string cmdLine;
-		foreach(arg; argv) {
-			if(cmdLine.length)
-				cmdLine ~= " ";
+		bool needsEscape;
+		foreach(ch; arg) {
+			if(ch == '"' || ch == ' ' || ch == '\t') {
+				needsEscape = true;
+				break;
+			}
+		}
+
+		if(needsEscape) {
+			cmdLine ~= '"';
+			foreach(chIdx, ch; arg) {
+				if(ch == '\\') {
+					// FIXME: would prolly be better to do this in reverse just like Phobos...
+					bool followedByQuote = true;
+					foreach(following; arg[chIdx + 1 .. $]) {
+						if(following == '\\')
+							continue;
+						if(following != '"')
+							followedByQuote = false;
+						break;
+					}
+					if(followedByQuote)
+						cmdLine ~= "\\";
+				} else if(ch == '"')
+					cmdLine ~= "\\";
+				cmdLine ~= ch;
+			}
+			cmdLine ~= '"';
+		} else {
 			cmdLine ~= arg;
 		}
-		return cmdLine;
+	}
+	return cmdLine;
+}
+unittest {
+	/+
+	import std.process;
+	assert(escapeWindowsArgument(`c:\program files\"`) == `"c:\program files\\\""`);
+	assert(escapeWindowsArgument(`c:\program files\`) == `"c:\program files\\"`);
+	+/
+
+	assert(argvToConventionalWindowsCommandLine(["foo", "bar"]) == "foo bar");
+	assert(argvToConventionalWindowsCommandLine([`c:\foo`, "bar"]) == "c:\\foo bar");
+	assert(argvToConventionalWindowsCommandLine([`c:\program files\`, "bar"]) == `"c:\program files\\" bar`);
+	assert(argvToConventionalWindowsCommandLine([`c:\program files\"`, "bar"]) == `"c:\program files\\\"" bar`);
+}
+
+version(Windows) {
+	struct RawCommandLine {
+		string commandLine;
+		alias commandLine this;
+	}
+
+	alias NativeProcessArguments = RawCommandLine;
+
+	NativeProcessArguments toNativeProcessArguments(string cmdLine) {
+		return RawCommandLine(cmdLine);
+	}
+
+	RawCommandLine toNativeProcessArguments(string[] argv) {
+		return RawCommandLine(argvToConventionalWindowsCommandLine(argv));
 	}
 } else {
 	alias NativeProcessArguments = string[];
@@ -51,7 +107,7 @@ struct ExecuteResult {
 
 /++
 +/
-class ExecuteFuture {
+class ExecuteFuture : Future!ExecuteResult {
 	private ExternalProcess process;
 
 	private ubyte[] stdout;
@@ -59,6 +115,9 @@ class ExecuteFuture {
 
 	private ubyte[] stdoutBuffer;
 	private ubyte[] stderrBuffer;
+
+	private void delegate(in ubyte[]) onStdoutReceived;
+	private void delegate(in ubyte[]) onStderrReceived;
 
 	private AsyncReadRequest stdoutRead;
 	private void readMoreStdout() {
@@ -70,10 +129,10 @@ class ExecuteFuture {
 		auto result = request.waitForCompletion();
 		if(result.wasSuccessful && result.bufferRead.length > 0) {
 			if(request is stdoutRead) {
-				stdout ~= result.bufferRead[];
+				onStdoutReceived(result.bufferRead[]);
 				request.repeat(stdoutBuffer);
 			} else {
-				stderr ~= result.bufferRead[];
+				onStderrReceived(result.bufferRead[]);
 				request.repeat(stderrBuffer);
 			}
 		}
@@ -99,51 +158,132 @@ class ExecuteFuture {
 			input = input[result.bufferWritten.length .. $];
 			if(input.length && result.bufferWritten.length) {
 				request.repeat(cast(ubyte[]) input);
-			} else
+			} else if(closeStdInputWhenDoneWithQueue) {
 				process.stdin.close();
+			}
 		}
 	}
 
-	private this(ExternalProcess process, const(void)[] input) {
+	private void forwardOnResolution() {
+		if(this.onresolution)
+			this.onresolution();
+	}
+
+	private this(ExternalProcess process, void delegate(in ubyte[]) onStdoutReceived, void delegate(in ubyte[]) onStderrReceived) {
 		this.process = process;
 
-		stdoutBuffer = new ubyte[](64 * 1024);
-		stderrBuffer = new ubyte[](64 * 1024);
+		process.onresolution = &forwardOnResolution;
 
 		process.start();
 
-		this.input = input;
-		if(input.length)
-			writeMoreStdin();
-		else
-			process.stdin.close();
+		this.onStdoutReceived = onStdoutReceived;
+		if(onStdoutReceived !is null) {
+			stdoutBuffer = new ubyte[](64 * 1024);
+			readMoreStdout();
+		} else {
+			process.stdout.close();
+		}
 
-		readMoreStdout();
-		readMoreStderr();
+		this.onStderrReceived = onStderrReceived;
+		if(onStderrReceived !is null) {
+			stderrBuffer = new ubyte[](64 * 1024);
+			readMoreStderr();
+		} else {
+			process.stderr.close();
+		}
 	}
 
 	/++
 	+/
-	ExecuteResult waitForCompletion() {
+	override ExecuteResult waitForCompletion() {
 		process.waitForCompletion();
+		if(!process.stdin.isClosed())
+			process.stdin.close();
+
+		// FIXME: what if there's unread data left in the buffer? should we wait for it to drain?
+		if(!process.stdout.isClosed())
+			process.stdout.close();
+		if(!process.stderr.isClosed())
+			process.stderr.close();
+
 		return ExecuteResult(stdout, stderr, process.status);
+	}
+
+	private bool stdoutWriteQueued = false;
+	/++
+	+/
+	void queueStdInput(const(void)[] data) {
+		input ~= data;
+		if(!stdoutWriteQueued) {
+			writeMoreStdin();
+			stdoutWriteQueued = true;
+		}
+	}
+
+	private bool closeStdInputWhenDoneWithQueue;
+
+	/++
+	+/
+	void closeStdInput() {
+		if(input.length)
+			closeStdInputWhenDoneWithQueue = true;
+		else {
+			process.stdin.close();
+		}
+
 	}
 }
 
-/++
-
+/+
+enum Flags {
+	emptyEnvironment
+}
 +/
-ExecuteFuture execute(string command, NativeProcessArguments args, const(void)[] input = null) {
+
+enum StderrBehavior {
+	keepSeparate,
+	//mergeIntoStdout,
+	//inheritFromParent,
+}
+
+/++
+	Executes the given process, giving it your `input`. It returns the process you can wait on, and when it is finished, you get its status, stdout, and stderr as byte arrays.
++/
+ExecuteFuture execute(string command, NativeProcessArguments args, const(void)[] input = null, StderrBehavior stderrBehavior = StderrBehavior.keepSeparate) {
+	ExecuteFuture future;
+
+	future = pipeProcess(command, args, (buffer) { future.stdout ~= buffer; }, (buffer) { future.stderr ~=  buffer; });
+
+	if(input.length)
+		future.queueStdInput(input);
+
+	future.closeStdInput();
+
+	return future;
+}
+
+/++
+	Returns a process execution object with custom input and output available.
+
+	The returned object's stdout and stderr arrays will be empty, because it passes it to your delegates instead.
++/
+ExecuteFuture pipeProcess(string command, NativeProcessArguments args, void delegate(in ubyte[]) onStdoutReceived, void delegate(in ubyte[]) onStderrReceived, string[string] environmentVariableModifications = null) {
 	static if(is(NativeProcessArguments == string[]))
 		args = [command] ~ args;
 	else
 		args = command ~ " " ~ args;
 
 	ExternalProcess process = new ExternalProcess(searchPathForCommand(command), args);
-	return new ExecuteFuture(process, input);
+
+	process.setEnvironmentWithModifications(environmentVariableModifications);
+
+	auto future = new ExecuteFuture(process, onStdoutReceived, onStderrReceived);
+
+	return future;
 }
 
 version(on_adrs_computer)
+version(actually_run_processes)
 unittest {
 	version(Windows)
 	auto promise = execute("z:/home/me/program/deesh/cat.exe", "-help", "hey\ni wanna\ntest");
@@ -155,6 +295,9 @@ unittest {
 	assert(result.status == 1);
 }
 
+/++
+	Searches the PATH environment variable to find the executable for the arg0, if present, and returns it. If not found, returns FilePath(null)
++/
 FilePath searchPathForCommand(string arg0) {
 	version(Windows)
 		import core.sys.windows.windows;
