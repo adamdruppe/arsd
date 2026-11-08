@@ -2012,7 +2012,7 @@ final class AudioPcmOutThreadImplementation : Thread {
 			err = sigaddset(&sigset, SIGINT); assert(!err);
 			err = sigaddset(&sigset, SIGCHLD); assert(!err);
 
-			err = sigprocmask(SIG_BLOCK, &sigset, null);
+			err = pthread_sigmask(SIG_BLOCK, &sigset, null);
 			assert(!err);
 		}
 
