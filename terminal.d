@@ -41,7 +41,8 @@
 	Note: on Posix, it traps SIGINT and translates it into an input event. You should
 	keep your event loop moving and keep an eye open for this to exit cleanly; simply break
 	your event loop upon receiving a UserInterruptionEvent. (Without
-	the signal handler, ctrl+c can leave your terminal in a bizarre state.)
+	the signal handler, ctrl+c can leave your terminal in a bizarre state.) If you are using
+	an [arsd.core.SchedulableTask], it goes straight to throwing a [UserInterruptionException].
 
 	As a user, if you have to forcibly kill your program and the event doesn't work, there's still ctrl+\
 
@@ -292,6 +293,10 @@ version(TerminalDirectToEmulator) {
 		}
 	}
 }
+
+version(Windows)
+	__gshared bool interrupted = false; /// you might periodically check this in a long operation and abort if it is set. Remember it is volatile. It is also sent through the input event loop via RealTimeConsoleInput
+
 
 version(Posix) {
 	enum SIGWINCH = 28;
@@ -1410,36 +1415,44 @@ struct Terminal {
 			threadId = GetCurrentThread();
 
 		if(guiThread is null) {
-			guiThread = new Thread( {
-				try {
-					auto window = new TerminalEmulatorWindow(&this, null);
-					mainWindow = window;
-					mainWindow.win.addEventListener((NewTerminalEvent t) {
-						auto nw = new TerminalEmulatorWindow(t.t, null);
-						t.t.tew = nw.tew;
-						t.t = null;
-						nw.show();
-					});
-					tew = window.tew;
-					window.loop();
-
-					// if the other thread doesn't terminate in a reasonable amount of time
-					// after the window closes, we're gonna terminate it by force to avoid
-					// leaving behind a background process with no obvious ui
-					if(Terminal.terminateTimeoutMsecs >= 0) {
-						auto murderThread = new Thread(() {
-							Thread.sleep(terminateTimeoutMsecs.msecs);
-							terminateTerminalProcess(threadId);
+			if(auto controller = arsd.core.inSchedulableTask()) {
+				//assert(0, "TerminalDirectToEmulator not implemented inside an arsd core SchedulableTask (it would deadlock without more code effort)");
+				auto window = new TerminalEmulatorWindow(&this, null);
+				tew = window.tew;
+				window.show;
+				arsd.core.writeln("window");
+			} else {
+				guiThread = new Thread( {
+					try {
+						auto window = new TerminalEmulatorWindow(&this, null);
+						mainWindow = window;
+						mainWindow.win.addEventListener((NewTerminalEvent t) {
+							auto nw = new TerminalEmulatorWindow(t.t, null);
+							t.t.tew = nw.tew;
+							t.t = null;
+							nw.show();
 						});
-						murderThread.isDaemon = true;
-						murderThread.start();
+						tew = window.tew;
+						window.loop();
+
+						// if the other thread doesn't terminate in a reasonable amount of time
+						// after the window closes, we're gonna terminate it by force to avoid
+						// leaving behind a background process with no obvious ui
+						if(Terminal.terminateTimeoutMsecs >= 0) {
+							auto murderThread = new Thread(() {
+								Thread.sleep(terminateTimeoutMsecs.msecs);
+								terminateTerminalProcess(threadId);
+							});
+							murderThread.isDaemon = true;
+							murderThread.start();
+						}
+					} catch(Throwable t) {
+						guiAbortProcess(t.toString());
 					}
-				} catch(Throwable t) {
-					guiAbortProcess(t.toString());
-				}
-			});
-			guiThread.start();
-			guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
+				});
+				guiThread.start();
+				guiThread.priority = Thread.PRIORITY_MAX; // gui thread needs responsiveness
+			}
 		} else {
 			// FIXME: 64 bit builds on linux segfault with multiple terminals
 			// so that isn't really supported as of yet.
@@ -1512,6 +1525,10 @@ struct Terminal {
 			SetConsoleCP(65001); // UTF-8
 			*/
 		}
+
+		if(auto task = arsd.core.inSchedulableTask()) {
+			oldSigIntHandler = task.setSigIntHandler(&taskSigIntHandler);
+		}
 	}
 
 
@@ -1530,6 +1547,10 @@ struct Terminal {
 		}
 
 		initializeVt();
+
+		if(auto task = arsd.core.inSchedulableTask()) {
+			oldSigIntHandler = task.setSigIntHandler(&taskSigIntHandler);
+		}
 	}
 
 	void initializeVt() {
@@ -1713,6 +1734,18 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 			guiThread.join();
 			guiThread = null;
 		}
+
+		if(auto task = arsd.core.inSchedulableTask()) {
+			task.setSigIntHandler(oldSigIntHandler);
+		}
+	}
+
+	private void delegate() oldSigIntHandler;
+	private void taskSigIntHandler() {
+		// if we're in the arsd.core task, it might be yielded by outside things like
+		// sleeps or net requests, but since the terminal is still in scope, we can reasonably
+		// throw the exception to cancel that too.
+		throw new UserInterruptionException();
 	}
 
 	// lazily initialized and preserved between calls to getline for a bit of efficiency (only a bit)
@@ -2694,7 +2727,13 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 				terminal.writeStringRaw("\xff");
 				terminal.flush();
 				if(windowGone) forceTermination();
-				terminal.tew.terminalEmulator.syncSignal.wait();
+
+				if(auto controller = arsd.core.inSchedulableTask) {
+					while(!terminal.tew.terminalEmulator.syncSignal.tryWait)
+						controller.yieldWithUserDefinedWakeup((task) { terminal.tew.terminalEmulator.pendingTask = task; });
+				} else {
+					terminal.tew.terminalEmulator.syncSignal.wait();
+				}
 			}
 
 			terminal._cursorX = terminal.tew.terminalEmulator.cursorX;
@@ -3239,30 +3278,42 @@ struct RealTimeConsoleInput {
 		{
 			import core.sys.posix.signal;
 			sigaction_t n;
-			n.sa_handler = &interruptSignalHandler;
-			n.sa_mask = cast(sigset_t) 0;
-			n.sa_flags = 0;
-			sigaction(SIGINT, &n, &oldSigIntr);
-		}
-
-		{
-			import core.sys.posix.signal;
-			sigaction_t n;
-			n.sa_handler = &hangupSignalHandler;
-			n.sa_mask = cast(sigset_t) 0;
-			n.sa_flags = 0;
-			sigaction(SIGHUP, &n, &oldHupIntr);
-		}
-
-		{
-			import core.sys.posix.signal;
-			sigaction_t n;
 			n.sa_handler = &continueSignalHandler;
 			n.sa_mask = cast(sigset_t) 0;
 			n.sa_flags = 0;
 			sigaction(SIGCONT, &n, &oldContIntr);
 		}
 
+		if(auto controller = arsd.core.inSchedulableTask()) {
+			oldSigIntHandler = controller.setSigIntHandler(&taskSigIntHandler);
+			// FIXME: hup too
+		} else {
+			// if not in the arsd.core task, will install globally
+			{
+				import core.sys.posix.signal;
+				sigaction_t n;
+				n.sa_handler = &interruptSignalHandler;
+				n.sa_mask = cast(sigset_t) 0;
+				n.sa_flags = 0;
+				sigaction(SIGINT, &n, &oldSigIntr);
+			}
+
+			{
+				import core.sys.posix.signal;
+				sigaction_t n;
+				n.sa_handler = &hangupSignalHandler;
+				n.sa_mask = cast(sigset_t) 0;
+				n.sa_flags = 0;
+				sigaction(SIGHUP, &n, &oldHupIntr);
+			}
+		}
+
+	}
+
+	void taskSigIntHandler() {
+		interrupted = true;
+		if(sigIntExtension)
+			sigIntExtension();
 	}
 
 	void fdReadyReader() {
@@ -3321,6 +3372,8 @@ struct RealTimeConsoleInput {
 	bool _suppressDestruction;
 	bool _initialized = false;
 
+	void delegate() oldSigIntHandler;
+
 	~this() {
 		if(!_initialized)
 			return;
@@ -3347,7 +3400,11 @@ struct RealTimeConsoleInput {
 				// restoration
 				sigaction(SIGWINCH, &oldSigWinch, null);
 			}
-			sigaction(SIGINT, &oldSigIntr, null);
+			if(auto controller = arsd.core.inSchedulableTask) {
+				controller.setSigIntHandler(oldSigIntHandler);
+			} else {
+				sigaction(SIGINT, &oldSigIntr, null);
+			}
 			sigaction(SIGHUP, &oldHupIntr, null);
 			sigaction(SIGCONT, &oldContIntr, null);
 		}
@@ -3497,7 +3554,12 @@ struct RealTimeConsoleInput {
 				//return -1;
 			if(terminal.tew.terminalEmulator.pendingForApplication.length == 0) {
 				if(windowGone) forceTermination();
-				terminal.tew.terminalEmulator.outgoingSignal.wait();
+				if(auto controller = arsd.core.inSchedulableTask) {
+					while(!terminal.tew.terminalEmulator.outgoingSignal.tryWait())
+						controller.yieldWithUserDefinedWakeup((task) { terminal.tew.terminalEmulator.pendingTask = task; });
+				} else {
+					terminal.tew.terminalEmulator.outgoingSignal.wait();
+				}
 			}
 			synchronized(terminal.tew.terminalEmulator) {
 				if(terminal.tew.terminalEmulator.pendingForApplication.length == 0) {
@@ -3542,12 +3604,15 @@ struct RealTimeConsoleInput {
 
 					if(auto controls = arsd.core.inSchedulableTask) {
 						controls.yieldUntilReadable(fdIn);
+						if(interrupted && interruptable) {
+							return -1;
+						}
 						goto try_again;
 					} else {
 						import core.thread;
 						Thread.sleep(1.msecs);
 						goto try_again;
-					}
+				}
 				} else {
 					import std.conv;
 					throw new Exception("read failed " ~ to!string(errno));
@@ -3728,6 +3793,8 @@ struct RealTimeConsoleInput {
 		version(TerminalDirectToEmulator) {
 			if(terminal.usingDirectEmulator) {
 				(cast(Terminal*) terminal).tew.terminalEmulator.outgoingSignal.notify();
+				if(auto pendingTask = (cast(Terminal*) terminal).tew.terminalEmulator.pendingTask)
+					pendingTask.scheduleOnThisThread();
 				return;
 			}
 		}
@@ -9259,7 +9326,7 @@ version(TerminalDirectToEmulator) {
 		@menu("&History") {
 			@tip("Saves the currently visible content to a file")
 			void Save() {
-				getSaveFileName((string name) {
+				this.getSaveFileName((string name) {
 					if(name.length) {
 						try
 							tew.terminalEmulator.writeScrollbackToFile(name);
@@ -9292,7 +9359,7 @@ version(TerminalDirectToEmulator) {
 					bool caseSensitive;
 				}
 
-				dialog((FilterParams p) {
+				this.dialog((FilterParams p) {
 					auto nw = new TerminalEmulatorWindow(null, this);
 
 					nw.parentWindow.win.handleCharEvent = null; // kinda a hack... i just don't want it ever turning off scroll lock...
@@ -9331,6 +9398,8 @@ version(TerminalDirectToEmulator) {
 				if(tew.term) {
 					tew.term.windowSizeChanged = true;
 					tew.terminalEmulator.outgoingSignal.notify();
+					if(auto pendingTask = tew.terminalEmulator.pendingTask)
+						pendingTask.scheduleOnThisThread();
 				}
 				tew.redraw();
 			}
@@ -9426,6 +9495,9 @@ version(TerminalDirectToEmulator) {
 				terminalEmulator.incomingSignal.notify();
 				terminalEmulator.syncSignal.notify();
 
+				if(terminalEmulator.pendingTask)
+					terminalEmulator.pendingTask.scheduleOnThisThread();
+
 				windowGone = true;
 			});
 
@@ -9433,6 +9505,9 @@ version(TerminalDirectToEmulator) {
 				terminalEmulator.sendRawInput(ie.data);
 				this.redraw();
 				terminalEmulator.incomingSignal.notify();
+
+				if(terminalEmulator.pendingTask)
+					terminalEmulator.pendingTask.scheduleOnThisThread();
 			});
 		}
 
@@ -9443,7 +9518,12 @@ version(TerminalDirectToEmulator) {
 			if(this.parentWindow) {
 				this.parentWindow.win.postEvent(new InputEventInternal(data));
 				if(windowGone) forceTermination();
-				terminalEmulator.incomingSignal.wait(); // blocking write basically, wait until the TE confirms the receipt of it
+				if(auto controller = arsd.core.inSchedulableTask()) {
+					while(!terminalEmulator.incomingSignal.tryWait)
+						controller.yieldWithUserDefinedWakeup((task) { terminalEmulator.pendingTask = task; });
+				} else {
+					terminalEmulator.incomingSignal.wait(); // blocking write basically, wait until the TE confirms the receipt of it
+				}
 			}
 		}
 
@@ -9508,6 +9588,8 @@ version(TerminalDirectToEmulator) {
 			if(widget && widget.term)
 				widget.term.windowSizeChanged = true;
 			outgoingSignal.notify();
+			if(pendingTask)
+				pendingTask.scheduleOnThisThread();
 			redraw();
 		}
 
@@ -9619,6 +9701,8 @@ version(TerminalDirectToEmulator) {
 					last = idx + 1;
 					waitingForInboundSync = false;
 					syncSignal.notify();
+					if(pendingTask)
+						pendingTask.scheduleOnThisThread();
 					continue;
 				}
 				if(ch == 10) {
@@ -9647,6 +9731,7 @@ version(TerminalDirectToEmulator) {
 		Semaphore syncSignal;
 		Semaphore outgoingSignal;
 		Semaphore incomingSignal;
+		arsd.core.SchedulableTask pendingTask;
 
 		private shared(bool) waitingForInboundSync;
 
@@ -9655,6 +9740,8 @@ version(TerminalDirectToEmulator) {
 				pendingForApplication ~= cast(const(ubyte)[]) what;
 			}
 			outgoingSignal.notify();
+			if(pendingTask)
+				pendingTask.scheduleOnThisThread();
 		}
 
 		@property int width() { return screenWidth; }
@@ -9846,6 +9933,8 @@ version(TerminalDirectToEmulator) {
 			if(widget && widget.term) {
 				widget.term.interrupted = true;
 				outgoingSignal.notify();
+				if(pendingTask)
+					pendingTask.scheduleOnThisThread();
 			}
 		}
 
