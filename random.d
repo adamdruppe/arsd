@@ -321,7 +321,7 @@ version (none) {
 	}
 
 } else version (Windows) {
-	pragma(lib, "Bcrypt.lib");
+	pragma(lib, "bcrypt.lib");
 
 	private bool osRandom(out ulong result) @trusted {
 		import core.sys.windows.windef : PUCHAR, ULONG;
