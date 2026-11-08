@@ -8533,8 +8533,9 @@ version(HasThread) class SchedulableTask : Fiber {
 			return;
 		Fiber.call(Rethrow.yes);
 		assert(this.onPostYield !is null, "Do NOT call Fiber.yield! It doesn't set up the recall. Use the method on SchedulableTask instead.");
-		onPostYield();
+		auto opy = onPostYield;
 		onPostYield = null;
+		opy();
 	}
 
 	void runOnThisThread() {
@@ -8641,6 +8642,7 @@ version(HasThread) class SchedulableTask : Fiber {
 	private SchedulableTask next;
 
 	private void addTaskToList() {
+		if(uiThreadLoop is null) getThisThreadEventLoop();
 		uiThreadLoop.onNextTick(&addTaskToList_Impl);
 	}
 
