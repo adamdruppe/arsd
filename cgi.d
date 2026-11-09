@@ -3660,6 +3660,11 @@ struct RequestServer {
 
 	private bool actuallyUseFiber = true;
 
+	// FIXME: # EPOLLEXCLUSIVE and cloexec everywhere in cgi. ui thread priority in arsd.core
+
+	version(Windows)
+		HANDLE hEvent;
+
 	/++
 		Serves a single HTTP request on this thread, with an embedded server, then stops. Designed for cases like embedded oauth responders
 
@@ -3686,13 +3691,53 @@ struct RequestServer {
 	+/
 	void serveHttpOnce(void delegate(Cgi cgi) handler) {
 		actuallyUseFiber = false; scope(exit) actuallyUseFiber = true;
+
+		// FIXME: do something so it works the same way on Windows too
+		if(arsd.core.inSchedulableTask) {
+			actuallyUseFiber = true;
+			version(Windows) {
+				assert(hEvent is null);
+				hEvent = CreateEvent(null, true, false, null);
+			}
+		}
+
+		version(Windows)
+		scope(exit) {
+			if(hEvent)
+				CloseHandle(hEvent);
+			hEvent = null;
+		}
+
 		import std.socket;
 
 		bool tcp;
 		void delegate() cleanup;
-		auto socket = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1);
-		dropPrivileges();
-		auto connection = socket.accept();
+		auto listener = startListening(null, &this, listeningHost, listeningPort, tcp, cleanup, 1);
+		if(actuallyUseFiber)
+			listener.blocking = false;
+		CgiSocket connection;
+
+		try_again:
+		try {
+			connection = listener.accept();
+			version(Windows)
+			if(auto controller = arsd.core.inSchedulableTask) {
+				controller.yieldUntilSignaled(hEvent);
+				ResetEvent(hEvent);
+			}
+		}
+		catch(SocketAcceptException sae) {
+			if(auto controller = arsd.core.inSchedulableTask) {
+				version(Posix) {
+					controller.yieldUntilReadable(listener.handle);
+					goto try_again;
+				} else {
+					throw sae;
+				}
+			} else {
+				throw sae;
+			}
+		}
 		doThreadHttpConnectionGuts!(Cgi, handler, true)(connection, &this);
 
 		if(cleanup)
@@ -3722,7 +3767,7 @@ struct RequestServer {
 	+/
 
 	/++
-		Starts serving requests according to the current configuration.
+		Starts serving requests according to the current build-time and run-time configuration.
 	+/
 	void serve(alias fun, CustomCgi = Cgi, long maxContentLength = defaultMaxContentLength)() {
 		version(embedded_httpd_processes) {
@@ -3887,10 +3932,7 @@ struct RequestServer {
 		Stops serving after the current requests are completed.
 
 		Bugs:
-			Not implemented on version=embedded_httpd_processes, version=fastcgi on any system, or embedded_httpd on Windows (it does work on embedded_httpd_hybrid
-			on Windows however). Only partially implemented on non-Linux posix systems.
-
-			You might also try SIGINT perhaps.
+			Not implemented on version=embedded_httpd_processes or version=fastcgi.
 
 			The stopPriority is not yet fully implemented.
 
@@ -4440,7 +4482,8 @@ class FiberCapableCgiSocket : Socket {
 		override void blocking(bool) {} // meaningless to us, just ignore it.
 
 		void associateIocp(arsd.core.CallbackHelper cb) {
-			auto iocp = arsd.core.Win32Enforce!CreateIoCompletionPort(cast(HANDLE) handle, requestServer.iocp, cast(ULONG_PTR) cast(void*) cb, 0);
+			if(requestServer.iocp)
+				arsd.core.Win32Enforce!CreateIoCompletionPort(cast(HANDLE) handle, requestServer.iocp, cast(ULONG_PTR) cast(void*) cb, 0);
 		}
 
 		__gshared static typeof(&GetAcceptExSockaddrs) lpfnGetAcceptExSockaddrs;
@@ -4555,7 +4598,7 @@ class ListeningSocket : FiberCapableCgiSocket {
 		this.af = af;
 		this.socketType = type;
 		this.lcm = lcm;
-		if(lcm && requestServer && requestServer.actuallyUseFiber) {
+		if(requestServer && requestServer.actuallyUseFiber) {
 			actuallyUseFiber = true;
 
 		}
@@ -4619,6 +4662,8 @@ class ListeningSocket : FiberCapableCgiSocket {
 
 			SOCKET pendingForAccept = pfa.handle;
 			DWORD ignored;
+
+			overlapped.hEvent = requestServer.hEvent;
 
 			auto ret = lpfnAcceptEx(
 				handle,
@@ -4706,20 +4751,31 @@ class CgiSocket : FiberCapableCgiSocket {
 	version(Windows) {
 		override ptrdiff_t send(scope const(void)[] buf, SocketFlags flags) @trusted {
 			overlapped = overlapped.init;
+			overlapped.hEvent = requestServer.hEvent;
 			buffer[0].len = cast(DWORD) buf.length;
 			buffer[0].buf = cast(ubyte*) buf.ptr;
-			if(auto controller = arsd.core.inSchedulableTask)
-			controller.yieldWithUserDefinedWakeup( (task) {
-				if(SOCKET_ERROR == WSASend(handle, buffer.ptr, cast(DWORD) buffer.length, null, 0, &overlapped, null)) {
+
+			void startOperation(arsd.core.SchedulableTask ignored) {
+				if(SOCKET_ERROR == WSASend(handle, buffer.ptr, cast(DWORD) buffer.length, null, 0 /* flags */, &overlapped, null)) {
 					auto error = GetLastError();
 					if(error != 997 && error != 0) {
 						throw new arsd.core.WindowsApiException("WSASend", error);
 					}
 				}
-			});
-			else assert(0);
+			}
 
-			lastAnswer = cast(DWORD) overlapped.hEvent;
+			if(auto controller = arsd.core.inSchedulableTask) {
+				if(overlapped.hEvent) {
+					startOperation(null);
+					controller.yieldUntilSignaled(overlapped.hEvent);
+					ResetEvent(overlapped.hEvent);
+					GetOverlappedResult(cast(void*) handle, &overlapped, &lastAnswer, false);
+				} else {
+					// using iocp
+					controller.yieldWithUserDefinedWakeup(&startOperation);
+					lastAnswer = cast(DWORD) overlapped.hEvent; // set there by arsd.core in a filthy hack
+				}
+			} else assert(0);
 
 			return lastAnswer;
 		}
@@ -4727,23 +4783,31 @@ class CgiSocket : FiberCapableCgiSocket {
 			overlapped = overlapped.init;
 			buffer[0].len = cast(DWORD) buf.length;
 			buffer[0].buf = cast(ubyte*) buf.ptr;
+			overlapped.hEvent = requestServer.hEvent;
 
 			DWORD flags2 = 0;
 
-			if(auto controller = arsd.core.inSchedulableTask)
-			controller.yieldWithUserDefinedWakeup( (task) {
+			void startOperation(arsd.core.SchedulableTask ignored) {
 				if(SOCKET_ERROR == WSARecv(handle, buffer.ptr, cast(DWORD) buffer.length, null, &flags2 /* flags */, &overlapped, null)) {
 					auto error = GetLastError();
 					if(error != 997 && error != 0) {
 						throw new arsd.core.WindowsApiException("WSARecv", error);
-						//writeln("WSARecv ", WSAGetLastError());
-						//throw new Exception("WSARecv fail");
 					}
 				}
-			});
-			else assert(0);
+			}
 
-			lastAnswer = cast(DWORD) overlapped.hEvent;
+			if(auto controller = arsd.core.inSchedulableTask) {
+				if(overlapped.hEvent) {
+					startOperation(null);
+					controller.yieldUntilSignaled(overlapped.hEvent);
+					ResetEvent(overlapped.hEvent);
+					GetOverlappedResult(cast(void*) handle, &overlapped, &lastAnswer, false);
+				} else {
+					// using iocp
+					controller.yieldWithUserDefinedWakeup(&startOperation);
+					lastAnswer = cast(DWORD) overlapped.hEvent; // put there by arsd.core in a filthy hack
+				}
+			} else assert(0);
 
 			return lastAnswer;
 		}
