@@ -1121,7 +1121,7 @@ class Document : FileResource, DomParent {
 
 						if(strict) {
 							if(data[pos] != '>')
-								throw new MarkupException("got "~data[pos]~" when expecting > (possible missing attribute name)\nContext:\n" ~ data[max(0, pos - data.contextToKeep) .. min(data.length, pos + data.contextToKeep)]);
+								throw new MarkupException("got "~data[pos]~" when expecting > (possible missing attribute name)\nContext:\n" ~ data[cast(size_t) max(0, pos - data.contextToKeep) .. cast(size_t) min(data.length, pos + data.contextToKeep)]);
 						} else {
 							// if we got here, it's probably because a slash was in an
 							// unquoted attribute - don't trust the selfClosed value
