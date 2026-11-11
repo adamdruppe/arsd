@@ -9344,13 +9344,13 @@ unittest {
 	auto document = new Document("broken"); // just ensuring it doesn't crash
 }
 
-private long min(long a, long b) {
+private ptrdiff_t min(ptrdiff_t a, ptrdiff_t b) {
 	if(a < b)
 		return a;
 	return b;
 }
 
-private long max(long a, long b) {
+private ptrdiff_t max(ptrdiff_t a, ptrdiff_t b) {
 	if(a < b)
 		return b;
 	return a;
