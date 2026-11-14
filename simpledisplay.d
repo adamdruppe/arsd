@@ -4028,7 +4028,7 @@ private:
 
 		bool didAnything;
 
-		cleanupQueue.process();
+		// the cleanupQueue.process call used to be here, but now arsd.core does that as part of its ui loop run
 
 		didAnything = justCommunication.processCustomEvents() || didAnything;
 
@@ -4702,14 +4702,14 @@ struct EventLoopImpl {
 				unregisters ~= el.addDelegateOnLoopIteration(&doXNextEventReturningDidAnything);
 
 				if(XDisplayConnection.get.fd != -1)
-				unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, new CallbackHelper(() {
+				unregisters ~= el.addCallbackOnFdReadable(XDisplayConnection.get.fd, () {
 					this.mtLock();
 					scope(exit) this.mtUnlock();
 					bool done = false;
 					while(!done && XPending(display)) {
 						done = doXNextEvent(this.display);
 					}
-				}));
+				});
 
 				// FIXME hup? we could viably detach from the tty
 			} else
@@ -6214,7 +6214,7 @@ class WindowsHandleReader {
 
 	///
 	void enable() {
-		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnHandleReady(handle, new CallbackHelper(&ready));
+		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnHandleReady(handle, &ready);
 	}
 
 	///
@@ -6275,9 +6275,9 @@ class PosixFdReader {
 	void enable() @system {
 		enabled = true;
 
-		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnFdReadable(fd, new CallbackHelper(
+		unregisterToken = getThisThreadEventLoop(EventLoopType.Ui).addCallbackOnFdReadable(fd,
 			() { onReady(fd, true, false); }
-		));
+		);
 		// FIXME: what if it is writeable?
 	}
 

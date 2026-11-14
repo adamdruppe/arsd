@@ -431,7 +431,7 @@ public struct FileEventDispatcher {
 		assert(readEventHandler is null || writeEventHandler is null); // arsd.core doesn't really support both rn because it doesn't actually edge trigger FIXME
 		auto tok = getThisThreadEventLoop().registerFd(handle);
 		static if(!is(ReadEventHandler == typeof(null))) {
-			tok.subscribeToEvents(true, false, true, new CallbackHelper(() { readEventHandler(handle); }));
+			tok.subscribeToEvents(true, false, true, () { readEventHandler(handle); });
 		}
 		else static if(!is(WriteEventHandler == typeof(null)))
 			static assert(0);
