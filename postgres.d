@@ -235,8 +235,7 @@ class PostgreSql : Database {
 
 		if(!PQenterPipelineMode(this.conn))
 			throw new DatabaseConnectionException(this.error());
-		scope(exit)
-			PQexitPipelineMode(this.conn);
+
 		PQsetnonblocking(this.conn, 1);
 
 		scope(exit) {
@@ -805,7 +804,13 @@ class PostgresPipelineFor(PooledConnection) {
 	}
 
 	void execute(ref PooledConnection conn) {
-		pipeline.execute(conn.borrow);
+		try {
+			pipeline.execute(conn.borrow);
+		} catch(DatabaseConnectionException dce) {
+			// FIXME: i prolly COULD recover by reading until pipeline sync in most these cases but ima just discard for now
+			conn.discard();
+			throw dce;
+		}
 	}
 
 	PostgresPipeline.PostgresPipelineExecutor getExecutor(ref PooledConnection conn) {
