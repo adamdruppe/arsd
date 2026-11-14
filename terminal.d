@@ -2810,7 +2810,7 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/ms683193%28v=vs.85%29.as
 						tries++;
 						goto try_again;
 					}
-					throw new Exception("Other error in read cursor position");
+					throw new arsd.core.ErrnoApiException("Other error in read cursor position", errno);
 				} else if(len == 0) {
 					throw new Exception("Couldn't get cursor position to initialize get line " ~ to!string(len) ~ " " ~ to!string(errno));
 				}
@@ -3117,7 +3117,9 @@ struct RealTimeConsoleInput {
 			GetConsoleMode(inputHandle, &oldInput);
 
 			DWORD mode = 0;
-			//mode |= ENABLE_PROCESSED_INPUT /* 0x01 */; // this gives Ctrl+C and automatic paste... which we probably want to be similar to linux
+			// if we're in the task, we want ctrl+c to be processed by the main loop, so will allow the system to do it
+			if(arsd.core.inSchedulableTask)
+				mode |= ENABLE_PROCESSED_INPUT /* 0x01 */;
 			//if(flags & ConsoleInputFlags.size)
 			mode |= ENABLE_WINDOW_INPUT /* 0208 */; // gives size etc
 			if(flags & ConsoleInputFlags.echo)

@@ -1565,7 +1565,7 @@ class Shell {
 				context.jobs ~= command;
 				command.shellTask = fiber;
 				backgrounded = true;
-				Fiber.yield();
+				fiber.yield(toDelegate(&doNothing));
 				goto waitMore;
 			} else {
 				waitMore:
@@ -1578,7 +1578,7 @@ class Shell {
 						command.shellTask = fiber;
 						context.jobs ~= command;
 						reassertControlOfTerminal();
-						Fiber.yield();
+						fiber.yield(toDelegate(&doNothing));
 						goto waitMore;
 					case WaitResult.Change.resume:
 						goto waitMore;
@@ -1630,7 +1630,7 @@ class Shell {
 		}
 		});
 
-		fiber.call();
+		fiber.runOnThisThread();
 
 		if(fiber.state == Fiber.State.HOLD) {
 			if(backgrounded) {
@@ -2526,8 +2526,15 @@ void enableInteractiveShell() {
 		// thing is inherited by child processes. easier to just
 		// catch and ignore locally like this.
 		SetConsoleCtrlHandler(&Handler, true);
+		auto inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+		DWORD mode;
+		GetConsoleMode(inputHandle, &mode);
+		mode |= ENABLE_PROCESSED_INPUT; // ensure ctrl+c is processed by the system so it sends through
+		SetConsoleMode(inputHandle, mode);
 	}
 }
+
+void doNothing() {}
 
 /+
 	Parts of bash I like:
