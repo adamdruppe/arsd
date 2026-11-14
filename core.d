@@ -3918,6 +3918,8 @@ interface ICoreEventLoop {
 	+/
 	final void run(scope bool delegate() until = null) {
 		exitApplicationRequested = false;
+
+		try
 		while(!exitApplicationRequested && (until is null || !until())) {
 			RunOnceResult ror = runOnce();
 			if(ror.result == RunOnceResult.Possibilities.NoWorkToDo) {
@@ -3925,6 +3927,11 @@ interface ICoreEventLoop {
 					exitApplication();
 				return;
 			}
+		}
+		catch(Throwable t) {
+			exitApplication();
+			clearThisThreadQueue();
+			throw t;
 		}
 
 		if(exitApplicationRequested)
@@ -3952,11 +3959,6 @@ interface ICoreEventLoop {
 	+/
 	void wake();
 
-	static void addTask(SchedulableTask task) {
-		CoreEventLoopImplementation.ensureGlobalsInitialized();
-		CoreEventLoopImplementation.runInTaskRunnerQueue.enqueue(UserModeCallback(&task.callWithRethrow));
-	}
-
 	void setSdpyTimeout(int function() fn);
 	private __gshared bool exitApplicationRequested;
 
@@ -3978,7 +3980,7 @@ interface ICoreEventLoop {
 
 		CoreWorkerThread.cancelAll();
 		if(!cast(CoreWorkerThread) Thread.getThis()) {
-			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+			auto el = getThisThreadEventLoopImplementation();
 			el.onNextTick(&el.cancelAllTasks);
 			//writeln("cancelAllTasks ", el.eventLoopType);
 			el.wake();
@@ -4231,6 +4233,10 @@ interface ICoreEventLoop {
 			return token;
 		}
 
+		final UnregisterToken addCallbackOnFdReadable(int fd, void delegate() dg, string file = __FILE__, size_t line = __LINE__) {
+			return addCallbackOnFdReadable(fd, new CallbackHelper(dg), file, line);
+		}
+
 		final UnregisterToken registerFd(int fd, string file = __FILE__, size_t line = __LINE__) {
 			auto token = registerFd_Platform(fd);
 			addRegisteredItem(fd, file, line);
@@ -4277,6 +4283,9 @@ interface ICoreEventLoop {
 		}
 
 		UnregisterToken addCallbackOnHandleReady(HANDLE handle, CallbackHelper cb);
+		final UnregisterToken addCallbackOnHandleReady(HANDLE handle, void delegate() cb) {
+			return addCallbackOnHandleReady(handle, new CallbackHelper(cb));
+		}
 	}
 }
 
@@ -4284,7 +4293,11 @@ interface ICoreEventLoop {
 	Get the event loop associated with this thread
 +/
 ICoreEventLoop getThisThreadEventLoop(EventLoopType type = EventLoopType.AdHoc) {
-	static ICoreEventLoop loop;
+	return getThisThreadEventLoopImplementation(type);
+}
+
+private CoreEventLoopImplementation getThisThreadEventLoopImplementation(EventLoopType type = EventLoopType.AdHoc) {
+	static CoreEventLoopImplementation loop;
 	if(loop is null) {
 		if(type == EventLoopType.AdHoc && Thread.getThis.isMainThread)
 			type = EventLoopType.Ui; // assume the main thread is the ui thread if not otherwise specified
@@ -4309,27 +4322,21 @@ void markAsUiThread() {
 +/
 package(arsd) enum EventLoopType {
 	/++
-		The event loop is being run temporarily and the thread doesn't promise to keep running it.
+		The event loop is being run temporarily and the thread doesn't promise to keep running it. It will infer to being a ui thread if called from the main thread and otherwise just be a generic temporary loop.
 	+/
 	AdHoc,
 	/++
-		The event loop struct has been instantiated at top level. Its destructor will run when the
-		function exits, which is only at the end of the entire block of work it is responsible for.
-
-		It must be in scope for the whole time the arsd event loop functions are expected to be used
-		(meaning it should generally be top-level in `main`)
-	+/
-	Explicit,
-	/++
-		A specialization of `Explicit`, so all the same rules apply there, but this is specifically the event loop coming from simpledisplay or minigui. It will run for the duration of the UI's existence.
+		The event loop running in the main thread to handle the ui.
 	+/
 	Ui,
 	/++
-		A special event loop specifically for threads that listen to the task runner queue and handle I/O events from running tasks. Typically, a task runner runs cooperatively multitasked coroutines (so they prefer not to block the whole thread).
+		A special event loop specifically for a long-standing pool of threads that listen to the task runner queue and handle I/O events from running tasks. Typically, a task runner runs cooperatively multitasked coroutines (so they prefer not to block the whole thread). It will accept new tasks when other tasks are on hold, and thus may be juggling several. Some tasks will migrate among threads in the pool.
 	+/
 	TaskRunner,
 	/++
-		A special event loop specifically for threads that listen to the helper function request queue. Helper functions are expected to run independently for a somewhat long time (them blocking the thread for some time is normal) and send a reply message back to the requester.
+		A special event loop specifically for threads that listen to the helper function request queue. Helper functions are expected to run independently for a somewhat long time (them blocking the thread for some time is normal) and send a reply message back to the requester. They only accept a single task at a time. HelperWorkers may be spun up and down on demand.
+
+		When a job is added to the helper worker queue and it isn't picked up after a timeout, a new thread is started to handle it. If a helper thread hasn't had a job for a while, it lets itself exit.
 	+/
 	HelperWorker
 }
@@ -4358,7 +4365,7 @@ private struct UserModeCallback {
 }
 
 // the GC may not be able to see this! remember, it can be hidden inside kernel buffers
-package(arsd) class CallbackHelper {
+package(arsd) /*private*/ class CallbackHelper { // still in use directly by arsd.cgi rn
 	import core.memory;
 
 	version(Windows)
@@ -4376,7 +4383,10 @@ package(arsd) class CallbackHelper {
 	}
 
 	void delegate() callback;
-	void*[3] argsStore;
+
+	void* systemIdent; // OVERLAPPED*, kqueue's ident, linux fd, event handle on other windows thing. may be set by us or them.
+	size_t platformSpecificData; // anything extra it might provide
+	int eventFlags; // coming from the OS, interpretation depends on what exactly it is
 
 	void addref() {
 		version(HasThread)
@@ -6458,7 +6468,7 @@ package(arsd) struct CleanupQueue {
 		// FIXME: set overflowed
 	}
 
-	void process() {
+	private void process() {
 		const tail = this.tail;
 
 		while(tail != head) {
@@ -6699,7 +6709,7 @@ class OperatingSystemTimer {
 		} else version(Arsd_core_kqueue) {
 			// FIXME
 
-			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+			auto el = getThisThreadEventLoopImplementation();
 
 			kevent_t ev;
 
@@ -6861,7 +6871,7 @@ class OperatingSystemTimer {
 			long val;
 			unix.read(fd, &val, val.sizeof); // gotta clear the pipe
 		} else version(Windows) {
-			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+			auto el = getThisThreadEventLoopImplementation();
 			assert(el);
 			if(this.lastEventLoopRoundTriggered == el.eventLoopRound)
 				return; // never try to actually run faster than the event loop
@@ -8077,7 +8087,7 @@ class DirectoryWatcher {
 			// FIXME: recursive needs to add child things individually
 
 		} else version(Arsd_core_kqueue) {
-			auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+			auto el = getThisThreadEventLoopImplementation();
 
 			// FIXME: need to scan for globPattern
 			// when a new file is added, i'll have to diff my list to detect it and open it too
@@ -8531,11 +8541,14 @@ version(HasThread) class SchedulableTask : Fiber {
 	private void call() {
 		if(state != State.HOLD)
 			return;
-		Fiber.call(Rethrow.yes);
-		assert(this.onPostYield !is null, "Do NOT call Fiber.yield! It doesn't set up the recall. Use the method on SchedulableTask instead.");
-		auto opy = onPostYield;
-		onPostYield = null;
-		opy();
+		try {
+			Fiber.call(Rethrow.yes);
+		} finally {
+			assert(this.onPostYield !is null, "Do NOT call Fiber.yield! It doesn't set up the recall. Use the method on SchedulableTask instead.");
+			auto opy = onPostYield;
+			onPostYield = null;
+			opy();
+		}
 	}
 
 	void runOnThisThread() {
@@ -8547,7 +8560,10 @@ version(HasThread) class SchedulableTask : Fiber {
 	}
 
 	void scheduleOnWorkerPool() {
+		CoreEventLoopImplementation.ensureGlobalsInitialized();
 		CoreWorkerThread.ensureSetup();
+		if(CoreWorkerThread.runningCount == 0)
+			throw new Exception("no threads are running");
 		CoreEventLoopImplementation.runInTaskRunnerQueue.enqueue(UserModeCallback(&call));
 	}
 
@@ -8830,23 +8846,30 @@ version(HasThread) package/*private*/ class CoreWorkerThread : Thread {
 		super(&run);
 	}
 	void run() {
-		eventLoop = cast(CoreEventLoopImplementation) getThisThreadEventLoop(this.type);
+		eventLoop = getThisThreadEventLoopImplementation(this.type);
 		atomicOp!"+="(startedCount, 1);
 		atomicOp!"+="(runningCount, 1);
 		scope(exit) {
-			atomicOp!"-="(runningCount, 1);
+			if(atomicOp!"-="(runningCount, 1) == 0) {
+				synchronized {
+					started = false;
+				}
+			}
+			if(uiThreadLoop)
+				uiThreadLoop.onNextTick(() {
+					// should I remove it from the taskRunners array? but the program should be terminating due to the exception propagating out of join() too
+					this.join();
+				});
+			eventLoop.teardown();
+			eventLoop = null;
 		}
 
 		// this thread has no business intercepting signals from the main thread,
 		// so gonna block a couple of them
 		version(Posix)
-			(cast(CoreEventLoopImplementation) eventLoop).blockSignalsIntendedForUiThread();
+			eventLoop.blockSignalsIntendedForUiThread();
 
-
-		try
 		eventLoop.run(() => cancelled);
-		catch(Throwable t)
-		writeln("WORKER THREAD DYING: ", t.toString());
 	}
 
 	private bool cancelled;
@@ -8908,7 +8931,7 @@ version(HasThread) package/*private*/ class CoreWorkerThread : Thread {
 
 				const expectedCount = numberOfHelpers + numberOfTaskRunners;
 
-				while(startedCount < expectedCount) {
+				while(runningCount < expectedCount) {
 					Thread.yield();
 				}
 
@@ -8918,9 +8941,13 @@ version(HasThread) package/*private*/ class CoreWorkerThread : Thread {
 
 		void cancelAll() {
 			foreach(runner; taskRunners)
-				runner.cancel();
+				try
+					runner.cancel();
+				catch(Throwable t) {}
 			foreach(runner; helperRunners)
-				runner.cancel();
+				try
+					runner.cancel();
+				catch(Throwable t) {}
 
 		}
 
@@ -8937,32 +8964,6 @@ version(HasThread) package/*private*/ class CoreWorkerThread : Thread {
 			}
 		}
 		+/
-
-		void acceptConnectionsAmongstTaskRunners(NativeSocketHandle fd, void delegate() doaccept) {
-			ensureSetup();
-			version(Windows) {
-				// associate the listener with the iocp and AcceptEx for each task runner thread
-
-			} else {
-				// subscribe to events from the listener in each task runner thing
-				ICoreEventLoop.UnregisterToken[] tokens;
-				foreach(runner; taskRunners) {
-					auto token = runner.eventLoop.registerFd(fd);
-					token.subscribeToEvents(true, false, true, doaccept);
-					tokens ~= token;
-				}
-
-				// FIXME: return tokens
-			}
-		}
-
-		void stopAcceptingConnectionsAmongstTaskRunners() {
-			// undo the above
-		}
-
-		void readDatagramsAmongstTaskRunners() {
-
-		}
 	}
 }
 
@@ -9008,7 +9009,7 @@ version(HasThread) struct ArsdCoreApplication {
 
 	+/
 	this(string applicationName, int numberOfTaskRunners, int numberOfHelpers) {
-		impl = getThisThreadEventLoop(EventLoopType.Explicit);
+		impl = getThisThreadEventLoop(EventLoopType.Ui);
 		CoreWorkerThread.setup(numberOfTaskRunners, numberOfHelpers);
 	}
 
@@ -9101,7 +9102,7 @@ class UserModeTimer {
 	public void delegate(int count) onMissedTriggers;
 
 	private void arm() {
-		auto eli = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+		auto eli = getThisThreadEventLoopImplementation();
 		eli.userModeTimerQueue.add(this);
 		// writeln(eli.userModeTimerQueue.length);
 	}
@@ -9264,7 +9265,43 @@ enum ResolutionStatus {
 	resolved
 }
 
-package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
+version(Windows)
+package(arsd) HANDLE getTaskRunnerIocp() {
+	CoreWorkerThread.ensureSetup();
+	getThisThreadEventLoop(); // to ensure the globals are is initialized
+	return CoreEventLoopImplementation.runInTaskRunnerQueue.iocp;
+}
+
+void acceptConnectionsAmongstTaskRunners(NativeSocketHandle fd, void delegate() doaccept) {
+	CoreWorkerThread.ensureSetup();
+	version(Windows) {
+		// associate the listener with the iocp and AcceptEx for each task runner thread
+
+	} else {
+		// subscribe to events from the listener in each task runner thing
+		ICoreEventLoop.UnregisterToken[] tokens;
+		foreach(runner; CoreWorkerThread.taskRunners) {
+			auto token = runner.eventLoop.registerFd(fd);
+			token.subscribeToEvents(true, false, true, doaccept);
+			tokens ~= token;
+		}
+
+		// FIXME: return tokens
+	}
+}
+
+void stopAcceptingConnectionsAmongstTaskRunners() {
+	// undo the above
+}
+
+/+
+void readDatagramsAmongstTaskRunners() {
+
+}
++/
+
+
+private class CoreEventLoopImplementation : ICoreEventLoop {
 	private SchedulableTask taskRoot;
 
 	private int function() getTimeout;
@@ -9349,10 +9386,11 @@ package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
 			// FIXME this should prolly be in the thing itself tbh
 			result = RunOnceResult(RunOnceResult.Possibilities.NoWorkToDo);
 		} else {
-			// FIXME: need a debug for "why won't this exit?" show the saved timeouts and registered fds
 			result = runOnce_Platform(nextTimeout);
 		}
 		thisThreadQueue.callback.call();
+		if(this is uiThreadLoop)
+			cleanupQueue.process();
 		return result;
 	}
 
@@ -9367,7 +9405,9 @@ package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
 		// don't need to check userModeTimerQueue.empty because if it wasn't empty, nextTimeout would be finite
 		// similarly, if a timer did go off just now, the nextTimeout would be 0, and if it added a call to the thread
 		// queue, it wouldn't be empty
-		return (nextTimeout == Duration.max && getRegisteredItemCount() == 0 && userModeTimerQueue.empty && thisThreadQueue.queue.isEmpty);
+		//
+		// taskRoot sees if there's a pending task, which SHOULD be redundant to a registered item or timer, but possible it has some other user-defined trigger too
+		return (nextTimeout == Duration.max && taskRoot is null && getRegisteredItemCount() == 0 && userModeTimerQueue.empty && thisThreadQueue.queue.isEmpty);
 	}
 
 	/++
@@ -9954,7 +9994,6 @@ package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
 			//cast(void) addCallbackOnFdReadable(signalEventFd, signalReaderCallback);
 			final switch(eventLoopType) {
 				case EventLoopType.AdHoc:
-				case EventLoopType.Explicit:
 				case EventLoopType.Ui:
 					// worker threads shouldn't be doing the signals, only the ui thread runs those handlers
 
@@ -10245,7 +10284,7 @@ package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
 
 			}
 			if(cas(&sigIntHappened, 1, 0)) {
-				auto el = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+				auto el = getThisThreadEventLoopImplementation();
 				debug {
 					if(el)
 						el.printEventLoopDebugReport();
@@ -10283,7 +10322,9 @@ package /* private */ class CoreEventLoopImplementation : ICoreEventLoop {
 		//writeln("************** ", cast(void*) this);
 		while(task) {
 			//writeln("TASK IN ARRAY: ", cast(void*) task);
-			task.cancel();
+			try
+				task.cancel();
+			catch(Throwable t) {}
 
 			task = task.next;
 		}
@@ -10567,7 +10608,7 @@ void runInWorkerThreadAsync(void delegate() shared dg, void delegate() oncomplet
 }
 
 void runInWorkerThreadAsync_impl(void delegate() dg, void delegate() oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) @system {
-	auto replyTo = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+	auto replyTo = getThisThreadEventLoopImplementation();
 
 	CoreWorkerThread.ensureSetup();
 
@@ -10588,6 +10629,59 @@ void runInWorkerThreadAsync_impl(void delegate() dg, void delegate() oncomplete,
 
 	replyTo.runInTaskRunnerQueue.enqueue(UserModeCallback(&operator));
 }
+
+private void startHelper() {
+	// FIXME: create a new helper thread if we aren't at or above the max number of helpers
+	// a helper's loop should NOT listen for new tasks unless it is all done for real. if it runs other internal event loops they shouldn't use this. maybe it can unsubscribe? or use a different iocp i guess
+	// and it has a timeout, configured globally, for how long it sleeps before terminating as idle and unnecessary
+	//
+	// they should perhaps run as daemon threads so druntime doesn't try to wait on them as they may not be responsive to cancellation requests.
+
+	// if the max is zero, we should throw as the user asked the impossible
+	// if not, even if we at the max, the task will just have to wait for one of the existing helpers to become available.
+	assert(0);
+}
+
+void runInHelperThreadAsync_impl(Duration startupTimeout, void delegate() dg, void delegate() oncomplete, void delegate(Throwable) onerror = null, void delegate() onfinally = null) @system {
+	auto replyTo = getThisThreadEventLoopImplementation();
+
+	CoreWorkerThread.ensureSetup();
+
+	bool started;
+
+	void operator() {
+		started = true;
+		try {
+			dg();
+			replyTo.thisThreadQueue.enqueue(UserModeCallback(oncomplete));
+		} catch(Throwable t) {
+			if(onerror)
+				replyTo.thisThreadQueue.enqueue(UserModeCallback(() { onerror(t); }));
+			else
+				logSwallowedException(t);
+		} finally {
+			if(onfinally)
+				replyTo.thisThreadQueue.enqueue(UserModeCallback(() { onfinally(); }));
+		}
+	}
+
+	replyTo.runInHelperThreadQueue.enqueue(UserModeCallback(&operator));
+
+	if(CoreWorkerThread.helperRunners.length == 0) {
+		startHelper();
+	}
+
+	if(startupTimeout < 1.msecs)
+		startupTimeout = 1.msecs;
+
+	auto timer = new UserModeTimer(startupTimeout, () {
+		if(!started) {
+			startHelper();
+		}
+	}, false);
+}
+
+
 
 /+
 void main() {
@@ -10660,7 +10754,7 @@ void main() {
 
 
 
-	auto ev = cast(CoreEventLoopImplementation) getThisThreadEventLoop();
+	auto ev = getThisThreadEventLoopImplementation();
 	foreach(i; 0 .. 100)
 		ev.thisThreadQueue.enqueue(new CallbackHelper(&tester));
 	foreach(i; 0 .. 100 / 16 + 1)
@@ -11834,7 +11928,10 @@ class ExternalProcess : Future!CompletedProcessInfo {
 	+/
 	void waitForChange() {
 		bool stoppedAtFirst = isStopped;
-		getThisThreadEventLoop().run(() { return this.isComplete || (stoppedAtFirst != this.isStopped); });
+		auto el = getThisThreadEventLoop();
+		el.addAnchor(this);
+		el.run(() { return this.isComplete || (stoppedAtFirst != this.isStopped); });
+		el.removeAnchor(this);
 	}
 
 	/++
