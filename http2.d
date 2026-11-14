@@ -5669,6 +5669,100 @@ unittest {
 	thread.join;
 }
 
+/++
+
++/
+class ClientApiObject {
+	protected {
+		static import arsd.core;
+
+		alias HttpVerb = .HttpVerb;
+
+		ClientApiObject _parent;
+		string baseUrl; // for the website + parent objects
+		string urlPrefix; // for this object
+
+		struct HeaderParams {
+			string[] headers;
+		}
+		struct BodyParams {
+			string contentType;
+			string encodedBody;
+		}
+
+		// goes string, arg, string, arg where the strings are header names
+		HeaderParams makeHeaderParams(T...)(T args) {
+			string[] headers;
+			foreach(idx, arg; args) {
+				static if((idx & 1)) {
+					headers ~= args[idx - 1] ~ ": " ~ arg;
+				}
+			}
+			return HeaderParams(headers);
+		}
+
+		BodyParams makeBodyParams(T...)(T args) {
+			import arsd.jsvar;
+			var b = var.emptyObject;
+			foreach(idx, arg; args) {
+				static if((idx & 1)) {
+					b[args[idx - 1]] = arg;
+				}
+			}
+			return BodyParams("application/json", b.toJson());
+		}
+
+		this() {
+			this.httpClient = new HttpClient();
+		}
+
+		private HttpClient httpClient;
+		protected string apiUrl;
+	}
+
+	public struct FutureHttpResponse(T) {
+		HttpRequest request;
+
+		this(HttpRequest request) {
+			this.request = request;
+			request.send();
+		}
+
+		T waitForCompletion() {
+			import arsd.jsvar;
+			auto response = request.waitForCompletion();
+			if(!response.wasSuccessful)
+				throw new Exception(response.codeText);
+
+			static if(is(T == void))
+				return;
+			else
+				return var.fromJson(response.contentText).get!T;
+		}
+		/+
+		static if(is(T == void)) {
+			alias FutureHttpResponse = HttpRequest;
+		} else {
+			alias FutureHttpResponse = arsd.core.Future!T;
+		}
+		+/
+	}
+
+	public void setApiUrl(string apiUrl) {
+		this.apiUrl = apiUrl;
+	}
+
+	HttpRequest _doRequest(HttpVerb method, string endpointUrlName, HeaderParams headerParams, BodyParams bodyParams) {
+		if(this._parent)
+			return this._parent._doRequest(method, this.urlPrefix ~ "/" ~ endpointUrlName, headerParams, bodyParams);
+		auto url = this.apiUrl ~ this.baseUrl ~ this.urlPrefix ~ endpointUrlName;
+		import arsd.core; writeln(url);
+		auto request = this.httpClient.request(Uri(url), method, cast(ubyte[]) bodyParams.encodedBody, bodyParams.contentType);
+		request.requestParameters.headers = headerParams.headers;
+		return request;
+	}
+}
+
 /+
 	so the url params are arguments. it knows the request
 	internally. other params are properties on the req

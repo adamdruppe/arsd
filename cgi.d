@@ -3383,6 +3383,15 @@ bool tryAddonServers(string[] args) {
 			case "--timed-job":
 				scheduledJobHandlers[args[2]](args[3 .. $]);
 				return true;
+			case "--d-bindings":
+				printBindings("d");
+				return true;
+			case "--ts-bindings":
+				printBindings("ts");
+				return true;
+			case "--js-bindings":
+				printBindings("js");
+				return true;
 			default:
 				// intentionally blank - do nothing and carry on to run normally
 		}
@@ -3560,8 +3569,7 @@ struct RequestServer {
 		version(Windows) {
 			if(this.iocp)
 				return;
-			arsd.core.CoreWorkerThread.ensureSetup();
-			this.iocp = (cast(arsd.core.CoreEventLoopImplementation) arsd.core.getThisThreadEventLoop()).runInTaskRunnerQueue.iocp;
+			this.iocp = arsd.core.getTaskRunnerIocp();
 			//arsd.core.writeln("initialized ", cast(void*) this.iocp);
 		}
 	}
@@ -5678,7 +5686,7 @@ class ListeningConnectionManager {
 					this.handler(sn, this.requestServer);
 				}
 
-				arsd.core.CoreWorkerThread.acceptConnectionsAmongstTaskRunners(listener.handle, &doAccept);
+				arsd.core.acceptConnectionsAmongstTaskRunners(listener.handle, &doAccept);
 			}
 			upstreamDmdWorkaround(listener);
 		}
@@ -8196,6 +8204,49 @@ class DispatcherMetadata {
 	}
 
 	string toBrowserScriptBinding(bool includeTypes = false, bool isSubresource = false, string baseUrl = null) const { return null; }
+	string toDClientBinding(bool isSubresource = false, string baseUrl = null, string baseClassImport = null) const { return null; }
+
+	/++
+
+	+/
+	static string typescriptBindings() {
+		string s;
+		foreach(def; allTsDefinitions) {
+			s ~= def;
+		}
+
+		foreach(m; DispatcherMetadata.allMeta) {
+			s ~= m.toBrowserScriptBinding(true);
+		}
+
+		return s;
+	}
+
+	/// ditto
+	static string dClientBindings() {
+		string s;
+
+		foreach(m; DispatcherMetadata.allMeta) {
+			s ~= m.toDClientBinding();
+		}
+
+		foreach(def; allDDefinitions) {
+			s ~= def;
+		}
+
+		return s;
+	}
+
+	/// ditto
+	static string javascriptBindings() {
+		string s;
+
+		foreach(m; DispatcherMetadata.allMeta) {
+			s ~= m.toBrowserScriptBinding(false);
+		}
+
+		return s;
+	}
 }
 
 struct ApiMethodParameter {
@@ -8206,6 +8257,7 @@ struct ApiMethodParameter {
 	bool required;
 
 	string tsName;
+	string dClientName;
 }
 
 struct ApiMethodReturn {
@@ -8215,6 +8267,7 @@ struct ApiMethodReturn {
 	string typeName;
 
 	string tsName;
+	string dClientName;
 }
 
 private interface ApiMethodMetadata {
@@ -8286,6 +8339,7 @@ private class ApiMethodMetadataFor(alias method) : ApiMethodMetadata {
 				p.required = is(defaults[idx] == void);
 
 				p.tsName = tsNameFor!param;
+				p.dClientName = dClientNameFor!param;
 
 				params ~= p;
 			}
@@ -8298,6 +8352,7 @@ private class ApiMethodMetadataFor(alias method) : ApiMethodMetadata {
 		static if(is(typeof(method) R == return)) {
 			ret.typeName = R.stringof;// __traits(identifier, R);
 			ret.tsName = tsNameFor!R;
+			ret.dClientName = dClientNameFor!R;
 			// FIXME: error returns too...
 		}
 		return ret;
@@ -8305,6 +8360,51 @@ private class ApiMethodMetadataFor(alias method) : ApiMethodMetadata {
 }
 
 __gshared string[] allTsDefinitions;
+__gshared string[] allDDefinitions;
+
+private template dClientNameFor(T) {
+	// FIXME: SysTime, DateTime, etc?
+	// FIXME: Nullable, MultipleResponses
+	import arsd.jsvar;
+	import arsd.dom;
+	static if(is(T == var))
+		enum dClientNameFor = "var";
+	else static if(is(T : Element) || is(T : Document))
+		enum dClientNameFor = "string";
+	else static if(is(T == string))
+		enum dClientNameFor = "string";
+	else static if(is(T == enum)) {
+		enum dClientNameFor = __traits(identifier, T);
+		@(arsd.core.standalone) shared static this() @system {
+			string definition = "enum ";
+			definition ~= __traits(identifier, T);
+			definition ~= " {\n";
+			foreach(memberName; __traits(allMembers, T)) {
+				definition ~= "\t" ~ memberName ~ " = \"" ~ memberName ~ "\",\n";
+			}
+			definition ~= "}\n";
+			allDDefinitions ~= definition;
+		}
+	} else static if(is(T == struct)) {
+		enum dClientNameFor = __traits(identifier, T);
+		@(arsd.core.standalone) shared static this() @system {
+			string definition = "struct ";
+			definition ~= __traits(identifier, T);
+			definition ~= " {\n";
+			foreach(memberName; __traits(allMembers, T)) {
+				static if(is(typeof(__traits(getMember, T, memberName).offsetof)))
+					definition ~= "\t" ~ dClientNameFor!(typeof(__traits(getMember, T, memberName))) ~ " "~memberName~";\n";
+			}
+			definition ~= "}\n";
+			allDDefinitions ~= definition;
+		}
+	}
+	else static if(is(T == E[], E) || is(T == E[sz], E, size_t sz))
+		enum dClientNameFor = dClientNameFor!E ~ "[]";
+	else
+		enum dClientNameFor = T.stringof;
+
+}
 
 private template tsNameFor(T) {
 	// FIXME: SysTime, DateTime, etc?
@@ -8361,6 +8461,105 @@ private class ApiMetadata : DispatcherMetadata {
 		super(urlPrefix, rejectFurther);
 	}
 	abstract override immutable(ApiMetadata[]) subresources() const;
+	override string toDClientBinding(bool isSubresource = false, string baseUrl = "", string baseClassImport = null) const {
+		if(baseClassImport is null)
+			baseClassImport = "import arsd.http2 : ClientApiObject;\nimport arsd.jsvar : var;";
+		string ret;
+
+		ret ~= baseClassImport;
+		if(baseClassImport.length)
+			ret ~= "\n\n";
+
+		ret ~= "/++\n";
+		ret ~= this.documentation;
+		ret ~= "+/\n";
+
+		ret ~= "class ";
+		ret ~= dName();
+		ret ~= " : ClientApiObject {\n";
+
+		if(isSubresource) {
+			ret ~= q{
+	string _id;
+	this(string id, ClientApiObject parent) {
+		this._id = id;
+		this._parent = parent;
+		this();
+	}
+
+	private};
+		}
+
+		if(true) {
+			ret ~= "	this() {
+		this.baseUrl = `"~baseUrl~"`;
+		this.urlPrefix = `"~this.urlPrefix~"`;
+	}\n";
+		}
+
+		foreach(endpoint; this.allEndpoints) {
+			ret ~= "\n\tFutureHttpResponse!("~  endpoint.returns.dClientName ~ ") " ~ endpoint.dName ~ "(";
+			foreach(idx, param; endpoint.clientParameters) {
+				if(idx)
+					ret ~= ", ";
+				// if(!param.required) // FIXME
+				ret ~= param.dClientName;
+				ret ~= " ";
+				ret ~= param.dName;
+			}
+			ret ~= ")";
+			ret ~= " {\n";
+
+			import std.conv;
+			ret ~= "\t\treturn typeof(return)(this._doRequest(HttpVerb." ~ to!string(endpoint.requestMethod) ~ ", ";
+			if(isSubresource)
+				ret ~= "this._id ~ \"/" ~ endpoint.urlName ~ "\", ";
+			else
+				ret ~= "\"" ~ endpoint.urlName ~ "\", ";
+			string headerParams = "makeHeaderParams(";
+			string bodyParams = "makeBodyParams(";
+			foreach(idx, param; endpoint.clientParameters) {
+				if(param.delivery == "header") {
+					headerParams ~= "\"" ~ param.name ~ "\", " ~ param.dName ~ ", ";
+				} else {
+					bodyParams ~= "\"" ~ param.name ~ "\", " ~ param.dName ~ ", ";
+				}
+			}
+			headerParams ~= ")";
+			bodyParams ~= ")";
+
+			ret ~= headerParams;
+			ret ~= ", ";
+			ret ~= bodyParams; // would be nice if this could take a FormData too
+
+			ret ~= "));\n";
+			ret ~= "\t}\n";
+		}
+
+		// each subresource has a constructor here that returns a helper object of the appropriate type
+		foreach(subresource; this.subresources) {
+			ret ~= "\n";
+			ret ~= "\t" ~ " " ~ subresource.dName ~ " " ~ subresource.urlPrefix ~ "(string id) {\n";
+			// of this is a subresource, pass our parent. if we are not, pass ourselves. the "parent" is always the top-level entry point
+			ret ~= "\t\treturn new " ~ subresource.dName ~ "(id, " ~ (isSubresource ? "this._parent" : "this") ~ ");\n";
+			ret ~= "\t}\n";
+
+		}
+		/+
+			writeln(endpoint.requestMethod, " ", starting, this.urlPrefix, endpoint.urlName, " (",endpoint.clientParameters,") => ", endpoint.returns);
+		foreach(subresource; this.subresources)
+			subresource.printInfo(starting ~ "/");
+		+/
+
+		ret ~= "}\n\n";
+
+		foreach(subresource; this.subresources) {
+			ret ~= subresource.toDClientBinding(true, baseUrl ~ this.urlPrefix, "");
+		}
+
+
+		return ret;
+	}
 	override string toBrowserScriptBinding(bool includeTypes = false, bool isSubresource = false, string baseUrl = "") const {
 		string ret;
 		ret ~= "/**\n";
@@ -8375,11 +8574,11 @@ private class ApiMetadata : DispatcherMetadata {
 			ret ~= "\t_parent";
 			if(includeTypes)
 				ret ~= " : any";
-			ret ~= "\n";
+			ret ~= ";\n";
 			ret ~= "\t_id";
 			if(includeTypes)
 				ret ~= " : string";
-			ret ~= "\n";
+			ret ~= ";\n";
 			ret ~= "\tconstructor(id";
 			if(includeTypes)
 				ret ~= " : string";
@@ -9611,28 +9810,8 @@ class WebPresenter(CRTP) {
 		History:
 			Added October 22, 2026
 	+/
-	string typescriptBindings() {
-		string s;
-		foreach(def; allTsDefinitions) {
-			s ~= def;
-		}
-
-		foreach(m; DispatcherMetadata.allMeta) {
-			s ~= m.toBrowserScriptBinding(true);
-		}
-
-		return s;
-	}
-
-	/// ditto
 	string javascriptBindings() {
-		string s;
-
-		foreach(m; DispatcherMetadata.allMeta) {
-			s ~= m.toBrowserScriptBinding(false);
-		}
-
-		return s;
+		return DispatcherMetadata.javascriptBindings();
 	}
 
 	MappedSourceCode[] scriptWithMap() {
@@ -9774,8 +9953,10 @@ q"css
 css";
 	}
 
+	deprecated("Add a `Cgi cgi` parameter now to your override.") Element htmlContainer() { assert(0); }
+
 	import arsd.dom;
-	Element htmlContainer() {
+	Element htmlContainer(Cgi cgi) {
 		auto document = new Document(q"html
 <!DOCTYPE html>
 <html class="no-script">
@@ -9804,7 +9985,7 @@ html", true, true);
 	/// Renders a response as an HTTP error with associated html body
 	void renderBasicError(Cgi cgi, int httpErrorCode) {
 		cgi.setResponseStatus(getHttpCodeText(httpErrorCode));
-		auto c = htmlContainer();
+		auto c = htmlContainer(cgi);
 		c.innerText = getHttpCodeText(httpErrorCode);
 		cgi.setResponseContentType("text/html; charset=utf-8");
 		cgi.write(c.parentDocument.toString(), true);
@@ -9940,7 +10121,7 @@ html", true, true);
 
 	/// And the default handler for HTML will call [formatReturnValueAsHtml] and place it inside the [htmlContainer].
 	void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, typeof(null) meta) {
-		auto container = this.htmlContainer();
+		auto container = this.htmlContainer(cgi);
 		container.appendChild(formatReturnValueAsHtml(ret));
 		getCustomElementExpander().apply(container.parentDocument);
 		cgi.write(container.parentDocument.toString(), true);
@@ -10019,7 +10200,7 @@ html", true, true);
 
 	void presentExceptionAsHtmlImpl(Cgi cgi, Throwable t, Form automaticForm) {
 		if(auto e = cast(HttpCodeException) t) {
-			auto container = this.htmlContainer();
+			auto container = this.htmlContainer(cgi);
 
 			container.addChild("p", e.msg);
 
@@ -10030,7 +10211,7 @@ html", true, true);
 		} else if(auto mae = cast(MissingArgumentException) t) {
 			if(automaticForm is null)
 				goto generic;
-			auto container = this.htmlContainer();
+			auto container = this.htmlContainer(cgi);
 			if(cgi.requestMethod == Cgi.RequestMethod.POST)
 				container.appendChild(Element.make("p", "Argument `" ~ mae.argumentName ~ "` of type `" ~ mae.argumentType ~ "` is missing"));
 			container.appendChild(automaticForm);
@@ -10039,7 +10220,7 @@ html", true, true);
 			cgi.write(container.parentDocument.toString(), true);
 		} else {
 			generic:
-			auto container = this.htmlContainer();
+			auto container = this.htmlContainer(cgi);
 
 			// import std.stdio; writeln(t.toString());
 
@@ -11417,7 +11598,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 			cgi.setResponseContentType("application/json");
 			cgi.write(obj.toJson().toString, true);
 		} else {
-			auto container = presenter.htmlContainer();
+			auto container = presenter.htmlContainer(cgi);
 			if(addFormLinks) {
 				static if(is(T : CollectionOf!(C), C))
 				container.appendHtml(`
@@ -11458,7 +11639,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 					static if(is(T : CollectionOf!(C), C)) {
 						auto results = obj.index();
 						if(cgi.request("format", "html") == "html") {
-							auto container = presenter.htmlContainer();
+							auto container = presenter.htmlContainer(cgi);
 							auto html = presenter.formatReturnValueAsHtml(results.results);
 							container.appendHtml(`
 								<form>
@@ -11494,7 +11675,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 				case "PUT":
 				case "POST":
 					// an editing form for the object
-					auto container = presenter.htmlContainer();
+					auto container = presenter.htmlContainer(cgi);
 					static if(__traits(compiles, () { auto o = new obj.PostProxy(); })) {
 						auto form = (cgi.request("_method") == "POST") ? presenter.createAutomaticFormForObject(new obj.PostProxy()) : presenter.createAutomaticFormForObject(obj);
 					} else {
@@ -11507,7 +11688,7 @@ bool restObjectServeHandler(T, Presenter)(Cgi cgi, Presenter presenter, string u
 				break;
 				case "DELETE":
 					// FIXME: a delete form for the object (can be phrased "are you sure?")
-					auto container = presenter.htmlContainer();
+					auto container = presenter.htmlContainer(cgi);
 					container.appendHtml(`
 						<form method="POST">
 							Are you sure you want to delete this item?
@@ -12180,12 +12361,29 @@ bool apiDispatcher()(Cgi cgi) {
 +/
 version(linux)
 private extern(C) int eventfd (uint initval, int flags) nothrow @trusted @nogc;
+
+void printBindings(string arg) {
+	switch(arg) {
+		case "d":
+			writeln(DispatcherMetadata.dClientBindings());
+		break;
+		case "ts":
+			writeln(DispatcherMetadata.typescriptBindings());
+		break;
+		case "js":
+			writeln(DispatcherMetadata.javascriptBindings());
+		break;
+		default:
+			throw new Exception("unknown language for binding " ~ arg);
+	}
+}
+
 /*
-Copyright: Adam D. Ruppe, 2008 - 2023
+Copyright: Adam D. Ruppe, 2008 - 2026
 License:   [http://www.boost.org/LICENSE_1_0.txt|Boost License 1.0].
 Authors: Adam D. Ruppe
 
-	Copyright Adam D. Ruppe 2008 - 2023.
+	Copyright Adam D. Ruppe 2008 - 2026.
 Distributed under the Boost Software License, Version 1.0.
    (See accompanying file LICENSE_1_0.txt or copy at
 	http://www.boost.org/LICENSE_1_0.txt)
