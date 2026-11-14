@@ -762,7 +762,7 @@ struct meta {
 	Can be used as a return value from one of your own methods when rendering websites with [WebPresenterWithTemplateSupport].
 +/
 struct RenderTemplate {
-	this(string name, var context = var.emptyObject, var skeletonContext = var.emptyObject, string skeletonName = null) {
+	this(string name, var context = var.emptyObject, var skeletonContext = var.init, string skeletonName = null) {
 		this.name = name;
 		this.context = context;
 		this.skeletonContext = skeletonContext;
@@ -785,9 +785,15 @@ struct RenderTemplate {
 template WebPresenterWithTemplateSupport(CTRP) {
 	import arsd.cgi;
 	class WebPresenterWithTemplateSupport : WebPresenter!(CTRP) {
-		override Element htmlContainer() {
+		/++
+			Gives you a chance to provide variables to the skeleton file. It passes a cgi object for the request, but note this is not available for generic presentations and you will get `null`.
+		+/
+		var defaultSkeletonContext(Cgi cgiMayBeNull) {
+			return var.emptyObject;
+		}
+		override Element htmlContainer(Cgi cgi) {
 			try {
-				auto skeleton = renderTemplate("generic.html", var.emptyObject, var.emptyObject, "skeleton.html", templateLoader());
+				auto skeleton = renderTemplate("generic.html", var.emptyObject, defaultSkeletonContext(cgi), "skeleton.html", templateLoader());
 				return skeleton.requireSelector("main");
 			} catch(Exception e) {
 				auto document = new Document("<html><body><p>generic.html trouble: <span id=\"ghe\"></span></p> <main></main></body></html>");
@@ -862,6 +868,9 @@ template WebPresenterWithTemplateSupport(CTRP) {
 
 			auto renderer = this.webTemplateRenderer();
 
+			if(ret.skeletonContext is var.init)
+				ret.skeletonContext = defaultSkeletonContext(cgi);
+
 			auto skeleton = renderer.renderTemplate(ret.name, ret.context, ret.skeletonContext, ret.skeletonName);
 			cgi.setResponseContentType("text/html; charset=utf8");
 			cgi.gzipResponse = true;
@@ -871,7 +880,7 @@ template WebPresenterWithTemplateSupport(CTRP) {
 
 		void presentSuccessfulReturnAsHtml(T)(Cgi cgi, T ret, Meta meta) {
 			if(meta.templateName.length) {
-				var sobj = var.emptyObject;
+				var sobj = defaultSkeletonContext(cgi);
 
 				var obj = var.emptyObject;
 
