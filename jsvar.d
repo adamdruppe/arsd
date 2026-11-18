@@ -927,7 +927,7 @@ struct var {
 				foreach(i, item; t)
 					arr[i] = var(item);
 			this._payload._array = arr;
-		} else static if(is(T == bool)) {
+		} else static if(is(immutable T == immutable bool)) {
 			this._type = Type.Boolean;
 			this._payload._boolean = t;
 		} else static if(isSomeChar!T) {
