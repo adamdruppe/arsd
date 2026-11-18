@@ -6326,6 +6326,9 @@ version(Posix) {
 
 // template for laziness
 void startAddonServer()(string arg) {
+/+
+	std.process.thisExePath being re-execed perhaps
++/
 	version(OSX) {
 		assert(0, "Not implemented");
 	} else version(iOS) {
@@ -8385,7 +8388,20 @@ private template dClientNameFor(T) {
 			definition ~= "}\n";
 			allDDefinitions ~= definition;
 		}
-	} else static if(is(T == struct)) {
+	}
+	else static if(is(T == MultipleResponses!Ts, Ts...)) {
+		string helper() {
+			string s = "MultipleResponses!(";
+			foreach(t; Ts) {
+				s ~= dClientNameFor!t;
+				s ~= ",";
+			}
+			s ~= ")";
+			return s;
+		}
+		enum dClientNameFor = helper();
+	}
+	else static if(is(T == struct)) {
 		enum dClientNameFor = __traits(identifier, T);
 		@(arsd.core.standalone) shared static this() @system {
 			string definition = "struct ";
@@ -8433,6 +8449,18 @@ private template tsNameFor(T) {
 		enum tsNameFor = "number";
 	else static if(is(T == string))
 		enum tsNameFor = "string";
+	else static if(is(T == MultipleResponses!Ts, Ts...)) {
+		string helper() {
+			string s;
+			foreach(t; Ts) {
+				if(s.length)
+					s ~= " | ";
+				s ~= tsNameFor!t;
+			}
+			return s;
+		}
+		enum tsNameFor = helper();
+	}
 	else static if(is(T == struct)) {
 		enum tsNameFor = __traits(identifier, T);
 		@(arsd.core.standalone) shared static this() @system {
@@ -8446,7 +8474,8 @@ private template tsNameFor(T) {
 			definition ~= "}\n";
 			allTsDefinitions ~= definition;
 		}
-	} else static if(is(T == V[K], K, V))
+	}
+	else static if(is(T == V[K], K, V))
 		enum tsNameFor = "object";
 	else static if(is(T == E[], E) || is(T == E[sz], E, size_t sz))
 		enum tsNameFor = tsNameFor!E ~ "[]";
@@ -9120,7 +9149,7 @@ auto callFromCgi(T dg, Cgi cgi) {
 	alias idents = ParameterIdentifierTuple!method;
 	alias defaults = ParameterDefaults!method;
 
-	bool usesPostVariables = cgi.requestContentType == "application/x-www-form-urlencoded" || cgi.requestContentType == "multipart/form-data";
+	bool usesPostVariables = cgi.requestContentType == "application/x-www-form-urlencoded" || cgi.requestContentType.startsWith("multipart/form-data");
 	bool usesJsonBody = cgi.requestContentType == "application/json";
 
 	var jsonBody;
